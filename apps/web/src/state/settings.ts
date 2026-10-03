@@ -67,6 +67,14 @@ export interface DisplaySettings {
   soundVolume: number;
 }
 
+/** Pulse page layout (DESIGN.md 5.1): column order and visibility, legend row, card fields. */
+export interface PulseLayout {
+  order: PulseColumnId[];
+  hidden: PulseColumnId[];
+  legend: boolean;
+  cardFields: { socials: boolean; counters: boolean; miniChart: boolean; feesNetBuy: boolean };
+}
+
 export interface WithdrawalDestination {
   id: string;
   address: string;
@@ -95,6 +103,7 @@ export interface SettingsState {
   hotkeys: Record<HotkeyAction, string[]>;
   tradeHotkeys: boolean;
   display: DisplaySettings;
+  pulseLayout: PulseLayout;
   defaultMode: TradeMode;
   autoLockMinutes: number;
   caps: { perTradeSol: number; dailySol: number };
@@ -119,6 +128,7 @@ export interface SettingsState {
   resetHotkeys(): void;
   setTradeHotkeys(on: boolean): void;
   setDisplay(patch: Partial<DisplaySettings>): void;
+  setPulseLayout(patch: Partial<PulseLayout>): void;
   setDefaultMode(mode: TradeMode): void;
   setAutoLock(minutes: number): void;
   setCaps(patch: Partial<SettingsState["caps"]>): void;
@@ -216,6 +226,12 @@ export const useSettings = create<SettingsState>()(
         pulseHz: 6,
         soundVolume: 0.5,
       },
+      pulseLayout: {
+        order: ["new", "final", "migrated"],
+        hidden: [],
+        legend: false,
+        cardFields: { socials: true, counters: true, miniChart: true, feesNetBuy: true },
+      },
       defaultMode: "instant",
       autoLockMinutes: 15,
       caps: { perTradeSol: 5, dailySol: 50 },
@@ -257,6 +273,7 @@ export const useSettings = create<SettingsState>()(
       resetHotkeys: () => set({ hotkeys: DEFAULT_HOTKEYS }),
       setTradeHotkeys: (on) => set({ tradeHotkeys: on }),
       setDisplay: (patch) => set((s) => ({ display: { ...s.display, ...patch } })),
+      setPulseLayout: (patch) => set((s) => ({ pulseLayout: { ...s.pulseLayout, ...patch } })),
       setDefaultMode: (mode) => set({ defaultMode: mode }),
       setAutoLock: (minutes) => set({ autoLockMinutes: minutes }),
       setCaps: (patch) => set((s) => ({ caps: { ...s.caps, ...patch } })),
@@ -312,6 +329,7 @@ export const useSettings = create<SettingsState>()(
         hotkeys: s.hotkeys,
         tradeHotkeys: s.tradeHotkeys,
         display: s.display,
+        pulseLayout: s.pulseLayout,
         defaultMode: s.defaultMode,
         autoLockMinutes: s.autoLockMinutes,
         caps: s.caps,
@@ -333,6 +351,11 @@ export const useSettings = create<SettingsState>()(
           presets: { ...current.presets, ...(p.presets ?? {}) },
           hotkeys: { ...current.hotkeys, ...(p.hotkeys ?? {}) },
           display: { ...current.display, ...(p.display ?? {}) },
+          pulseLayout: {
+            ...current.pulseLayout,
+            ...(p.pulseLayout ?? {}),
+            cardFields: { ...current.pulseLayout.cardFields, ...(p.pulseLayout?.cardFields ?? {}) },
+          },
           caps: { ...current.caps, ...(p.caps ?? {}) },
           blacklists: { ...current.blacklists, ...(p.blacklists ?? {}) },
           instant: { ...current.instant, ...(p.instant ?? {}) },
