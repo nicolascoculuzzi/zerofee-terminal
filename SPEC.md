@@ -358,7 +358,7 @@ Funding: free to use, with an optional tip jar that defaults to zero, so the zer
 |---|---|
 | Nonce advance on failed execution | **Resolved 2026-10-03:** yes, it advances; one landed attempt per nonce (local Agave 4.3.0 test) |
 | Nonce vs MEV protection | Mitigated by Jito bundle-only + tight variants + fast cancel; measure landing rate |
-| Armed tx size | v0 + ALTs vs v1 support per relay |
+| Armed tx size | **Resolved 2026-10-03:** v0 + one operator ALT of shared accounts (the firewall keeps mints, token programs, user accounts, pool, tips static) fits every armed shape, worst case 1,053 of 1,232 B; v1 not needed (NOTES.md) |
 | Direct-mode arming | Can a connected wallet approve a batch of variants in one popup? |
 | Chainstack capacity | Streams 2/7 (blog) vs 1/5 (pricing page); replay buffer of about 100 slots |
 | Helius limits | Sender 15 vs 50 TPS; whether the Reduced preset's two query params combine |
