@@ -420,6 +420,46 @@ describe("firewall: pump.fun and PumpSwap", () => {
     );
   });
 
+  test("zero minimum output on every sell variant and every exact-quote-in buy (minimum of 1 passes)", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const legacy = { ...curveParams(a), baseTokenProgram: TOKEN_PROGRAM };
+    const variants: [string, (min: bigint) => Promise<Instruction>, RegExp][] = [
+      ["curve sell", (min) => curveInstruction("sell", legacy, { amount: 10n ** 9n, min_sol_output: min }), /sells need a minimum/],
+      ["curve sell_v2", (min) => curveInstruction("sell_v2", curveParams(a), { amount: 10n ** 9n, min_sol_output: min }), /sells need/],
+      [
+        "PumpSwap sell",
+        (min) => ammInstruction("sell", ammParams(a), { base_amount_in: 10n ** 9n, min_quote_amount_out: min }),
+        /sells need a minimum/,
+      ],
+      [
+        "curve buy_exact_sol_in",
+        (min) => curveInstruction("buy_exact_sol_in", legacy, { spendable_sol_in: 10n ** 8n, min_tokens_out: min }),
+        /minimum tokens out is 0/,
+      ],
+      [
+        "curve buy_exact_quote_in_v2",
+        (min) => curveInstruction("buy_exact_quote_in_v2", curveParams(a), { spendable_quote_in: 10n ** 8n, min_tokens_out: min }),
+        /minimum tokens out is 0/,
+      ],
+      [
+        "PumpSwap buy_exact_quote_in",
+        (min) =>
+          ammInstruction("buy_exact_quote_in", ammParams(a), {
+            spendable_quote_in: 10n ** 8n,
+            min_base_amount_out: min,
+            track_volume: true,
+          }),
+        /minimum tokens out is 0/,
+      ],
+    ];
+    for (const [name, build, pattern] of variants) {
+      const violations = await expectRefused(buildTransaction({ feePayer: a.signer, instructions: [await build(0n)] }), ctx, pattern);
+      expect({ name, violations }).toEqual({ name, violations: [expect.stringContaining(`#0 `)] });
+      await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [await build(1n)] }), ctx);
+    }
+  });
+
   test("two buys that each fit but together exceed the per-trade cap", async () => {
     const a = makeActors();
     const half = CAP / 2n + 1n;

@@ -135,7 +135,7 @@ export type VenueCheck = { ok: true; action: VenueAction } | { ok: false; violat
 /**
  * Pluggable rule for one venue program. It must refuse every instruction it does not explicitly
  * understand, verify that funds can only flow to and from the signer's own accounts, and report the
- * buy amount; per-trade caps are applied centrally from the reported TradeAction.
+ * buy amount; per-trade caps and the min-out floor are applied centrally from the reported TradeAction.
  */
 export interface VenueRule {
   readonly programId: Address;

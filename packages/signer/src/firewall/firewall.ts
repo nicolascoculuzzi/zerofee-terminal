@@ -9,6 +9,8 @@
  *  4. Caps: tips (sum) <= maxTipLamports, priority fee <= maxPriorityFeeLamports, compute unit
  *     limit <= maxComputeUnitLimit, and buys <= maxBuyLamports / maxBuyQuote[mint], both per buy
  *     instruction and summed over the transaction.
+ *  5. Min-out floor: every sell, and every buy that spends a fixed amount (exact quote in), has a
+ *     minimum output above zero.
  *
  * Returns a plain-language summary of what the transaction does when it passes.
  */
@@ -39,6 +41,7 @@ import type {
   FirewallResult,
   RuleEnv,
   SummaryAction,
+  TradeAction,
   TransactionSummary,
   VenueRule,
 } from "./types";
@@ -48,6 +51,21 @@ export type InspectionResult = { ok: true; summary: TransactionSummary; tx: Deco
 /** Own-property lookup: caps objects cross the RPC boundary, never trust their prototype chain. */
 function quoteCap(caps: FirewallContext["caps"], mint: string): bigint | undefined {
   return Object.hasOwn(caps.maxBuyQuote, mint) ? caps.maxBuyQuote[mint] : undefined;
+}
+
+/**
+ * A trade whose minimum output is zero accepts any price: a sandwich, or a caller that lies about the
+ * quote, takes the whole sale (sells are not capped) or the whole spend. Exact-out buys are exempt:
+ * they receive exactly `baseAmount` and pay at most the capped max_quote_in.
+ */
+function zeroMinimumOut(action: TradeAction): string | undefined {
+  if (action.side === "sell" && !(action.minQuoteOut !== undefined && action.minQuoteOut > 0n)) {
+    return "minimum output is 0, so any price would fill (a sandwich could take the whole sale); sells need a minimum above zero";
+  }
+  if (action.side === "buy" && action.baseAmountIs === "min_out" && action.baseAmount <= 0n) {
+    return "minimum tokens out is 0, so the whole spend could buy nothing; buys need a minimum above zero";
+  }
+  return undefined;
 }
 
 export async function checkTransaction(txBytes: Uint8Array, ctx: FirewallContext): Promise<FirewallResult> {
@@ -135,7 +153,10 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
   const maxBuyQuote: Record<string, bigint> = {};
   for (const { ixIndex, action } of actions) {
     if (action.kind === "tip") tipLamports += action.lamports;
-    if (action.kind !== "trade" || action.side !== "buy") continue;
+    if (action.kind !== "trade") continue;
+    const floor = zeroMinimumOut(action);
+    if (floor) violations.push(`#${ixIndex} ${action.venue} ${action.instruction}: ${floor}`);
+    if (action.side !== "buy") continue;
     const spend = action.maxQuoteIn;
     if (spend === undefined) {
       violations.push(`#${ixIndex}: buy without a spend amount`);
