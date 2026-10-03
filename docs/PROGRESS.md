@@ -11,8 +11,8 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Trade engine: pump.fun curve + PumpSwap, Sender/Jito lanes, dry-run CLI | ✅ | 70 tests; mainnet dry-run fills match quotes exactly |
 | Armed-order nonce semantics | ✅ | Tested: one landed attempt per nonce ([experiment](experiments/nonce-failure/README.md)) |
 | CI + daily pump.fun interface watch | ✅ | GitHub Actions; opens an issue on drift |
-| Live data feed + backend gateway | 🔨 | Event decoders and protocol done; server ingest in progress |
-| Wallet login (SIWS) + browser trading wallet + signer firewall | 🔨 | SIWS done; vault and firewall in progress |
+| Live data feed + backend gateway | ✅ | 6-min public-RPC run: 303 launches, 341 trades/s, 0 decode failures, ~0.5–1 s detection; Yellowstone gRPC client verified under Bun |
+| Wallet login (SIWS) + browser trading wallet + signer firewall | ✅ | Adversarial review: no critical bypass; 4 findings fixed. 346 tests across the repo |
 | Web UI on simulated data | 🔨 | Shell done; screens in progress |
 | Design system (Mobbin-grounded, "no AI slop" checklist) | 🔨 | |
 | Local mainnet-fork test harness (real programs, real landed txs, no real money) | 🔨 | |
@@ -38,6 +38,6 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Piece | Status |
 |---|---|
 | Deploy config (Docker, Hetzner guide), monitoring, runbook | ⏳ |
-| Security review: signer firewall, front-end CSP/SRI | ⏳ |
+| Security review: signer firewall, front-end CSP/SRI | ⏳ (firewall reviewed once; signer must move to its own origin before launch) |
 | Chainstack gRPC, Helius key, domain, Hetzner server | 🙋 |
 | Legal review (ToS, risk disclosures, sanctions screening) | 🙋 |

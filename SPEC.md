@@ -91,8 +91,8 @@ docs/
 
 Program IDs, IDLs, fee accounts, tip accounts, minimum tips, rent and endpoints change. pump.fun has shipped about ten interface changes since May 2025; the 2026-04-28 change broke every bot that missed it.
 
-- Every program ID, seed, discriminator, endpoint and fallback tip account lives in `packages/core/src/constants.ts`, each with a source URL comment. Nothing is hardcoded elsewhere.
-- Read live, never hardcode: tip accounts (Jito `getTipAccounts`), rent (`getMinimumBalanceForRentExemption`; rent dropped in 2026), `bonding_curve.creator` (creator vault moves with fee sharing and holder rewards), `FeeConfig`, fee recipient lists, and the token program from the mint owner.
+- Every program ID, seed, discriminator, endpoint and fallback tip account lives in `packages/core/src/constants.ts`, each with a source URL comment. Nothing is hardcoded elsewhere, with one deliberate exception: `packages/signer` embeds its own reviewed copy of the program IDs, discriminators, layouts and **tip accounts**, because the signer must not trust core or the backend at runtime. A CI test cross-checks the signer's copy against core's.
+- Read live, never hardcode: rent (`getMinimumBalanceForRentExemption`; rent dropped in 2026), `bonding_curve.creator` (creator vault moves with fee sharing and holder rewards), `FeeConfig`, fee recipient lists, and the token program from the mint owner. Jito's `getTipAccounts` is read live by the backend only to detect drift; it never feeds the signer (a backend that could add a "tip account" could drain up to the tip cap per trade).
 - Use pump's unified `buy_v2` / `sell_v2` / `buy_exact_quote_in_v2`. PumpSwap pricing uses effective reserves (vault + signed `virtual_quote_reserves`); pricing from the raw vault underquotes boost pools by about 18%.
 - Golden tests: our account lists and quotes must match `@pump-fun/pump-sdk` and `@pump-fun/pump-swap-sdk` in CI.
 - A daily job diffs pump's IDLs and SDK versions and alerts on change (about a week of devnet notice is typical).
@@ -111,7 +111,11 @@ Program IDs, IDLs, fee accounts, tip accounts, minimum tips, rent and endpoints 
   - SOL and token transfers go only to the user's own token accounts, the user's own WSOL account, the connected wallet, or known tip accounts (with a per-preset tip cap).
   - No `Approve` or `SetAuthority` instructions.
   - Every buy variant's amount argument stays under the user's per-trade cap; the daily cap is tracked in the browser.
-- The firewall and keystore live on an isolated origin, iframe or worker with minimal pinned dependencies and no analytics or third-party scripts.
+- The firewall and keystore live on an isolated origin, iframe or worker with minimal pinned dependencies and no analytics or third-party scripts. **A Web Worker alone is not enough for launch:** compromised app JavaScript on the same origin could capture the vault password, reset the daily-spend record, or bind the vault to its own "connected wallet" during onboarding. Public launch requires the signer on its own origin (iframe + strict `postMessage` origin checks); the worker RPC is shaped to move there unchanged.
+- Venue programs are refused unless they have a firewall rule (fail closed). Every new venue (Raydium LaunchLab/CPMM, Jupiter) ships with its rule and malicious-corpus tests; Jupiter needs a route decoder that proves the output lands in the user's own token account.
+- PumpSwap trades are limited to the canonical, LP-burned pool by default (anyone can create a second pool for a pair and take tokens sold into it at min-out 0). PumpSwap `extend_account` is allowed only for that pool, paid by the trading wallet.
+- Sell min-out must be above zero and within the user's slippage of the quote the browser computed itself. Residual risk: a malicious backend can still lie about reserves in the trade context; an optional independent-RPC reserve check in the browser closes it.
+- Armed buy variants each count against the daily cap (they can't be proven mutually exclusive offline), so armed buy grids stay small (≤ 3 variants by default). Sells never consume the buy cap.
 
 **Front-end integrity** (the main threat once keys are in the browser)
 - Strict CSP and Subresource Integrity.
@@ -125,7 +129,8 @@ Program IDs, IDLs, fee accounts, tip accounts, minimum tips, rent and endpoints 
 
 **Money movement**
 - Withdraw to the connected wallet in one click.
-- Any other destination needs a connected-wallet signature plus a 24-hour delay.
+- Any other destination needs a connected-wallet signature plus a 24-hour delay. (Not built yet; until then the signer refuses every other destination.)
+- Nonce slots are created with `CreateAccountWithSeed` (base = trading wallet) so the trading wallet stays the only signer; funding per slot is capped (default 0.002 SOL).
 
 **Limits**
 - Per-user max SOL per trade and per day, enforced by the firewall in the browser and re-checked on the server.
@@ -324,6 +329,7 @@ Build in order. Each phase ends with something runnable and testable.
 
 ### Phase 9: launch hardening
 - Relay limits in writing (Helius Sender above the 50 TPS default; Jito UUID).
+- Signer on its own origin (iframe + `postMessage` origin checks), not just a Web Worker. Launch blocker.
 - Front-end integrity checklist; DDoS/CDN; backups; monitoring; admin access logs; bug bounty.
 - Read each data provider's terms on serving many users from one plan.
 - Legal review before public launch (ToS, risk disclosures, sanctions screening/geo-blocking). This spec is not legal advice.
