@@ -29,7 +29,7 @@ beforeAll(async () => {
   bob = new Browser(env);
   await alice.signIn();
   await bob.signIn();
-});
+}, 60_000);
 afterAll(async () => {
   await env.close();
 });

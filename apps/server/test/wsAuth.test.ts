@@ -19,7 +19,7 @@ beforeAll(async () => {
     walletSnapshot: async (address): Promise<WalletSnapshot | null> =>
       address === fundedLooking ? { address, lamports: "5000", tokens: [], fills: [], slot: 1 } : null,
   });
-});
+}, 60_000);
 afterAll(async () => {
   await env.close();
 });

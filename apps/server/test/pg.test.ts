@@ -20,10 +20,52 @@ import {
 import type { TrackedWalletWrite } from "../src/db/pg/tracked";
 import { setLogLevel } from "../src/log";
 import { addr } from "./helpers";
-import { DRIVERS, type TestDb } from "./pgHelpers";
+import { bunSqlDb, DRIVERS, type TestDb } from "./pgHelpers";
 
 setLogLevel("error");
 const T0 = Date.UTC(2026, 9, 3, 12, 0, 0);
+
+describe("migrations through Bun.sql (production path)", () => {
+  test("an empty database migrates over the wire protocol, in one transaction, idempotently", async () => {
+    const t = await bunSqlDb({ migrate: false });
+    try {
+      expect(await t.db.query("SELECT to_regclass('public.users') AS t")).toEqual([{ t: null }]);
+      expect(await migrate(t.db, MIGRATIONS, () => T0)).toEqual({ applied: [1], version: 1 });
+      expect(await migrate(t.db)).toEqual({ applied: [], version: 1 });
+      const tables = (await t.db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).map(
+        (r) => r.tablename,
+      );
+      expect(tables).toEqual([
+        "admin_audit_log",
+        "alert_deliveries",
+        "alerts",
+        "armed_orders",
+        "blacklists",
+        "nonce_slots",
+        "notification_channels",
+        "presets",
+        "push_subscriptions",
+        "schema_migrations",
+        "sessions",
+        "settings",
+        "tracked_wallets",
+        "trading_wallets",
+        "users",
+        "watchlist",
+      ]);
+      // The plpgsql trigger body ($$ ... $$) made it through the simple query protocol intact.
+      await t.db.query("INSERT INTO admin_audit_log (at, actor, action, ok) VALUES (now(), 'x', 'y', true)");
+      await expect(t.db.query("DELETE FROM admin_audit_log")).rejects.toThrow("append-only");
+      // A failing migration rolls back entirely.
+      const broken = [...MIGRATIONS, { version: 2, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" }];
+      await expect(migrate(t.db, broken)).rejects.toThrow();
+      expect(await t.db.query("SELECT to_regclass('public.ok_part') AS t")).toEqual([{ t: null }]);
+      expect((await t.db.query("SELECT max(version) AS v FROM schema_migrations"))[0]?.v).toBe(1);
+    } finally {
+      await t.close();
+    }
+  }, 60_000);
+});
 
 describe.each(DRIVERS)("$name", ({ open }) => {
   let t: TestDb;
@@ -32,7 +74,7 @@ describe.each(DRIVERS)("$name", ({ open }) => {
   beforeAll(async () => {
     t = await open();
     store = new UserStore(t.db);
-  });
+  }, 60_000);
   afterAll(async () => {
     await t.close();
   });

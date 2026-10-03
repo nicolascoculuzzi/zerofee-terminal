@@ -6,9 +6,10 @@
  */
 import { type Address, getAddressFromPublicKey } from "@solana/kit";
 import { createSignInMessage, InMemoryNonceStore } from "@zerofee/auth";
-import type { MeResponse, NonceResponse } from "@zerofee/protocol";
+import type { MeResponse, NonceResponse, SourceHealth } from "@zerofee/protocol";
 import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
+import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
 import { setLogLevel } from "../src/log";
 import { openDb } from "../src/storage/db";
 import { createUserLayer, type UserLayer, type UserLayerOverrides } from "../src/user";
@@ -73,6 +74,72 @@ export interface StartOptions extends Omit<UserLayerOverrides, "db" | "now"> {
   env?: Record<string, string>;
   db?: TestDb;
   clock?: Clock;
+  /** Ingest source (a fake one to drive market prices). */
+  source?: Source | null;
+}
+
+/** A fake ingest source: tests push transactions into the market with emit(). */
+export class TestSource implements Source {
+  readonly name = "test";
+  sink: IngestSink | null = null;
+  start(sink: IngestSink): void {
+    this.sink = sink;
+  }
+  async stop(): Promise<void> {}
+  emit(tx: IngestTx): void {
+    this.sink?.tx(tx);
+  }
+  health(): SourceHealth {
+    return { name: this.name, connected: true, reconnects: 0, messages: 0, lastMessageAt: null, slot: null, dropped: 0, notes: [] };
+  }
+}
+
+export interface OutboundCall {
+  url: string;
+  host: string;
+  headers: Record<string, string>;
+  /** Parsed JSON body (Telegram, Discord) or null. */
+  json: unknown;
+  /** Raw body bytes (Web Push ciphertext). */
+  bytes: Uint8Array | null;
+}
+
+/**
+ * Mock for every outbound alert call: Telegram Bot API, Discord webhooks and push services. `respond`
+ * picks the response per call (default: success). Nothing leaves the process.
+ */
+export function transportMock(respond?: (call: OutboundCall) => Response | undefined) {
+  const calls: OutboundCall[] = [];
+  const fn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const headers: Record<string, string> = {};
+    new Headers(init?.headers).forEach((v, k) => {
+      headers[k] = v;
+    });
+    let bytes: Uint8Array | null = null;
+    let json: unknown = null;
+    if (init?.body instanceof Uint8Array) bytes = init.body;
+    else if (typeof init?.body === "string") {
+      try {
+        json = JSON.parse(init.body);
+      } catch {
+        json = null;
+      }
+    }
+    const call: OutboundCall = { url, host: new URL(url).host, headers, json, bytes };
+    calls.push(call);
+    const custom = respond?.(call);
+    if (custom) return custom;
+    if (call.host === "api.telegram.org") {
+      const method = url.slice(url.lastIndexOf("/") + 1);
+      const result =
+        method === "getMe" ? { id: 1, is_bot: true, username: "zerofee_test_bot" } : method === "getUpdates" ? [] : { message_id: 1 };
+      return Response.json({ ok: true, result });
+    }
+    if (call.host === "discord.com") return new Response(null, { status: 204 });
+    return new Response(null, { status: 201 });
+  }) as typeof fetch;
+  return { fn, calls, of: (host: string) => calls.filter((c) => c.host === host) };
 }
 
 export async function startUserApp(o: StartOptions = {}): Promise<UserTestEnv> {
@@ -99,9 +166,10 @@ export async function startUserApp(o: StartOptions = {}): Promise<UserTestEnv> {
     now: clock.now,
     nonceStore: o.nonceStore ?? new InMemoryNonceStore({ now: clock.now }),
     fetchFn: o.fetchFn ?? rpc.fn,
+    telegramPolling: o.telegramPolling ?? false,
   });
   const app = createApp(cfg, {
-    source: null,
+    source: o.source ?? null,
     db: openDb(":memory:"),
     rpc: new RpcClient({ url: RPC_URL, fetchFn: rpc.fn }),
     fetchFn: rpc.fn,

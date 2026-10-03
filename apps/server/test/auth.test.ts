@@ -14,7 +14,7 @@ let env: UserTestEnv;
 
 beforeAll(async () => {
   env = await startUserApp({ env: { SESSION_TTL_HOURS: "2", SESSION_MAX_PER_USER: "3" } });
-});
+}, 60_000);
 afterAll(async () => {
   await env.close();
 });
@@ -234,7 +234,7 @@ describe("rate limits", () => {
     } finally {
       await small.close();
     }
-  });
+  }, 60_000);
 });
 
 describe("config", () => {

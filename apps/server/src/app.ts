@@ -239,6 +239,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   };
 
   const user = o.user ?? null;
+  // Price / market-cap alerts read live summaries and re-evaluate the mints each Pulse flush changed.
+  user?.attachMarket((mint) => m.summary(mint));
   gateway = new Gateway({
     cfg,
     market: m,
@@ -251,6 +253,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     health,
     debugStats,
     user,
+    onTokensChanged: user ? (mints) => user.alerts.onTokensChanged(mints) : undefined,
   });
 
   // start
@@ -268,7 +271,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
-      (mint) => pulse.isListed(mint) || pulse.columnOf(mint) !== null || (gateway?.isWatched(mint) ?? false),
+      (mint) =>
+        pulse.isListed(mint) ||
+        pulse.columnOf(mint) !== null ||
+        (gateway?.isWatched(mint) ?? false) ||
+        (user?.alerts.watches(mint) ?? false),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);

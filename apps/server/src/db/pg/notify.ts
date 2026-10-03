@@ -395,6 +395,15 @@ export class NotifyRepo {
     });
   }
 
+  async getPushTarget(userId: string, id: string): Promise<PushTarget | null> {
+    const rows = await this.db.query(
+      "SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1::uuid AND id = $2::uuid",
+      [userId, id],
+    );
+    const r = rows[0];
+    return r ? { kind: "push", id: String(r.id), endpoint: String(r.endpoint), p256dh: String(r.p256dh), auth: String(r.auth) } : null;
+  }
+
   async deletePushByEndpoint(userId: string, endpoint: string): Promise<boolean> {
     const rows = await this.db.query("DELETE FROM push_subscriptions WHERE user_id = $1::uuid AND endpoint = $2 RETURNING id", [
       userId,
