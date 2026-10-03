@@ -1,0 +1,324 @@
+import { Clock, Search, Star, UserPlus, Wallet, X, Zap } from "lucide-react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { SocialLinks, Tag } from "../../components/ui/bits";
+import { CopyButton, Kbd } from "../../components/ui/controls";
+import { Modal } from "../../components/ui/Modal";
+import { TokenAvatar } from "../../components/ui/TokenAvatar";
+import { cn } from "../../lib/cn";
+import { fmtAge, fmtSol, fmtUsd, shortAddr } from "../../lib/format";
+import { buy } from "../../lib/tradeActions";
+import { useNow } from "../../lib/useNow";
+import type { SearchResults, TokenSummary, WalletSearchHit } from "../../protocol";
+import { getServices } from "../../services";
+import { useMarket } from "../../state/market";
+import { useSettings } from "../../state/settings";
+import { useToasts } from "../../state/toasts";
+import { useTrackers } from "../../state/trackers";
+import { useUi } from "../../state/ui";
+
+type Item = { kind: "token"; token: TokenSummary } | { kind: "wallet"; wallet: WalletSearchHit };
+
+function TokenRow({
+  token,
+  active,
+  now,
+  onOpen,
+  onHover,
+}: {
+  token: TokenSummary;
+  active: boolean;
+  now: number;
+  onOpen: () => void;
+  onHover: () => void;
+}) {
+  const quickBuy = useSettings((s) => s.quickBuySol);
+  const watched = useSettings((s) => s.watchlist.includes(token.mint));
+  return (
+    <div
+      role="option"
+      aria-selected={active}
+      tabIndex={-1}
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === "Enter" && onOpen()}
+      onPointerMove={onHover}
+      className={cn("flex cursor-pointer items-center gap-2.5 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
+    >
+      <TokenAvatar mint={token.mint} symbol={token.symbol} imageUri={token.imageUri} launchpad={token.launchpad} size={34} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[13px] font-semibold">{token.symbol}</span>
+          <span className="truncate text-xs text-dim">{token.name}</span>
+          {watched && <Star size={11} className="fill-warn text-warn" />}
+          <CopyButton text={token.mint} label="Copy contract address" size={11} />
+        </div>
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="text-buy">{fmtAge(token.createdAt, now)}</span>
+          <span className="font-mono text-dim">{shortAddr(token.mint, 4, 4)}</span>
+          <SocialLinks socials={token.socials} size={11} />
+        </div>
+      </div>
+      <div className="hidden w-[150px] grid-cols-3 gap-2 text-right text-[11px] sm:grid">
+        <span>
+          <span className="block text-dim">MC</span>
+          <span className="font-semibold">{fmtUsd(token.marketCapUsd)}</span>
+        </span>
+        <span>
+          <span className="block text-dim">V</span>
+          {fmtUsd(token.volumeUsd)}
+        </span>
+        <span>
+          <span className="block text-dim">L</span>
+          {fmtUsd(token.liquidityUsd)}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          void buy({ mint: token.mint, sol: quickBuy, source: "search" });
+        }}
+        className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-accent/15 px-2 text-[11px] font-semibold text-accent hover:bg-accent/25"
+        aria-label={`Quick buy ${fmtSol(quickBuy)} SOL of ${token.symbol}`}
+      >
+        <Zap size={11} /> {fmtSol(quickBuy)}
+      </button>
+    </div>
+  );
+}
+
+function WalletRow({
+  wallet,
+  active,
+  onOpen,
+  onHover,
+}: {
+  wallet: WalletSearchHit;
+  active: boolean;
+  onOpen: () => void;
+  onHover: () => void;
+}) {
+  const tracked = useTrackers((s) => s.wallets.some((w) => w.address === wallet.address));
+  const addWallet = useTrackers((s) => s.addWallet);
+  return (
+    <div
+      role="option"
+      aria-selected={active}
+      tabIndex={-1}
+      onClick={onOpen}
+      onKeyDown={(e) => e.key === "Enter" && onOpen()}
+      onPointerMove={onHover}
+      className={cn("flex cursor-pointer items-center gap-2.5 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
+    >
+      <span className="flex h-[34px] w-[34px] items-center justify-center rounded-md bg-elev text-muted">
+        <Wallet size={15} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-xs">{shortAddr(wallet.address, 6, 6)}</span>
+          {wallet.label && <span className="truncate text-xs text-muted">{wallet.label}</span>}
+          {wallet.tags.map((t) => (
+            <Tag key={t} tag={t} />
+          ))}
+          <CopyButton text={wallet.address} label="Copy address" size={11} />
+        </div>
+        <div className="text-[11px] text-dim">
+          Wallet · {wallet.holdings} live token{wallet.holdings === 1 ? "" : "s"} held
+        </div>
+      </div>
+      {!tracked && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (addWallet({ address: wallet.address, name: wallet.label ?? shortAddr(wallet.address), emoji: "👀", alerts: false })) {
+              useToasts.getState().push({ kind: "success", title: "Wallet tracked", body: shortAddr(wallet.address, 6, 6), ttl: 2000 });
+            }
+          }}
+          className="flex h-6 items-center gap-1 rounded-full border border-line px-2 text-[11px] text-muted hover:text-fg"
+        >
+          <UserPlus size={11} /> Track
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function SearchModal() {
+  const open = useUi((s) => s.searchOpen);
+  const setOpen = useUi((s) => s.openSearch);
+  const navigate = useNavigate();
+  const now = useNow();
+  const recent = useSettings((s) => s.recentSearches);
+  const recentTokens = useSettings((s) => s.recentTokens);
+  const addRecentSearch = useSettings((s) => s.addRecentSearch);
+  const addRecentToken = useSettings((s) => s.addRecentToken);
+  const clearRecent = useSettings((s) => s.clearRecentSearches);
+  const tokens = useMarket((s) => s.tokens);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResults>({ tokens: [], wallets: [] });
+  const [active, setActive] = useState(0);
+  const reqId = useRef(0);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setResults({ tokens: [], wallets: [] });
+      setActive(0);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults({ tokens: [], wallets: [] });
+      return;
+    }
+    const id = ++reqId.current;
+    const t = setTimeout(() => {
+      void getServices()
+        .data.search(q, 12)
+        .then((r) => {
+          if (id === reqId.current) {
+            setResults(r);
+            setActive(0);
+          }
+        });
+    }, 90);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const history = useMemo(
+    () =>
+      recentTokens
+        .map((m) => tokens[m])
+        .filter((t): t is TokenSummary => t !== undefined)
+        .slice(0, 6),
+    [recentTokens, tokens],
+  );
+
+  const items: Item[] = useMemo(() => {
+    if (!query.trim()) return history.map((token) => ({ kind: "token" as const, token }));
+    return [
+      ...results.tokens.map((token) => ({ kind: "token" as const, token })),
+      ...results.wallets.map((wallet) => ({ kind: "wallet" as const, wallet })),
+    ];
+  }, [query, results, history]);
+
+  const openItem = (item: Item | undefined) => {
+    if (!item) return;
+    if (query.trim()) addRecentSearch(query);
+    setOpen(false);
+    if (item.kind === "token") {
+      addRecentToken(item.token.mint);
+      navigate(`/t/${item.token.mint}`);
+    } else navigate(`/portfolio?wallet=${encodeURIComponent(item.wallet.address)}`);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((a) => Math.min(items.length - 1, a + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((a) => Math.max(0, a - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const item = items[active];
+      if (item?.kind === "token" && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+        void buy({ mint: item.token.mint, sol: useSettings.getState().quickBuySol, source: "search" });
+        return;
+      }
+      openItem(item);
+    }
+  };
+
+  const tokenCount = query.trim() ? results.tokens.length : history.length;
+
+  return (
+    <Modal open={open} onClose={() => setOpen(false)} bare width={660} label="Search">
+      <div className="flex h-12 items-center gap-2 border-b border-line px-3">
+        <Search size={15} className="text-dim" />
+        <input
+          data-autofocus
+          className="h-full flex-1 bg-transparent text-sm outline-none placeholder:text-dim"
+          placeholder="Search by name, ticker, contract address or wallet…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
+          aria-label="Search"
+        />
+        {query && (
+          <button type="button" aria-label="Clear" onClick={() => setQuery("")} className="text-dim hover:text-fg">
+            <X size={14} />
+          </button>
+        )}
+        <Kbd>Esc</Kbd>
+      </div>
+      <div className="max-h-[60vh] overflow-y-auto py-1" role="listbox" aria-label="Results">
+        {!query.trim() && recent.length > 0 && (
+          <div className="px-3 pb-2 pt-1">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="zf-label flex items-center gap-1">
+                <Clock size={10} /> Recent searches
+              </span>
+              <button type="button" className="text-[10px] text-dim hover:text-fg" onClick={clearRecent}>
+                Clear
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {recent.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setQuery(r)}
+                  className="max-w-[220px] truncate rounded-full border border-line px-2 py-0.5 text-[11px] text-muted hover:text-fg"
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {tokenCount > 0 && <div className="zf-label px-3 pb-1 pt-1">{query.trim() ? "Tokens" : "History"}</div>}
+        {items.map((item, i) =>
+          item.kind === "token" ? (
+            <TokenRow
+              key={item.token.mint}
+              token={item.token}
+              active={i === active}
+              now={now}
+              onOpen={() => openItem(item)}
+              onHover={() => setActive(i)}
+            />
+          ) : (
+            <div key={item.wallet.address}>
+              {i === results.tokens.length && <div className="zf-label px-3 pb-1 pt-2">Wallets</div>}
+              <WalletRow wallet={item.wallet} active={i === active} onOpen={() => openItem(item)} onHover={() => setActive(i)} />
+            </div>
+          ),
+        )}
+        {query.trim() && items.length === 0 && (
+          <div className="px-3 py-8 text-center text-xs text-dim">No tokens or wallets match “{query}”.</div>
+        )}
+        {!query.trim() && items.length === 0 && recent.length === 0 && (
+          <div className="px-3 py-8 text-center text-xs text-dim">Type a name, $ticker, contract address or wallet address.</div>
+        )}
+      </div>
+      <div className="flex items-center gap-3 border-t border-line px-3 py-1.5 text-[10px] text-dim">
+        <span className="flex items-center gap-1">
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> navigate
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>Enter</Kbd> open
+        </span>
+        <span className="flex items-center gap-1">
+          <Kbd>⇧</Kbd>
+          <Kbd>Enter</Kbd> quick buy
+        </span>
+        <span className="ml-auto">Paste a CA anywhere to open it</span>
+      </div>
+    </Modal>
+  );
+}
