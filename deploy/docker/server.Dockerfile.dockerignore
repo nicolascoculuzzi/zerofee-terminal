@@ -1,0 +1,58 @@
+# Build context for deploy/docker/server.Dockerfile (context = repo root). The image gets only what
+# the server needs, and nothing secret. For each path the LAST matching rule wins, so the
+# re-inclusions (!) come first and the hard exclusions (tests, secrets, local state) come last.
+
+# Other apps and the deploy tree contribute only their workspace manifests / the snapshot script.
+apps/*
+!apps/server
+!apps/*/package.json
+deploy/*
+!deploy/backup
+deploy/backup/*
+!deploy/backup/sqlite-snapshot.ts
+
+# Repo metadata, docs and editor state.
+.git
+.github
+.claude
+.fork
+.idea
+.vscode
+docs
+*.md
+**/*.md
+**/.DS_Store
+
+# Build output and installed dependencies (the image installs its own, from bun.lock).
+**/node_modules
+**/dist
+**/build
+**/.vite
+**/coverage
+logs
+data
+
+# Tests, fixtures, dev scripts and IDLs: not needed at runtime.
+**/test
+**/tests
+**/e2e
+**/*.test.ts
+**/scripts
+packages/core/idl
+
+# Secrets and local state: never in an image.
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p8
+**/id.json
+**/*keypair*.json
+**/wallets
+**/keystore
+**/*.db
+**/*.db-*
+**/*.sqlite
+**/*.sqlite3
