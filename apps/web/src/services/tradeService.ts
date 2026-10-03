@@ -14,7 +14,18 @@ export interface ExecutionSettings {
 /** Instant = trading wallet in this browser signs; direct = connected wallet approves each trade. */
 export type TradeMode = "instant" | "direct";
 
-export type TradeSource = "pulse" | "token" | "instant" | "hotkey" | "search" | "tracker" | "social" | "mobile" | "paste" | "portfolio";
+export type TradeSource =
+  | "pulse"
+  | "discover"
+  | "token"
+  | "instant"
+  | "hotkey"
+  | "search"
+  | "tracker"
+  | "social"
+  | "mobile"
+  | "paste"
+  | "portfolio";
 
 interface TradeRequestBase {
   /** Client-generated id; also used as the optimistic-UI key. */

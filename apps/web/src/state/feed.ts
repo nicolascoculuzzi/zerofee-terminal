@@ -174,10 +174,24 @@ export function startFeed(): () => void {
       addedAt: Date.now() - (i + 2) * 86_400_000,
     })),
   );
+  // Send the tracked sets only when membership changes: renames, tags and alert toggles
+  // don't touch the server's subscription (it can hold 10,000 wallets).
+  let sentWallets = "";
+  let sentHandles = "";
   const syncTracked = () => {
     const s = useTrackers.getState();
-    void data.setTrackedWallets(s.wallets.map((w) => w.address));
-    void data.setTrackedHandles(s.handles.map((h) => h.handle));
+    const wallets = s.wallets.map((w) => w.address);
+    const walletsKey = wallets.slice().sort().join(",");
+    if (walletsKey !== sentWallets) {
+      sentWallets = walletsKey;
+      void data.setTrackedWallets(wallets);
+    }
+    const handles = s.handles.map((h) => h.handle);
+    const handlesKey = handles.slice().sort().join(",");
+    if (handlesKey !== sentHandles) {
+      sentHandles = handlesKey;
+      void data.setTrackedHandles(handles);
+    }
   };
   syncTracked();
   let prevWallets = useTrackers.getState().wallets;

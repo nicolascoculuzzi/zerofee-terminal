@@ -321,17 +321,17 @@ const POOL_VENUE: Record<Launchpad, Venue> = {
   other: "other",
 };
 
-const TRACKED_PRESETS: readonly (readonly [string, string])[] = [
-  ["🐋", "Whale A"],
-  ["🧠", "Smart money 1"],
-  ["🎯", "Sniper Sam"],
-  ["🦊", "Fox trader"],
-  ["💎", "Diamond hands"],
-  ["🔥", "Hot wallet"],
-  ["🐸", "Frog fund"],
-  ["👑", "KOL king"],
-  ["🚀", "Early ape"],
-  ["🌙", "Night shift"],
+const TRACKED_PRESETS: readonly string[] = [
+  "Whale A",
+  "Smart money 1",
+  "Sniper Sam",
+  "Fox trader",
+  "Diamond hands",
+  "Hot wallet",
+  "Frog fund",
+  "KOL king",
+  "Early ape",
+  "Night shift",
 ];
 
 const STALE_REASONS = [
@@ -1139,8 +1139,8 @@ export class SimEngine {
     for (let i = 0; i < 14; i++) this.fundingHubs.push(fakeAddress(rng));
     const picks = this.wallets.filter((w) => w.kind === "pro" || w.kind === "kol" || w.kind === "whale").slice(0, 10);
     picks.forEach((w, i) => {
-      const preset = TRACKED_PRESETS[i % TRACKED_PRESETS.length] ?? ["⭐", "Wallet"];
-      this.defaultTracked.push({ address: w.address, emoji: preset[0], name: preset[1] });
+      const name = TRACKED_PRESETS[i % TRACKED_PRESETS.length] ?? "Wallet";
+      this.defaultTracked.push({ address: w.address, emoji: "", name });
     });
     this.setTrackedWallets(this.defaultTracked.map((w) => w.address));
   }

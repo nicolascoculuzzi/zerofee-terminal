@@ -131,7 +131,7 @@ function WalletRow({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            if (addWallet({ address: wallet.address, name: wallet.label ?? shortAddr(wallet.address), emoji: "👀", alerts: false })) {
+            if (addWallet({ address: wallet.address, name: wallet.label ?? shortAddr(wallet.address), emoji: "", alerts: false })) {
               useToasts.getState().push({ kind: "success", title: "Wallet tracked", body: shortAddr(wallet.address, 6, 6), ttl: 2000 });
             }
           }}

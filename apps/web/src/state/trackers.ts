@@ -5,6 +5,7 @@ import type { SocialPost, TrackedTrade } from "../protocol";
 export interface TrackedWallet {
   address: string;
   name: string;
+  /** Optional 1–2 character tag shown before the name (imports may carry an emoji here). */
   emoji: string;
   /** Bell: toast + sound when this wallet trades. */
   alerts: boolean;
@@ -35,6 +36,8 @@ export interface TrackersState {
   removeWallet(address: string): void;
   importWallets(list: Omit<TrackedWallet, "createdAt">[]): number;
   addHandle(handle: string): boolean;
+  /** Bulk add in one store write (pasted order kept on top); returns how many were new. */
+  importHandles(list: (Partial<TrackedHandle> & { handle: string })[]): number;
   updateHandle(handle: string, patch: Partial<TrackedHandle>): void;
   removeHandle(handle: string): void;
   setLive(items: TrackedTrade[]): void;
@@ -42,6 +45,12 @@ export interface TrackersState {
   setPosts(posts: SocialPost[]): void;
   pushPosts(posts: SocialPost[]): void;
   markRead(kind: "trades" | "posts"): void;
+}
+
+/** "@Name" → "name"; null when it isn't a valid X handle (1–15 of a–z, 0–9, _). */
+function normalizeHandle(raw: string): string | null {
+  const handle = raw.trim().replace(/^@/, "").toLowerCase();
+  return /^[a-z0-9_]{1,15}$/.test(handle) ? handle : null;
 }
 
 export const useTrackers = create<TrackersState>()(
@@ -85,11 +94,30 @@ export const useTrackers = create<TrackersState>()(
         return added.length;
       },
       addHandle(raw) {
-        const handle = raw.trim().replace(/^@/, "").toLowerCase();
-        if (!/^[a-z0-9_]{1,15}$/.test(handle)) return false;
+        const handle = normalizeHandle(raw);
+        if (!handle) return false;
         if (get().handles.some((h) => h.handle === handle)) return false;
         set((s) => ({ handles: [{ handle, tweets: true, profile: true, follows: false, addedAt: Date.now() }, ...s.handles] }));
         return true;
+      },
+      importHandles(list) {
+        const have = new Set(get().handles.map((h) => h.handle));
+        const now = Date.now();
+        const fresh: TrackedHandle[] = [];
+        for (const item of list) {
+          const handle = normalizeHandle(item.handle);
+          if (!handle || have.has(handle)) continue;
+          have.add(handle);
+          fresh.push({
+            handle,
+            tweets: item.tweets ?? true,
+            profile: item.profile ?? true,
+            follows: item.follows ?? false,
+            addedAt: now,
+          });
+        }
+        if (fresh.length > 0) set((s) => ({ handles: [...fresh, ...s.handles] }));
+        return fresh.length;
       },
       updateHandle(handle, patch) {
         set((s) => ({ handles: s.handles.map((h) => (h.handle === handle ? { ...h, ...patch } : h)) }));
@@ -115,8 +143,16 @@ export const useTrackers = create<TrackersState>()(
     }),
     {
       name: "zerofee.trackers",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => localStorage),
+      // v1 seeded the demo wallets with emoji; v2 seeds plain names.
+      migrate: (persisted, version) => {
+        const state = persisted as { wallets?: TrackedWallet[] };
+        if (version < 2 && Array.isArray(state.wallets)) {
+          state.wallets = state.wallets.map((w) => ({ ...w, emoji: "" }));
+        }
+        return state as TrackersState;
+      },
       partialize: (s) => ({ wallets: s.wallets, handles: s.handles, seeded: s.seeded }),
     },
   ),
