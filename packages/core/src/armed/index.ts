@@ -13,5 +13,6 @@ export * from "./migration";
 export * from "./model";
 export * from "./nonce";
 export * from "./staticAccounts";
+export * from "./targets";
 export * from "./trigger";
 export * from "./validate";
