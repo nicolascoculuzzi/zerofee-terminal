@@ -131,6 +131,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     onChange: (d) => gateway?.chainDelta(d),
   });
   solUsd?.onPrice((p) => chain.setSolUsd(p));
+  // Kill switch on the chain topic: snapshots carry it, every change goes out as a delta.
+  if (o.user) {
+    chain.setHalt(o.user.halt.state);
+    o.user.halt.onChange((s) => chain.setHalt(s));
+  }
   const programAccounts = new ProgramAccountsCache(rpc);
   const source = o.source === undefined ? createSource(cfg) : o.source;
 
@@ -158,7 +163,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     },
   };
 
-  const tx = new TxHandler({ rpc, dryRun: cfg.dryRun, allowAnonymous: cfg.allowAnonymousTx, landing: cfg.landing, fetchFn: o.fetchFn });
+  const tx = new TxHandler({
+    rpc,
+    dryRun: cfg.dryRun,
+    allowAnonymous: cfg.allowAnonymousTx,
+    landing: cfg.landing,
+    fetchFn: o.fetchFn,
+    halt: o.user?.halt ?? null,
+  });
   const sources = (): Source[] => [source, pumpPortal as unknown as Source].filter(Boolean) as Source[];
 
   const debugStats = (): DebugStats => {

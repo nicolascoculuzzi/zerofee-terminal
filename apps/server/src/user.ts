@@ -5,16 +5,19 @@
  */
 import type { NonceStore } from "@zerofee/auth";
 import type { OrdersSnapshot, TokenSummary, WalletSnapshot } from "@zerofee/protocol";
+import { HaltController } from "./admin/halt";
 import { DiscordTransport } from "./alerts/discord";
 import { Dispatcher, type DispatcherLimits } from "./alerts/dispatcher";
 import { AlertEngine, quoteFromSummary } from "./alerts/engine";
 import { PushTransport } from "./alerts/push";
 import { SecretBox } from "./alerts/secretBox";
 import { TelegramApi, TelegramBot, TelegramTransport } from "./alerts/telegram";
+import { adminRoutes, auditMeta } from "./api/admin";
 import { alertRoutes } from "./api/alerts";
 import { authRoutes } from "./api/auth";
 import { ApiRouter } from "./api/router";
 import { type SettingsHooks, settingsRoutes } from "./api/settings";
+import { AdminAuth } from "./auth/admin";
 import { OriginPolicy } from "./auth/origin";
 import { SessionService } from "./auth/sessions";
 import { decodeKey32, type ServerConfig } from "./config";
@@ -74,6 +77,9 @@ export class UserLayer {
   readonly dispatcher: Dispatcher;
   readonly telegram: TelegramBot | null;
   readonly push: PushTransport | null;
+  /** Admin kill switch: POST /api/tx refuses while halted; published on the `chain` topic. */
+  readonly halt: HaltController;
+  readonly adminAuth: AdminAuth | null;
   /** Settings / tracked-wallet change notifications from the REST API. */
   readonly settingsHooks: SettingsHooks;
   private timers: ReturnType<typeof setInterval>[] = [];
@@ -105,7 +111,7 @@ export class UserLayer {
       auth: new RateLimiter(rl.authPerMin / 60, Math.max(5, Math.ceil(rl.authPerMin / 3))),
       user: new RateLimiter(rl.userPerSec, rl.userBurst),
       tx: new RateLimiter(rl.txPerSec, rl.txPerSec * 2),
-      admin: new RateLimiter(1, 10),
+      admin: new RateLimiter(rl.adminPerMin / 60, Math.max(10, Math.ceil(rl.adminPerMin / 6))),
       test: new RateLimiter(1 / 5, 1),
     };
     this.wsConnPerUser = rl.wsConnPerUser;
@@ -151,7 +157,26 @@ export class UserLayer {
       },
     };
 
-    this.api = new ApiRouter({ sessions: this.sessions, origins: this.origins, limits: this.limits, admin: null });
+    // kill switch + operator endpoints (every admin call is audited, failed authentication included)
+    this.halt = new HaltController(this.store, this.now);
+    this.adminAuth = cfg.adminToken ? new AdminAuth(cfg.adminToken) : null;
+    this.api = new ApiRouter({
+      sessions: this.sessions,
+      origins: this.origins,
+      limits: this.limits,
+      admin: this.adminAuth,
+      onAdminDenied: async (c) => {
+        await this.store.audit.append({
+          at: this.now(),
+          ...auditMeta(c, "unauthenticated"),
+          action: "auth_failed",
+          target: c.url.pathname,
+          ok: false,
+          detail: { method: c.req.method, hadAuthorization: c.req.headers.has("authorization") },
+        });
+      },
+    });
+    this.api.add(adminRoutes(this.store, this.halt, this.now));
     this.api.add(authRoutes(this.sessions));
     this.api.add(settingsRoutes(this.store, this.now, this.settingsHooks));
     this.api.add(
@@ -175,9 +200,11 @@ export class UserLayer {
     };
   }
 
-  /** Loads state that must be in memory before serving (alert index). */
+  /** Loads state that must be in memory before serving (kill switch, alert index). */
   async init(): Promise<void> {
+    await this.halt.load();
     await this.alerts.load();
+    if (!this.adminAuth) log.info("admin endpoints disabled (set ADMIN_TOKEN to enable /api/admin)");
     const n = this.cfg.notifications;
     log.info(
       `alert channels: push ${this.push ? "on" : "off (VAPID keys)"}, telegram ${this.telegram ? (n.telegramWebhookSecret ? "on (webhook)" : "on (polling)") : "off (TELEGRAM_BOT_TOKEN)"}, ` +

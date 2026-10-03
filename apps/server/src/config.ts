@@ -82,6 +82,8 @@ export interface ServerConfig {
     userPerSec: number;
     userBurst: number;
     wsConnPerUser: number;
+    /** Admin calls per IP per minute (failed attempts count too: bounds audit-log flooding). */
+    adminPerMin: number;
   };
   wsMaxSubscriptions: number;
   wsCompression: boolean;
@@ -302,6 +304,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       userPerSec: int(env, "RATE_LIMIT_USER_RPS", 10, 1, 100_000),
       userBurst: int(env, "RATE_LIMIT_USER_BURST", 40, 1, 100_000),
       wsConnPerUser: int(env, "WS_MAX_CONN_PER_USER", 10, 1, 10_000),
+      adminPerMin: int(env, "RATE_LIMIT_ADMIN_PER_MIN", 60, 1, 100_000),
     },
     wsMaxSubscriptions: int(env, "WS_MAX_SUBSCRIPTIONS", 64, 1, 10_000),
     wsCompression: bool(env, "WS_COMPRESSION", false),
