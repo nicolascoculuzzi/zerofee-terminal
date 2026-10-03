@@ -129,14 +129,26 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
+  if (reconciler) reconciler.onMismatch = (mm) => log.info(`pumpportal mismatch ${JSON.stringify(mm)}`);
 
   const sink: IngestSink = {
     tx: (tx) => {
       m.applyTx(tx);
       if (reconciler) {
         for (const ev of tx.events) {
-          if (ev.kind === "pumpCreate") reconciler.seenPrimary("create", ev.mint, tx.receivedAt);
-          if (ev.kind === "pumpMigrate") reconciler.seenPrimary("migrate", ev.mint, tx.receivedAt);
+          if (ev.kind !== "pumpCreate" && ev.kind !== "pumpMigrate") continue;
+          const info = {
+            signature: tx.signature,
+            slot: tx.slot,
+            detail: {
+              quoteMint: ev.quoteMint,
+              crossConnected: pumpPortal?.stats.connected ?? false,
+              ...(ev.kind === "pumpCreate"
+                ? { mayhem: ev.isMayhemMode, tokenProgram: ev.tokenProgram, cashback: ev.isCashbackEnabled, user: ev.user }
+                : {}),
+            },
+          };
+          reconciler.seenPrimary(ev.kind === "pumpCreate" ? "create" : "migrate", ev.mint, tx.receivedAt, info);
         }
       }
     },
@@ -181,8 +193,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       const lead = [...r.leadMs].sort((a, b) => a - b);
       const q = (p: number) => (lead.length ? lead[Math.min(lead.length - 1, Math.floor((p / 100) * lead.length))] : "-");
       notes.push(
-        `pumpportal reconcile: matched ${r.matched}, primary-only ${r.primaryOnly}, pumpportal-only ${r.crossOnly}; ` +
-          `pumpportal arrives after us by p50=${q(50)} p90=${q(90)} ms`,
+        `pumpportal reconcile: matched ${r.matched}, late ${r.late}, primary-only ${r.primaryOnly}, pumpportal-only ${r.crossOnly}, ` +
+          `repeats ${r.repeats}, pending ${reconciler.pending}; pumpportal arrives after us by p50=${q(50)} p90=${q(90)} ms`,
       );
     }
     const srcHealth = sources().map((s) => s.health());
@@ -254,7 +266,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     programAccounts.start();
   }
   source?.start(sink);
-  pumpPortal?.start((ev) => reconciler?.seenCross(ev.kind, ev.mint, ev.receivedAt));
+  pumpPortal?.start((ev) =>
+    reconciler?.seenCross(ev.kind, ev.mint, ev.receivedAt, {
+      signature: ev.signature,
+      pool: ev.pool,
+      detail: { primaryConnected: source?.health().connected ?? false },
+    }),
+  );
+  const reconcileTimer = reconciler ? setInterval(() => reconciler.sweep(), 5_000) : null;
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
@@ -279,6 +298,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     health,
     async stop() {
       clearInterval(evictTimer);
+      if (reconcileTimer) clearInterval(reconcileTimer);
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();
