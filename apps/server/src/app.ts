@@ -110,7 +110,6 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   restoreMarket(m, reader, {
     sinceMs: now - Math.max(cfg.pulse.migratedWindowMs, cfg.pulse.newMaxAgeMs),
     replaySinceMs: now - cfg.replayHours * 3_600_000,
-    metrics: cfg.metrics,
     now,
   });
 

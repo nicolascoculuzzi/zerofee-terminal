@@ -34,6 +34,11 @@ export interface IngestTx {
   poolMints: AmmPoolMints[];
   /** Absolute post-tx token balances, when the source has meta (lets holder tracking be exact). */
   tokenBalances: TokenBalanceUpdate[] | null;
+  /**
+   * Lamport balances before / after the tx, indexed like `accountKeys`, when the source has meta. Kept as the
+   * source's decimal strings and parsed only where needed (did a known fee wallet get paid?).
+   */
+  lamports?: { pre: readonly string[]; post: readonly string[] } | null;
 }
 
 export type SlotStatus = "processed" | "confirmed" | "finalized" | "dead";

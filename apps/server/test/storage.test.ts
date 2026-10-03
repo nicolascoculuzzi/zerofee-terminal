@@ -144,7 +144,7 @@ describe("restore", () => {
     const before = m.summary(mint);
 
     const m2 = new MarketState(CFG, { resolver: new FakeResolver(), solUsd: () => 100 });
-    const r = restoreMarket(m2, new StorageReader(db), { sinceMs: 0, replaySinceMs: 0, metrics: CFG, now: Date.now() });
+    const r = restoreMarket(m2, new StorageReader(db), { sinceMs: 0, replaySinceMs: 0, now: Date.now() });
     expect(r).toMatchObject({ tokens: 1, replayed: 1, trades: 4 });
     const after = m2.summary(mint);
     expect(after).toMatchObject({
