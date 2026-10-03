@@ -116,6 +116,7 @@ export class RpcLogsSource implements Source {
   private connect(): void {
     if (this.stopped) return;
     const Impl = this.opts.WebSocketImpl ?? WebSocket;
+    this.connectedAt = 0; // set on open; a connect that never opens must not count as "stayed up"
     const ws = new Impl(this.opts.wsUrl);
     this.ws = ws;
     ws.onopen = () => {
@@ -148,8 +149,9 @@ export class RpcLogsSource implements Source {
       this.ws = null;
       this.subs.clear();
       if (this.stopped) return;
-      // A connection that stayed up for a minute resets the backoff.
-      if (Date.now() - this.connectedAt > 60_000) this.backoff.reset();
+      // Only a connection that actually opened and stayed up for a minute resets the backoff;
+      // failed connects keep backing off (connectedAt stays 0 until onopen).
+      if (this.connectedAt > 0 && Date.now() - this.connectedAt > 60_000) this.backoff.reset();
       const delay = this.backoff.next();
       this.stats.reconnects++;
       log.warn(`socket closed (${ev.code} ${ev.reason || ""}); reconnect #${this.stats.reconnects} in ${delay} ms`);
