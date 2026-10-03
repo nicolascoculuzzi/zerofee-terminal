@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /*
@@ -26,7 +26,7 @@ const SIZES: Record<ButtonSize, string> = {
   lg: "h-8 px-4 text-sm gap-2 rounded-md",
 };
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ComponentProps<"button"> {
   variant?: ButtonVariant;
   size?: ButtonSize;
   icon?: ReactNode;
@@ -50,7 +50,7 @@ export function Button({ variant = "subtle", size = "sm", icon, className, child
   );
 }
 
-export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface IconButtonProps extends ComponentProps<"button"> {
   label: string;
   size?: "xs" | "sm" | "md";
   active?: boolean;

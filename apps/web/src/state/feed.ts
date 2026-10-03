@@ -273,7 +273,7 @@ function alertTracked(items: TrackedTrade[]): void {
   const w = byAddress.get(first.trade.maker);
   useToasts.getState().push({
     kind: "info",
-    title: `${w ? `${w.emoji} ${w.name}` : "Tracked wallet"} ${first.trade.side === "buy" ? "bought" : "sold"} ${fmtSol(first.trade.solAmount)} SOL`,
+    title: `${w?.name ?? "Tracked wallet"} ${first.trade.side === "buy" ? "bought" : "sold"} ${fmtSol(first.trade.solAmount)} SOL`,
     body: `$${first.token.symbol}${hits.length > 1 ? ` (+${hits.length - 1} more)` : ""}`,
     action: { label: "Open", run: () => navigateTo(`/t/${first.token.mint}`) },
   });

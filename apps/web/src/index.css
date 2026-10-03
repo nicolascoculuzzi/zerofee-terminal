@@ -84,8 +84,8 @@
   --zf-statusbar-h: 28px;
   --zf-row-h: 28px;
   --zf-row-h-dense: 24px;
-  --zf-pulse-card-h: 88px;
-  --zf-pulse-card-h-compact: 68px;
+  --zf-pulse-card-h: 76px;
+  --zf-pulse-card-h-compact: 56px;
 
   /* Icon sizes */
   --zf-icon-xs: 10px;
@@ -169,6 +169,8 @@
   --spacing-statusbar: var(--zf-statusbar-h);
   --spacing-row: var(--zf-row-h);
   --spacing-row-dense: var(--zf-row-h-dense);
+  --spacing-card: var(--zf-pulse-card-h);
+  --spacing-card-compact: var(--zf-pulse-card-h-compact);
 }
 
 /* Icon sizing: lucide icons take a class instead of a size prop. */
