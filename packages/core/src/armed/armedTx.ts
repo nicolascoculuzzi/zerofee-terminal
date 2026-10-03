@@ -34,7 +34,7 @@ import {
   type Transaction,
   type TransactionPartialSigner,
 } from "@solana/kit";
-import { COMPUTE_BUDGET_PROGRAM_ID, PACKET_DATA_SIZE, SYSTEM_PROGRAM_ID } from "../constants";
+import { PACKET_DATA_SIZE, SYSTEM_PROGRAM_ID } from "../constants";
 import { transactionSize, withBudgetAndTips } from "../tx/assemble";
 import { setComputeUnitLimitInstruction, setComputeUnitPriceInstruction } from "../tx/computeBudget";
 import { type TipAccountSets, type TipSpec, tipInstruction } from "../tx/tip";
@@ -347,9 +347,4 @@ export function inspectArmedTransaction(wireBase64: string, lookupTables: Addres
     instructions,
     nonce,
   };
-}
-
-/** True for Compute Budget instructions (used by validators to skip them). */
-export function isComputeBudgetProgram(program: Address): boolean {
-  return program === COMPUTE_BUDGET_PROGRAM_ID;
 }
