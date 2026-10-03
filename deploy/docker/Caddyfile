@@ -1,0 +1,216 @@
+# zerofee-terminal edge (Caddy 2.11): automatic TLS, the static web build, the /api and /ws reverse
+# proxy, security headers and the kill switches. See docs/ops/DEPLOY.md and docs/ops/RUNBOOK.md.
+#
+# Values come from deploy/docker/.env.production through docker-compose.yml:
+#   APP_DOMAIN         the one canonical app domain, e.g. app.example.com
+#   ACME_EMAIL         Let's Encrypt account e-mail (expiry and policy notices)
+#   SERVER_UPSTREAM    the Bun server; Caddy runs with host networking, so 127.0.0.1:8787
+#   CSP_CONNECT_EXTRA  origins the browser may call besides us (independent RPC, Helius Sender lane)
+#   SIGNER_DOMAIN      the isolated signer origin (commented site block at the bottom)
+#
+# Reload after editing (keeps open WebSockets for up to 5 minutes):
+#   deploy/scripts/dc exec caddy caddy reload --config /etc/caddy/Caddyfile --address unix//run/caddy/admin.sock
+
+{
+	email {$ACME_EMAIL}
+	# The admin API is a socket inside the container: nothing on the host network can reconfigure the
+	# edge (Caddy shares the host's network namespace).
+	admin unix//run/caddy/admin.sock
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+# Response headers for the app origin.
+#
+# Content-Security-Policy, built for the Vite + React production build:
+#   - script-src 'self' only: no inline scripts, no eval. 'wasm-unsafe-eval' lets the signer worker
+#     compile Argon2id (hash-wasm); it does not allow JavaScript eval.
+#   - style-src 'self': the build emits CSS files and React sets styles through the CSSOM, which CSP
+#     allows. If a dependency injects <style> tags, import its CSS file instead or add its sha256
+#     hash. Never add 'unsafe-inline' to script-src.
+#   - connect-src: our API and WebSocket, plus CSP_CONNECT_EXTRA (by default Helius Sender's browser
+#     endpoint and the public RPC used for the independent reserve check).
+#   - img-src https: token images come from arbitrary hosts named in token metadata.
+#   - frame-src 'none' and frame-ancestors 'none' until the signer moves to its own origin (below).
+# The Report-Only header previews Trusted Types: violations show in the browser console without
+# breaking anything. Promote it into the enforced policy once the console is clean.
+(app_headers) {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' wss://{$APP_DOMAIN} {$CSP_CONNECT_EXTRA}; worker-src 'self'; manifest-src 'self'; media-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "accelerometer=(), autoplay=(self), camera=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), hid=(), idle-detection=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-create=(self), publickey-credentials-get=(self), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=(), clipboard-read=(self), clipboard-write=(self), browsing-topics=()"
+		# same-origin-allow-popups keeps popup-based wallet flows working.
+		Cross-Origin-Opener-Policy "same-origin-allow-popups"
+		Cross-Origin-Resource-Policy "same-origin"
+		Origin-Agent-Cluster "?1"
+		X-Permitted-Cross-Domain-Policies "none"
+		-Server
+	}
+}
+
+# Access log without the data that would let anyone link people to wallets: client IPs truncated,
+# request and response headers (cookies, auth, user agent) dropped.
+(private_log) {
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>client_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
+{$APP_DOMAIN} {
+	import app_headers
+	import private_log
+	encode zstd gzip
+
+	# Kill switches: deploy/scripts/kill-switch.sh creates these files in /opt/zerofee/flags on the
+	# host. Caddy checks them on every request, so they act at once, with no reload.
+	@maintenance file {
+		root /flags
+		try_files /MAINTENANCE
+	}
+	@tx_halted {
+		path /api/tx
+		file {
+			root /flags
+			try_files /HALT_TX
+		}
+	}
+	@internal path /metrics /metrics/* /debug /debug/*
+
+	# route keeps the literal order below; the first matching handle wins.
+	route {
+		handle @maintenance {
+			header Cache-Control "no-store"
+			header Retry-After "300"
+			# Evicts any cached (possibly tampered) assets. Never "storage": that would wipe browser vaults.
+			header Clear-Site-Data `"cache"`
+			respond "zerofee-terminal is offline for maintenance. Funds stay in your own wallets on-chain; nothing is needed from you." 503
+		}
+		handle @tx_halted {
+			header Content-Type "application/json"
+			header Cache-Control "no-store"
+			respond `{"error":"trading is halted by the operator","code":"unavailable"}` 503
+		}
+		# Internal endpoints never leave the host (the server also guards /metrics itself).
+		handle @internal {
+			respond 404
+		}
+		# lb_try_duration: while the server restarts (deploys), wait for it instead of failing at once.
+		# Caddy retries only requests that never reached the upstream, so POST /api/tx can't double-send.
+		handle /api/* {
+			request_body {
+				max_size 64KB
+			}
+			reverse_proxy {$SERVER_UPSTREAM:127.0.0.1:8787} {
+				lb_try_duration 5s
+			}
+		}
+		handle /ws {
+			reverse_proxy {$SERVER_UPSTREAM:127.0.0.1:8787} {
+				lb_try_duration 5s
+				# Config reloads keep open WebSockets this long instead of dropping every client at once.
+				stream_close_delay 5m
+			}
+		}
+		# Content-hashed build assets: cached for a year. A missing asset is a 404, never index.html.
+		handle /assets/* {
+			root * /srv/web/current
+			header Cache-Control "public, max-age=31536000, immutable"
+			file_server {
+				precompressed br zstd gzip
+			}
+		}
+		# Everything else is the single-page app, always revalidated so a deploy (or a fix) lands at once.
+		handle {
+			root * /srv/web/current
+			header Cache-Control "no-cache"
+			try_files {path} /index.html
+			file_server {
+				precompressed br zstd gzip
+			}
+		}
+	}
+
+	# Errors (404 from a missing asset, 502 while the server restarts) are never cached.
+	handle_errors {
+		header Cache-Control "no-store"
+		respond "{err.status_code} {err.status_text}" {err.status_code}
+	}
+}
+
+# --- Isolated signer origin (SPEC: public launch blocker) -------------------------------------------
+# The keystore and signer firewall must run on their own origin, embedded by the app as an iframe
+# and reached only through postMessage with strict origin checks. Its policy is tighter than the
+# app's: no network access at all (connect-src 'none'), framing by the app only, Trusted Types
+# enforced. To enable it once the signer build exists:
+#   1. DNS: point SIGNER_DOMAIN (e.g. signer.example.com) at this server (A and AAAA records).
+#   2. Set SIGNER_DOMAIN in .env.production. Publish the signer build under
+#      /opt/zerofee/web/signer/current (a separate release tree from the app).
+#   3. Uncomment the block below. In app_headers above, change frame-src 'none' to
+#      frame-src https://{$SIGNER_DOMAIN}, and give the publickey-credentials-* Permissions-Policy
+#      entries the value (self "https://{$SIGNER_DOMAIN}").
+#   4. `deploy/scripts/dc up -d caddy`, then the reload command at the top.
+#
+# {$SIGNER_DOMAIN} {
+# 	header {
+# 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+# 		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; worker-src 'self'; frame-src 'none'; frame-ancestors https://{$APP_DOMAIN}; base-uri 'none'; form-action 'none'; object-src 'none'; require-trusted-types-for 'script'; trusted-types 'none'"
+# 		X-Content-Type-Options "nosniff"
+# 		Referrer-Policy "no-referrer"
+# 		Permissions-Policy "accelerometer=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), hid=(), microphone=(), midi=(), payment=(), serial=(), usb=(), clipboard-read=(), clipboard-write=(self), publickey-credentials-create=(self), publickey-credentials-get=(self), browsing-topics=()"
+# 		Cross-Origin-Opener-Policy "same-origin"
+# 		Cross-Origin-Resource-Policy "same-origin"
+# 		Origin-Agent-Cluster "?1"
+# 		-Server
+# 	}
+# 	import private_log
+# 	encode zstd gzip
+#
+# 	@maintenance file {
+# 		root /flags
+# 		try_files /MAINTENANCE
+# 	}
+# 	route {
+# 		handle @maintenance {
+# 			header Cache-Control "no-store"
+# 			respond 503
+# 		}
+# 		handle /assets/* {
+# 			root * /srv/web/signer/current
+# 			header Cache-Control "public, max-age=31536000, immutable"
+# 			file_server
+# 		}
+# 		handle {
+# 			root * /srv/web/signer/current
+# 			header Cache-Control "no-cache"
+# 			try_files {path} /index.html
+# 			file_server
+# 		}
+# 	}
+# 	handle_errors {
+# 		header Cache-Control "no-store"
+# 		respond "{err.status_code} {err.status_text}" {err.status_code}
+# 	}
+# }
