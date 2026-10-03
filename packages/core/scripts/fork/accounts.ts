@@ -347,22 +347,31 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
   }
   log(`  ${txs} transactions, ${seenMints.size} curve mints classified (${rejected} ineligible)`);
 
+  // Required: keep scanning up to 15 transactions, but stop at the first eligible pool once 6 transactions
+  // have been spent looking for an SPL-base one.
   const seenPools = new Set<string>();
   const eligiblePools: ForkTarget[] = [];
-  const poolTxs = await scanRecent(rpc, PUMP_AMM_PROGRAM_ID, 6, async (events) => {
+  const poolRejects = new Map<string, number>();
+  let poolTxsSeen = 0;
+  const poolTxs = await scanRecent(rpc, PUMP_AMM_PROGRAM_ID, 15, async (events) => {
+    poolTxsSeen++;
     const pools = [
       ...new Set(events.flatMap((e) => ((e.kind === "ammBuy" || e.kind === "ammSell") && !seenPools.has(e.pool) ? [e.pool] : []))),
     ] as Address[];
     for (const p of pools) seenPools.add(p);
-    if (pools.length) eligiblePools.push(...(await classifyPools(rpc, pools)).filter((c) => !c.reject).map((c) => c.target));
-    return eligiblePools.some((t) => t.tokenProgram === TOKEN_PROGRAM_ID);
+    for (const c of pools.length ? await classifyPools(rpc, pools) : []) {
+      if (c.reject) poolRejects.set(c.reject, (poolRejects.get(c.reject) ?? 0) + 1);
+      else eligiblePools.push(c.target);
+    }
+    return eligiblePools.some((t) => t.tokenProgram === TOKEN_PROGRAM_ID) || (eligiblePools.length > 0 && poolTxsSeen >= 6);
   });
   const pool = eligiblePools.find((t) => t.tokenProgram === TOKEN_PROGRAM_ID) ?? eligiblePools[0];
   if (pool) {
     found.set("pumpswap", pool);
     log(`  picked pumpswap  ${pool.mint} (pool ${pool.market}, ${pool.note})`);
   }
-  log(`  ${poolTxs} transactions, ${seenPools.size} PumpSwap pools classified`);
+  const why = [...poolRejects].map(([reason, n]) => `${n} ${reason}`).join(", ");
+  log(`  ${poolTxs} transactions, ${seenPools.size} PumpSwap pools classified${why ? ` (ineligible: ${why})` : ""}`);
 
   const order: TargetKind[] = ["curve2022", "curveSpl", "mayhem", "pumpswap"];
   return order.flatMap((k) => {
