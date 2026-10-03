@@ -44,11 +44,17 @@ export interface TokenSummary {
   createdSlot: number | null;
   /** Live creator (`bonding_curve.creator` / `pool.coin_creator`). */
   creator: string | null;
-  /** Price in SOL per whole token. */
+  /**
+   * Price in SOL per whole token. For non-SOL quotes this is converted (USDC via SOL/USD); it is 0 when
+   * the quote's SOL value is unknown (exotic quote mints) - use priceQuote / mcQuote then.
+   */
   priceSol: number;
   priceUsd: number | null;
   mcSol: number;
   mcUsd: number | null;
+  /** Price and market cap in quote-mint UI units (always known). */
+  priceQuote: number;
+  mcQuote: number;
   /** Quote-side liquidity in SOL: real quote reserves on the curve, the quote vault on PumpSwap. */
   liquidity: number;
   liquidityUsd: number | null;
