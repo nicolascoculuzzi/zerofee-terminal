@@ -115,14 +115,16 @@ let readVaultEpoch: (vault: Vault) => number;
 const addressDecoder = getAddressDecoder();
 const utf8 = (text: string) => new TextEncoder().encode(text);
 
+/** Metadata comes from unauthenticated storage: coerce it to sane shapes before it reaches any UI. */
 function toWalletInfo(stored: StoredWalletInfo, address: Address): WalletInfo {
+  const label = typeof stored.label === "string" ? stored.label.slice(0, MAX_LABEL_LENGTH) : "Wallet";
   return {
     id: address,
     address,
-    label: stored.label,
-    createdAt: stored.createdAt,
-    source: stored.source,
-    ...(stored.exportedAt !== undefined ? { exportedAt: stored.exportedAt } : {}),
+    label,
+    createdAt: Number.isFinite(stored.createdAt) ? stored.createdAt : 0,
+    source: stored.source === "imported" ? "imported" : "generated",
+    ...(Number.isFinite(stored.exportedAt) ? { exportedAt: stored.exportedAt as number } : {}),
   };
 }
 
