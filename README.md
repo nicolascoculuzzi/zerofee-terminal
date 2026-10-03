@@ -11,7 +11,35 @@ An Axiom-style Solana memecoin trading terminal with **zero platform fees**. You
 
 ## Status
 
-Early build. Phase 1, the trade engine, is in progress. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
+Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve and PumpSwap buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. The wallet layer, web UI and live data feed are next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
+
+## Quick start (developers)
+
+Requires [Bun](https://bun.sh) 1.3+.
+
+```bash
+bun install
+```
+
+```bash
+bun test
+```
+
+```bash
+cp .env.example .env
+```
+
+Dry-run a trade. This builds and simulates against mainnet and **never sends** while `DRY_RUN=true`, which is the default. `SIMULATE_AS` lets you simulate as any address that holds SOL, with no key needed:
+
+```bash
+SIMULATE_AS=<address-with-SOL> bun run trade buy <mint> 0.01
+```
+
+```bash
+SIMULATE_AS=<address-holding-the-token> bun run trade sell <mint> 50
+```
+
+**Sending real trades:** put a throwaway dev wallet's key in `.env` (`WALLET_PRIVATE_KEY`), keep only what you'd lose on it, and set `DRY_RUN=false`. `MAX_BUY_SOL` and `MAX_DAILY_SPEND_SOL` are hard caps. Latency measurements go in [NOTES.md](NOTES.md).
 
 ## Docs
 

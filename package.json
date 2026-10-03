@@ -1,0 +1,21 @@
+{
+  "name": "zerofee-terminal",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p apps/cli --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "trade": "bun run apps/cli/src/index.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  }
+}
