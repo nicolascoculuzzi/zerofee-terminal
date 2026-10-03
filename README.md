@@ -58,6 +58,7 @@ For production set `INGEST_SOURCE=yellowstone` with `YELLOWSTONE_ENDPOINT` and `
 ## Docs
 
 - [SPEC.md](SPEC.md): architecture, security rules, stack, feature checklist, phases
+- [Mainnet-fork testing](docs/dev/FORK_TESTING.md): `bun run fork:start` + `bun run e2e` lands every trade path on a local validator running mainnet's programs and state, no real money
 - [Research report](docs/reports/Solana%20trading%20terminal%20teardown.md): how Axiom and its competitors work, pump.fun internals, transaction landing and MEV, data feeds, token analytics, costs
 - [Raw research notes](docs/research_notes/): every claim with its source
 
