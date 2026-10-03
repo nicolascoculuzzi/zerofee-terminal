@@ -193,7 +193,7 @@ export function measureArmedTransaction(p: ArmedTxParams): ArmedTxSize {
 // Pre-signed cancel
 // ---------------------------------------------------------------------------------------------
 
-/** Compute units for a cancel (advance nonce + compute budget ≈ 450 CU measured on Agave 4.3; 2,000 leaves headroom). */
+/** Compute units for a cancel: it consumed 300 CU on Agave 4.3 (local validator, 2026-10-03); 2,000 leaves headroom. */
 export const DEFAULT_CANCEL_CU_LIMIT = 2_000;
 
 export interface CancelTxOptions {
