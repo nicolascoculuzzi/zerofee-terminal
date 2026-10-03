@@ -125,6 +125,25 @@ describe("Telegram transport", () => {
   });
 });
 
+describe("Telegram bot token hygiene", () => {
+  test("network errors never carry the token (it is part of every request URL)", async () => {
+    const token = "123456:SECRETSECRETSECRETSECRETSECRETSECRET";
+    const leaky = (async (input: string | URL | Request) => {
+      const e = new Error(`connect ECONNREFUSED while fetching ${String(input)}`) as Error & { path?: string };
+      e.path = String(input);
+      throw e;
+    }) as unknown as typeof fetch;
+    const t = new TelegramTransport(new TelegramApi(token, leaky));
+    const r = await t.send({ chatId: "1" }, msg());
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(r)).not.toContain("SECRETSECRET");
+    expect(!r.ok && r.error).toContain("<bot-token>");
+    const err = await new TelegramApi(token, leaky).call("getMe", {}).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(JSON.stringify({ ...err, message: err.message })).not.toContain("SECRETSECRET");
+  });
+});
+
 describe("Web Push", () => {
   test("endpoint allowlist (SSRF guard) and key validation", () => {
     for (const ok of [

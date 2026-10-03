@@ -35,15 +35,27 @@ export class TelegramApi {
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
+  /** Error text with the bot token removed (the token is part of every request URL). */
+  private redact(e: unknown): Error {
+    const text = e instanceof Error ? `${e.name === "Error" ? "" : `${e.name}: `}${e.message}` : String(e);
+    return new Error(text.replaceAll(this.token, "<bot-token>"));
+  }
+
   async call<T>(method: string, body: Record<string, unknown>, timeoutMs = SEND_TIMEOUT_MS, signal?: AbortSignal): Promise<TgResponse<T>> {
     const signals = [AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])];
-    const r = await this.fetchFn(`${API}/bot${this.token}/${method}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      redirect: "error",
-      signal: AbortSignal.any(signals),
-    });
+    let r: Response;
+    try {
+      r = await this.fetchFn(`${API}/bot${this.token}/${method}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        redirect: "error",
+        signal: AbortSignal.any(signals),
+      });
+    } catch (e) {
+      // Bun's fetch errors carry the full URL (token included) in `path`: never let them escape.
+      throw this.redact(e);
+    }
     const j = (await r.json().catch(() => null)) as TgResponse<T> | null;
     if (!j || typeof j !== "object" || typeof j.ok !== "boolean")
       return { ok: false, error_code: r.status, description: `HTTP ${r.status}` };
