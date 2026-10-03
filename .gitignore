@@ -29,6 +29,12 @@ coverage/
 *.log
 logs/
 
+# Local mainnet-fork validator state (fork:start defaults to the OS temp dir; these cover FORK_DIR=.fork
+# and solana-test-validator's own default ledger when run by hand)
+.fork/
+test-ledger/
+fork-ledger/
+
 # OS and editor
 .DS_Store
 .idea/
