@@ -38,7 +38,7 @@ export interface CurveFeeRates {
   protocolFeeBps: bigint;
   /** 0 when the curve has no creator (creator == default pubkey). */
   creatorFeeBps: bigint;
-  /** Share of the protocol fee routed to the buyback recipient (5000 = 50%). Informational. */
+  /** Share of the protocol fee routed to the buyback recipient (5000 = 50%; 0 for mayhem coins). Informational. */
   buybackBps: bigint;
 }
 
@@ -93,7 +93,9 @@ export function curveFeeRates(args: {
     creatorFeeBps = global.creatorFeeBasisPoints;
   }
   if (curve.creator === DEFAULT_PUBKEY) creatorFeeBps = 0n;
-  return { protocolFeeBps, creatorFeeBps, buybackBps: global.buybackBasisPoints };
+  // Mayhem coins pay the whole protocol fee to the reserved fee recipient: no buyback carve-out (observed on a
+  // mainnet fork 2026-10-03, packages/core/e2e/mayhem.e2e.ts; the buyback account is passed but not credited).
+  return { protocolFeeBps, creatorFeeBps, buybackBps: curve.isMayhemMode ? 0n : global.buybackBasisPoints };
 }
 
 export interface CurveFeeBreakdown {

@@ -149,7 +149,10 @@ export interface AmmSwapEvent {
   /** PRE-trade raw vault balances. */
   poolBaseReserves: bigint;
   poolQuoteReserves: bigint;
-  /** buy: quote_amount_in (pre-fee); sell: quote_amount_out (pre-fee). */
+  /**
+   * buy: quote_amount_in - pre-fee for `buy`, but the TOTAL paid incl. fees for `buy_exact_quote_in`;
+   * sell: quote_amount_out (pre-fee).
+   */
   quoteAmount: bigint;
   lpFeeBps: bigint;
   lpFee: bigint;
@@ -157,7 +160,11 @@ export interface AmmSwapEvent {
   protocolFee: bigint;
   /** buy: quote_amount_in_with_lp_fee (what enters the quote vault); sell: quote_amount_out_without_lp_fee (what leaves it). */
   quoteAmountVault: bigint;
-  /** buy: user_quote_amount_in (total paid); sell: user_quote_amount_out (received). */
+  /**
+   * buy: user_quote_amount_in - total paid for `buy`, but the pre-fee amount for `buy_exact_quote_in` (the two
+   * fields swap meaning; observed on a mainnet fork 2026-10-03, see docs/dev/FORK_TESTING.md); sell:
+   * user_quote_amount_out (received).
+   */
   userQuoteAmount: bigint;
   pool: Address;
   user: Address;
