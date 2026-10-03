@@ -21,6 +21,7 @@ import {
   LAUNCHLAB_POOL_STATUS,
   LaunchLabCurveCompleteError,
   type LaunchLabCurveState,
+  type LaunchLabPoolCreateEvent,
   type LaunchLabTradeEvent,
   type LaunchLabTradeParams,
   launchLabAuthorityPda,
@@ -380,6 +381,33 @@ describe("mainnet replays (exact to the unit)", () => {
       expect(fromLogs).toEqual([fromCpi as LaunchLabTradeEvent]);
       expect(decodeEventsFromLogs(tx.logs).some((e) => e.kind === "pumpTrade")).toBe(false);
     }
+  });
+
+  test("PoolCreateEvent of a real initialize_with_token_2022 (+ dev buy) - tx 5eKxf9VN…", async () => {
+    const tx = rtx("create");
+    const init = tx.instructions.find((i) => i.programId === RAYDIUM_LAUNCHLAB_PROGRAM_ID && i.where.startsWith("top"));
+    expect(init && bytesOf(init.data.subarray(0, 8))).toEqual(bytesOf(RAYDIUM_LAUNCHLAB_IX.initializeWithToken2022));
+    const events = decodeEventsFromLogs(tx.logs);
+    expect(events.map((e) => e.kind)).toEqual(["launchlabPoolCreate", "launchlabTrade"]);
+    const [create, trade] = events as [LaunchLabPoolCreateEvent, LaunchLabTradeEvent];
+    // The event-CPI copies decode to the same events.
+    const cpi = eventCpiPayloads(tx, RAYDIUM_LAUNCHLAB_PROGRAM_ID).map((p) => decodeLaunchLabEventPayload(p));
+    expect(cpi).toEqual([create, trade]);
+    const accounts = init?.accounts as Address[];
+    expect([create.creator, create.config, create.pool]).toEqual([accounts[1], accounts[2], accounts[5]] as Address[]);
+    expect(await launchLabPoolPda(accounts[6] as Address, accounts[7] as Address)).toBe(create.pool);
+    expect(create).toMatchObject({
+      name: "Catetober",
+      symbol: "CATETOBER",
+      decimals: 6,
+      curveType: 0,
+      supply: 1_000_000_000_000_000n,
+      totalBaseSell: 793_100_000_000_000n,
+      migrateType: 1,
+    });
+    expect(create.uri.startsWith("https://")).toBe(true);
+    expect(trade.pool).toBe(create.pool);
+    expect([trade.realBaseBefore, trade.realQuoteBefore]).toEqual([0n, 0n]);
   });
 });
 
