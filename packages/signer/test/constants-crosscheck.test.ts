@@ -38,7 +38,13 @@ import {
   PUMP_INSTRUCTION_NAMES,
   type VenueInstruction,
 } from "../src/firewall/rules/pump-idl";
-import { HELIUS_SENDER_TIP_ACCOUNTS, JITO_TIP_ACCOUNTS, SIGNER_ALLOWED_PROGRAMS, SIGNER_TIP_ACCOUNTS } from "../src/policy";
+import {
+  DEFAULT_FIREWALL_CAPS,
+  HELIUS_SENDER_TIP_ACCOUNTS,
+  JITO_TIP_ACCOUNTS,
+  SIGNER_ALLOWED_PROGRAMS,
+  SIGNER_TIP_ACCOUNTS,
+} from "../src/policy";
 import subset from "./fixtures/pump-idl-subset.json";
 import { randomAddress } from "./helpers/fixtures";
 
@@ -100,6 +106,19 @@ describe("tip accounts equal core's", () => {
     for (let i = 0; i < 200; i++) {
       expect(SIGNER_TIP_ACCOUNTS).toContain(core.resolveTipAccount({ lane: i % 2 ? "jito" : "helius", lamports: 1n }));
     }
+  });
+});
+
+describe("the shipped caps cover what core emits", () => {
+  test.each(Object.entries(core.DEFAULT_CU_LIMITS))("compute-unit cap covers core's static %s limit (%d CU)", (_route, units) => {
+    expect(units).toBeLessThanOrEqual(DEFAULT_FIREWALL_CAPS.maxComputeUnitLimit);
+  });
+
+  test("tip cap covers every landing mode's minimum (Sender Max 0.001 SOL; Helius SWQoS + Jito)", () => {
+    expect(DEFAULT_FIREWALL_CAPS.maxTipLamports).toBeGreaterThanOrEqual(core.HELIUS_SENDER_MAX_MIN_TIP_LAMPORTS);
+    expect(DEFAULT_FIREWALL_CAPS.maxTipLamports).toBeGreaterThanOrEqual(
+      core.HELIUS_SENDER_SWQOS_MIN_TIP_LAMPORTS + core.JITO_MIN_TIP_LAMPORTS,
+    );
   });
 });
 

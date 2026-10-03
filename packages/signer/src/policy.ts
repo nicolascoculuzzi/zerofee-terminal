@@ -83,7 +83,7 @@ export const DEFAULT_FIREWALL_CAPS: FirewallCaps = Object.freeze({
   maxTipLamports: 10_000_000n,
   /** 0.005 SOL priority fee per transaction. */
   maxPriorityFeeLamports: 5_000_000n,
-  /** core's static limits top out at 150,000 CU (PumpSwap buy); simulated x 1.1 stays far below this. */
+  /** Well above core's static per-route limits (DEFAULT_CU_LIMITS, ~1.3x the measured worst case); cross-checked in tests. */
   maxComputeUnitLimit: 400_000,
   /** 0.002 SOL per new nonce slot (SPEC "Money movement"). */
   maxNonceAccountLamports: DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS,
