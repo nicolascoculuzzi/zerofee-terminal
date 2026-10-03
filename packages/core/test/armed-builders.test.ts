@@ -481,11 +481,10 @@ describe("verification binds the metadata to the signed bytes (accounts, full-ex
     );
     expect(await codes(pricey)).toContain("tip-cap");
     const wsol = await findAssociatedTokenAddress(wallet, WSOL_MINT, TOKEN_PROGRAM_ID);
-    const sneaky = await armOrder(
-      { ...(await stopLossSpec(wallet)), cancel: { tips: [{ lane: "jito", lamports: 1_000n, tipAccount: wsol }] } },
-      signer,
-    );
-    expect(await codes(sneaky)).toContain("transfer-not-allowed");
+    // core refuses an unreviewed tip account while building, before intake validation ever sees it
+    await expect(
+      armOrder({ ...(await stopLossSpec(wallet)), cancel: { tips: [{ lane: "jito", lamports: 1_000n, tipAccount: wsol }] } }, signer),
+    ).rejects.toThrow(/not a reviewed jito tip account/);
   });
 
   test("a CU price without a CU limit is charged on the default limit and refused", async () => {

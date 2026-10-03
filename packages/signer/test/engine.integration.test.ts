@@ -23,6 +23,7 @@ import {
   DEFAULT_PUBKEY,
   type FeeCaps,
   type LandingMode,
+  minOutForTrade,
   PUMP_AMM_IX,
   type PumpSwapState,
   quoteAmmBuyExactBase,
@@ -133,6 +134,20 @@ function tradeIndexOf(instructions: readonly Instruction[]): number {
   const i = instructions.findIndex((ix) => (ix.programAddress === PUMP_PROGRAM || ix.programAddress === PUMP_AMM_PROGRAM) && !isExtend(ix));
   if (i < 0) throw new Error("core built no trade instruction");
   return i;
+}
+
+/** Zero the u64 argument holding `value` (after the 8-byte discriminator): a tampered minimum out. */
+function zeroU64Arg(data: ArrayLike<number>, value: bigint): Uint8Array {
+  const needle = new Uint8Array(8);
+  new DataView(needle.buffer).setBigUint64(0, value, true);
+  const out = new Uint8Array(data);
+  for (let i = 8; i + 8 <= out.length; i++) {
+    if (needle.every((b, k) => out[i + k] === b)) {
+      out.fill(0, i, i + 8);
+      return out;
+    }
+  }
+  throw new Error(`minimum out ${value} not found in the instruction data`);
 }
 
 const slippage = (o: BuildOptions) => (o.shrinkOut ? 5_000 : (o.slippageBps ?? CLI_SLIPPAGE_BPS));
@@ -715,12 +730,16 @@ const MUTATIONS: readonly Mutation[] = [
     },
   },
   {
-    name: "a zero minimum out (core at 100% slippage)",
+    name: "a zero minimum out (planted in core's instruction bytes; core itself refuses to build one)",
     applies: (c) => !c.exactOut,
     async run({ mode, a, build }) {
-      const built = await build({ slippageBps: 10_000 });
+      const built = await build({});
+      const minOut = minOutForTrade(built.expectedOut, CLI_SLIPPAGE_BPS);
+      const instructions = built.instructions.map((ix, i) =>
+        i === built.tradeIndex && ix.data ? { ...ix, data: zeroU64Arg(ix.data, minOut) } : ix,
+      );
       await expectRefused(
-        assemble(a.signer, built.instructions, planFor(mode, built.cuLimit, FEE_CAPS)),
+        assemble(a.signer, instructions, planFor(mode, built.cuLimit, FEE_CAPS)),
         shippedContext(a),
         new RegExp(`#${BUDGET_IXS + built.tradeIndex} ${built.venue} ${built.instructionName}: minimum (output|tokens out) is 0`),
       );

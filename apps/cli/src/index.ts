@@ -35,6 +35,7 @@ import {
   type TokenState,
   toWireBase64,
   transactionSize,
+  unreviewedTipAccounts,
   WSOL_MINT,
 } from "@zerofee/core";
 import { loadConfig, redactUrl } from "./config";
@@ -112,6 +113,11 @@ async function main() {
   tracker.record.venue = state.venue;
   tracker.mark("stateLoaded");
   if (!tipAccounts.live) console.warn(`warn: Jito getTipAccounts failed (${tipAccounts.error}); using documented fallback list`);
+  const unreviewed = tipAccounts.live ? unreviewedTipAccounts("jito", tipAccounts.accounts) : [];
+  if (unreviewed.length)
+    console.warn(
+      `warn: Jito lists tip accounts not in the reviewed set (${unreviewed.join(", ")}); update core constants and the signer together`,
+    );
   printState(state);
 
   // --- amount + limits ----------------------------------------------------------------------

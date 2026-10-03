@@ -156,7 +156,10 @@ describe("tips and assembly", () => {
       ],
       jitoDontFront: false,
     };
-    const trade = tipInstruction({ from: PAYER, spec: { lane: "jito", lamports: 7n, tipAccount: PAYER } });
+    const trade = tipInstruction({
+      from: PAYER,
+      spec: { lane: "jito", lamports: 7n, tipAccount: JITO_TIP_ACCOUNTS_FALLBACK[0] as Address },
+    });
     const ixs = withBudgetAndTips({ feePayer: PAYER, instructions: [trade], fees });
     expect(ixs.map((i) => i.programAddress)).toEqual([
       COMPUTE_BUDGET_PROGRAM_ID,

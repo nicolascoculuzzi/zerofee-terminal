@@ -200,12 +200,14 @@ export class AccountResolver {
     this.enqueue("mint", mint as Address, mint);
   }
 
-  requestCurve(mint: string): void {
-    void bondingCurvePda(mint as Address).then((pda) => this.enqueue("curve", pda, mint));
+  /** Resolves once the job is queued (the PDA derivation is async). */
+  requestCurve(mint: string): Promise<void> {
+    return bondingCurvePda(mint as Address).then((pda) => this.enqueue("curve", pda, mint));
   }
 
-  requestMetaplex(mint: string): void {
-    void metaplexMetadataPda(mint as Address).then((pda) => this.enqueue("metaplex", pda, mint));
+  /** Resolves once the job is queued (the PDA derivation is async). */
+  requestMetaplex(mint: string): Promise<void> {
+    return metaplexMetadataPda(mint as Address).then((pda) => this.enqueue("metaplex", pda, mint));
   }
 
   private enqueue(kind: JobKind, address: Address, mint: string): void {

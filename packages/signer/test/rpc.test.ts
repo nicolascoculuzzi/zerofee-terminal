@@ -2,7 +2,11 @@
  * The worker RPC over a real MessageChannel: the same transport a signer iframe would hand out,
  * and structured cloning exactly like a Worker.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// Argon2id unlocks are deliberately slow; keep these from flaking on loaded machines or CI runners.
+setDefaultTimeout(30_000);
+
 import { getPublicKeyFromAddress, getTransactionDecoder, type SignatureBytes, verifySignature } from "@solana/kit";
 import { isSignerError } from "../src/errors";
 import type { SpendState } from "../src/firewall/spend-tracker";
