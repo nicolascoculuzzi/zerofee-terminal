@@ -22,6 +22,7 @@ import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
+import { Metrics } from "./metrics";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
@@ -56,6 +57,7 @@ export interface App {
   source: Source | null;
   sink: IngestSink;
   reconciler: Reconciler | null;
+  metrics: Metrics;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -231,6 +233,21 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     };
   };
 
+  const metrics = new Metrics(cfg.monitoring, {
+    version: VERSION,
+    startedAt,
+    dryRun: cfg.dryRun,
+    market: m,
+    pulse,
+    chain,
+    writer,
+    tx,
+    rpc,
+    solUsd,
+    sources,
+    gateway: () => gateway,
+  });
+
   gateway = new Gateway({
     cfg,
     market: m,
@@ -242,12 +259,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     tx,
     health,
     debugStats,
+    metrics,
   });
 
   // start
   writer.start();
   resolver.start();
   gateway.start();
+  metrics.start();
   solUsd?.start();
   if (o.pollers !== false) {
     chain.start();
@@ -276,9 +295,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     source,
     sink,
     reconciler,
+    metrics,
     health,
     async stop() {
       clearInterval(evictTimer);
+      metrics.stop();
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();

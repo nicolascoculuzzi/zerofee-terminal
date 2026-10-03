@@ -74,6 +74,15 @@ export interface ServerConfig {
   wsMaxSubscriptions: number;
   wsCompression: boolean;
   logLevel: "debug" | "info" | "warn" | "error";
+  /** GET /metrics access and alarm thresholds (src/metrics.ts). */
+  monitoring: {
+    /** Bearer token every /metrics caller must send; null = loopback, unproxied requests only. */
+    metricsToken: string | null;
+    /** zerofee_feed_stalled turns 1 after this long without an ingested transaction. */
+    feedStallMs: number;
+    /** Directory holding the edge kill-switch flag files (HALT_TX, MAINTENANCE); null = not reported. */
+    killSwitchDir: string | null;
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -192,8 +201,15 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     wsMaxSubscriptions: int(env, "WS_MAX_SUBSCRIPTIONS", 64, 1, 10_000),
     wsCompression: bool(env, "WS_COMPRESSION", false),
     logLevel: oneOf(env, "LOG_LEVEL", "info", ["debug", "info", "warn", "error"]),
+    monitoring: {
+      metricsToken: optional(env, "METRICS_TOKEN"),
+      feedStallMs: int(env, "METRICS_FEED_STALL_SEC", 30, 5, 3_600) * 1_000,
+      killSwitchDir: optional(env, "KILL_SWITCH_DIR"),
+    },
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
+  if (cfg.monitoring.metricsToken !== null && cfg.monitoring.metricsToken.length < 16)
+    throw new Error("METRICS_TOKEN must be at least 16 characters (openssl rand -hex 32)");
   return cfg;
 }
 

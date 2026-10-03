@@ -8,7 +8,8 @@
  * are disconnected (they reconnect and resnapshot).
  *
  * REST: GET /api/health, /api/tokens/:mint, /api/candles, /api/program-accounts; POST /api/tx;
- * GET /debug. Per-IP token-bucket rate limits; an AuthProvider seam for SIWS sessions.
+ * GET /debug; GET /metrics (Prometheus, token or loopback only: src/metrics.ts). Per-IP token-bucket
+ * rate limits; an AuthProvider seam for SIWS sessions.
  */
 
 import {
@@ -33,6 +34,7 @@ import type { ProgramAccountsCache } from "../feeds/programAccounts";
 import { logger } from "../log";
 import { COLUMNS, diffSummary, type PulseBoard } from "../market/pulse";
 import type { FeedItem, MarketState } from "../market/state";
+import type { MetricsEndpoint } from "../metrics";
 import type { StorageReader } from "../storage/reader";
 import type { AuthProvider, Session } from "./auth";
 import { DEBUG_HTML } from "./debug";
@@ -71,6 +73,8 @@ export interface GatewayDeps {
   tx: TxHandler;
   health(): HealthResponse;
   debugStats(): DebugStats;
+  /** GET /metrics (src/metrics.ts); refused requests get the normal 404. */
+  metrics?: MetricsEndpoint;
 }
 
 const DEBUG_TOPIC = "debug";
@@ -211,6 +215,10 @@ export class Gateway {
     }
     try {
       if (req.method === "GET" && url.pathname === "/api/health") return json(this.d.health());
+      if (req.method === "GET" && url.pathname === "/metrics") {
+        const r = this.d.metrics?.handle(req, server.requestIP(req)?.address ?? null);
+        if (r) return r;
+      }
       if (req.method === "GET" && url.pathname === "/debug")
         return new Response(DEBUG_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
       if (req.method === "GET" && url.pathname.startsWith("/api/tokens/"))
