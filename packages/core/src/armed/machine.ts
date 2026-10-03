@@ -101,12 +101,16 @@ function onNonceConsumed(d: Draft, e: Extract<ArmedOrderEvent, { type: "nonce-co
     }
     setAttempt(d, attempt.index, { status: "burned", consumedBy: e.signature });
     const isOwnCancel = e.signature === attempt.nonce.cancel.signature;
-    if (!isOwnCancel && e.bySiblingOrderId && e.success) {
-      // OCO: the sibling filled; this whole order is over (including extra ladder nonces).
+    if (!isOwnCancel && e.success) {
+      // Another transaction executed on this nonce: the OCO sibling filled, or something foreign
+      // used the nonce. Either way the order's premise is gone; burn its other nonces too.
       cancelOpenAttempts(d);
       if (!isTerminalStatus(d.order.status)) {
-        setStatus(d, "cancelled", `OCO sibling ${e.bySiblingOrderId} filled`);
-        notify(d, "cancelled", `cancelled: OCO sibling ${e.bySiblingOrderId} filled`);
+        const why = e.bySiblingOrderId
+          ? `OCO sibling ${e.bySiblingOrderId} filled`
+          : `nonce consumed by another transaction (${e.signature})`;
+        setStatus(d, "cancelled", why);
+        notify(d, "cancelled", `cancelled: ${why}`);
       }
       continue;
     }
@@ -120,9 +124,6 @@ function onNonceConsumed(d: Draft, e: Extract<ArmedOrderEvent, { type: "nonce-co
     if (isOwnCancel) {
       setStatus(d, "failed-consumed", "attempt missed and its nonce was burned by the cancel: re-arm");
       notify(d, "consumed", "the attempt missed; the cancel burned its nonce - re-arm");
-    } else if (e.success) {
-      setStatus(d, "cancelled", `nonce consumed by another transaction (${e.signature})`);
-      notify(d, "cancelled", `cancelled: nonce consumed by ${e.signature}`);
     } else {
       setStatus(d, "failed-consumed", `nonce consumed by a failed transaction (${e.signature}): re-arm`);
       notify(d, "consumed", `nonce consumed by a failed transaction (${e.signature}) - re-arm`);

@@ -453,6 +453,19 @@ describe("status machine", () => {
       bySiblingOrderId: "sl",
     });
     expect(f.order.status).toBe("failed-consumed");
+    // A failed sibling on the shared nonce leaves this order's other ladder nonces armed.
+    const slFail = applyArmedOrderEvent(sl, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      signature: "sig-tp-0-pump-0-0",
+      success: false,
+    });
+    expect(slFail.order.status).toBe("armed");
+    expect(nextLiveAttempt(slFail.order)?.index).toBe(1);
+    // An unknown transaction that EXECUTED on the nonce (sibling not named): burn everything anyway.
+    const foreign = applyArmedOrderEvent(sl, { type: "nonce-consumed", nonce: nonceAddr(0), signature: "someone-else", success: true });
+    expect(foreign.order.status).toBe("cancelled");
+    expect(foreign.effects).toContainEqual(expect.objectContaining({ type: "fire-cancel", nonce: nonceAddr(1) }));
   });
 
   test("cancel / Panic / halt fire every open cancel; truth still wins if a variant lands first", () => {
