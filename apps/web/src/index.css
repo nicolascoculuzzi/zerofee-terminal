@@ -1,0 +1,217 @@
+@import "tailwindcss";
+
+/*
+ * zerofee palette. Every colour in the app comes from these variables, so themes are a
+ * variable swap. Brand accent is "zerofee orange"; buy/sell stay green/red.
+ */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --zf-bg: #08090b;
+  --zf-panel: #0e1013;
+  --zf-panel-2: #12151a;
+  --zf-elev: #181c22;
+  --zf-hover: #1d222a;
+  --zf-line: #1d2128;
+  --zf-line-strong: #2a3039;
+  --zf-fg: #e8eaee;
+  --zf-muted: #9aa2af;
+  --zf-dim: #626a77;
+  --zf-accent: #ff8a3d;
+  --zf-accent-fg: #1a0c02;
+  --zf-buy: #1fc98c;
+  --zf-sell: #f2526f;
+  --zf-warn: #f3c04f;
+  --zf-info: #5aa6ff;
+  --zf-violet: #b18cff;
+  --zf-chart-bg: #0b0d10;
+  --zf-chart-grid: #14181e;
+  --zf-shadow: 0 12px 40px rgb(0 0 0 / 0.55);
+  --zf-scrollbar: #262b33;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --zf-bg: #f3f4f6;
+  --zf-panel: #ffffff;
+  --zf-panel-2: #f8f9fb;
+  --zf-elev: #eef0f3;
+  --zf-hover: #e7eaee;
+  --zf-line: #e2e5ea;
+  --zf-line-strong: #cfd4db;
+  --zf-fg: #14171c;
+  --zf-muted: #555d69;
+  --zf-dim: #8a929e;
+  --zf-accent: #e8691c;
+  --zf-accent-fg: #ffffff;
+  --zf-buy: #0f9d6b;
+  --zf-sell: #d6334f;
+  --zf-warn: #b7860f;
+  --zf-info: #2f74d0;
+  --zf-violet: #7c4fe0;
+  --zf-chart-bg: #ffffff;
+  --zf-chart-grid: #eef0f3;
+  --zf-shadow: 0 12px 40px rgb(15 23 42 / 0.18);
+  --zf-scrollbar: #c9ced6;
+}
+
+@theme inline {
+  --color-bg: var(--zf-bg);
+  --color-panel: var(--zf-panel);
+  --color-panel-2: var(--zf-panel-2);
+  --color-elev: var(--zf-elev);
+  --color-hover: var(--zf-hover);
+  --color-line: var(--zf-line);
+  --color-line-strong: var(--zf-line-strong);
+  --color-fg: var(--zf-fg);
+  --color-muted: var(--zf-muted);
+  --color-dim: var(--zf-dim);
+  --color-accent: var(--zf-accent);
+  --color-accent-fg: var(--zf-accent-fg);
+  --color-buy: var(--zf-buy);
+  --color-sell: var(--zf-sell);
+  --color-warn: var(--zf-warn);
+  --color-info: var(--zf-info);
+  --color-violet: var(--zf-violet);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --shadow-pop: var(--zf-shadow);
+  --text-2xs: 10px;
+  --text-2xs--line-height: 13px;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--zf-bg);
+    color: var(--zf-fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.35;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+    overscroll-behavior: none;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--zf-scrollbar) transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--zf-accent) 35%, transparent);
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--zf-accent) 70%, transparent);
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  .zf-input {
+    height: 28px;
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--zf-line-strong);
+    background: var(--zf-bg);
+    padding: 0 8px;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .zf-input:focus {
+    border-color: color-mix(in srgb, var(--zf-accent) 70%, var(--zf-line-strong));
+  }
+
+  .zf-input::placeholder {
+    color: var(--zf-dim);
+  }
+
+  .zf-label {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--zf-dim);
+  }
+
+  .zf-flash-buy {
+    animation: zf-flash-buy 0.7s ease-out;
+  }
+
+  .zf-flash-sell {
+    animation: zf-flash-sell 0.7s ease-out;
+  }
+
+  .zf-enter {
+    animation: zf-enter 0.45s ease-out;
+  }
+}
+
+@keyframes zf-flash-buy {
+  from {
+    background-color: color-mix(in srgb, var(--zf-buy) 22%, transparent);
+  }
+}
+
+@keyframes zf-flash-sell {
+  from {
+    background-color: color-mix(in srgb, var(--zf-sell) 22%, transparent);
+  }
+}
+
+@keyframes zf-enter {
+  from {
+    background-color: color-mix(in srgb, var(--zf-accent) 16%, transparent);
+  }
+}
+
+@keyframes zf-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.zf-live-dot {
+  animation: zf-pulse-dot 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zf-flash-buy,
+  .zf-flash-sell,
+  .zf-enter,
+  .zf-live-dot {
+    animation: none;
+  }
+}
