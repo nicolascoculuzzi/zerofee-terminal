@@ -106,7 +106,7 @@ Every trade also checks the fee (5,000 base plus the planned priority fee), that
 - Anything outside the clone list, upgrades after the clone, or Clock-dependent logic. The fork starts at slot 0 with wall-clock time; no trade path read the slot in these runs.
 - The live Jito tip-account list. The fork uses the documented list.
 
-## Findings (2026-10-03, Agave 4.3.0, mainnet slots 453,021,560–453,025,241)
+## Findings (2026-10-03, Agave 4.3.0, mainnet slots 453,021,560–453,026,107)
 
 1. **The fork's rent rate is not mainnet's.** Even with `--clone-feature-set`, the test validator's genesis keeps the classic rent rate: 6,960 lamports/byte including the 128-byte overhead (a 0-byte account needs 890,880). Mainnet now charges 5,080 (650,240). Two problems follow, and `fork:start` fixes both:
    - **Rent-paying accounts.** Jito tip accounts are swept down to about the mainnet minimum (690,880 for 8 bytes). On the fork that is "rent-paying" (minimum 946,560), and the runtime rejects any transaction that credits such an account without lifting it to the minimum. In one run, 6 of 8 Jito tip accounts were below the line, so most standard-mode trades would have failed with `InsufficientFundsForRent`.
@@ -115,12 +115,14 @@ Every trade also checks the fee (5,000 base plus the planned priority fee), that
 3. **PumpSwap `buy_exact_quote_in` events swap two field meanings.** `quote_amount_in` is the total paid including fees (10,000,000) and `user_quote_amount_in` is the pre-fee quote (9,900,989). For `buy`, the notes record the reverse. `quote_amount_in_with_lp_fee` (9,920,791) and every fee field match our quote. The decoder documents both meanings.
 4. **Smaller confirmations.** Some mayhem curves are 141 bytes, and the program doesn't resize them on trade. The user volume accumulator is 137 bytes and Token-2022 ATAs are 170 bytes, both created at the payer's expense. The PumpSwap buyback split is a floor (2,475 of a 4,951 protocol fee), as the notes say. Fee tiers came from the live FeeConfig through the fee program: 95/30 bps on the curve, and 20/5/75 bps on a pool in the 4,420–9,820 SOL band.
 
-### Compute and size (three runs, fresh wallet each run)
+5. **Holder-rewards coins trade unchanged.** The creator fee lands in the creator vault derived from the live creator (the holder-rewards PDA). Verified on `2ssUBRVx…` as the curve coin of a fourth fork.
+
+### Compute and size (four forks, three coin sets, fresh wallet each run)
 
 | Case | CU used | CU limit | Size |
 |---|---|---|---|
-| Curve buy 0.01 SOL, new Token-2022 ATA + volume accumulator | 106,073–116,495 (118,300 on the un-normalized fork) | 140,000 | 1,182 B |
-| Curve sell 50% | 72,141–82,562 | 100,000 | 1,139 B |
+| Curve buy 0.01 SOL, new Token-2022 ATA + volume accumulator | 104,421–116,495 (118,300 on the un-normalized fork) | 140,000 | 1,182 B |
+| Curve sell 50% | 72,094–82,562 | 100,000 | 1,139 B |
 | Curve full exit + close | 73,807–85,738 | 100,000 | 1,146 B |
 | Mayhem buy 0.01 SOL | 104,286–112,841 | 140,000 | 1,182 B |
 | Mayhem full exit + close | 73,415–79,440 | 100,000 | 1,146 B |

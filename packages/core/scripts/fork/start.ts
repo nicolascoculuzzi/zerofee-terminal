@@ -198,7 +198,10 @@ async function main() {
   } catch {
     previous = null;
   }
-  if (previous?.pid && isValidatorProcess(previous.pid) && (await isHealthy(previous.rpcUrl))) {
+  if (previous?.pid && isValidatorProcess(previous.pid)) {
+    if (!(await isHealthy(previous.rpcUrl))) {
+      fail(`a fork validator (pid ${previous.pid}) is running but not healthy; run \`bun run fork:stop\` first`);
+    }
     log(`fork already running (pid ${previous.pid}); targets: ${previous.targets.map((t) => `${t.kind} ${t.mint}`).join(", ")}`);
     printEnv(previous, paths);
     return;
