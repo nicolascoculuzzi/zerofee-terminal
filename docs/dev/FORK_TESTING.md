@@ -46,7 +46,7 @@ The e2e files are named `*.e2e.ts`, which `bun test` doesn't pick up, so the def
 
 ## How it works
 
-1. **Coins.** `accounts.ts` reads recent pump trades to find an active Token-2022 (`create_v2`) curve coin, finds a mayhem coin through recent Mayhem-program activity, and picks a canonical wSOL PumpSwap pool, preferring an SPL Token base. A legacy SPL Token curve coin is used only if one shows up along the way, since they're rare after `create_v2`. The public endpoint allows about 5 `getTransaction` calls per 10 s, so discovery stops as soon as each kind is found (about 10 transactions in total).
+1. **Coins.** `accounts.ts` reads recent pump trades to find an active Token-2022 (`create_v2`) curve coin, and finds a mayhem coin through recent Mayhem-program activity. It also picks a canonical wSOL PumpSwap pool: it prefers an SPL Token base for 6 transactions, then takes any eligible pool, up to 15. A legacy SPL Token curve coin is used only if one shows up along the way, since they're rare after `create_v2`. The public endpoint allows about 5 `getTransaction` calls per 10 s, so discovery stops as soon as each kind is found (usually about 10 transactions in total) and logs why it rejected pools.
 2. **Clone list.** Every account the trades touch is resolved with `packages/core`'s own PDA and state helpers, from live mainnet state:
 
    | Group | Accounts | Flag |
@@ -106,7 +106,7 @@ Every trade also checks the fee (5,000 base plus the planned priority fee), that
 - Anything outside the clone list, upgrades after the clone, or Clock-dependent logic. The fork starts at slot 0 with wall-clock time; no trade path read the slot in these runs.
 - The live Jito tip-account list. The fork uses the documented list.
 
-## Findings (2026-10-03, Agave 4.3.0, mainnet slots 453,021,560–453,028,966)
+## Findings (2026-10-03, Agave 4.3.0, mainnet slots 453,021,560–453,030,065)
 
 1. **The fork's rent rate is not mainnet's.** Even with `--clone-feature-set`, the test validator's genesis keeps the classic rent rate: 6,960 lamports/byte including the 128-byte overhead (a 0-byte account needs 890,880). Mainnet now charges 5,080 (650,240). Two problems follow, and `fork:start` fixes both:
    - **Rent-paying accounts.** Jito tip accounts are swept down to about the mainnet minimum (690,880 for 8 bytes). On the fork that is "rent-paying" (minimum 946,560), and the runtime rejects any transaction that credits such an account without lifting it to the minimum. In one run, 6 of 8 Jito tip accounts were below the line, so most standard-mode trades would have failed with `InsufficientFundsForRent`.
@@ -117,20 +117,20 @@ Every trade also checks the fee (5,000 base plus the planned priority fee), that
 5. **Coin variants trade unchanged.** The creator fee always lands in the creator vault derived from the live `bonding_curve.creator`. On a holder-rewards coin (`2ssUBRVx…`) that is the holder-rewards PDA, and the event labels the fee `holder_rewards` (30 bps). On a fee-sharing coin (`HtzBLBrV…`) it is the sharing-config PDA.
 6. **Smaller confirmations.** Some mayhem curves are 141 bytes, and the program doesn't resize them on trade. The user volume accumulator is 137 bytes and Token-2022 ATAs are 170 bytes, both created at the payer's expense. The PumpSwap buyback split is a floor (2,475 of a 4,951 protocol fee), as the notes say. Fee tiers came from the live FeeConfig through the fee program: 95/30 bps on curves, and 20/5/75 and 20/5/85 bps (LP/protocol/creator) on two pools in different market-cap bands.
 
-### Compute and size (six forks, five coin sets, fresh wallet each run)
+### Compute and size (seven forks, six coin sets, fresh wallet each run)
 
 | Case | CU used | CU limit | Size |
 |---|---|---|---|
 | Curve buy 0.01 SOL, new Token-2022 ATA + volume accumulator | 104,421–116,495 (118,300 on the un-normalized fork) | 140,000 | 1,182 B |
-| Curve sell 50% | 72,094–82,562 | 100,000 | 1,139 B |
+| Curve sell 50% | 72,094–82,662 | 100,000 | 1,139 B |
 | Curve full exit + close | 73,807–85,738 | 100,000 | 1,146 B |
 | Mayhem buy 0.01 SOL | 104,286–112,841 | 140,000 | 1,182 B |
-| Mayhem full exit + close | 73,415–79,467 | 100,000 | 1,146 B |
-| PumpSwap buy 0.01 SOL, wSOL wrap, new ATA + volume accumulator | 118,382–131,803 | 150,000 | 1,189 B |
-| PumpSwap sell 50% | 90,146–96,408 | 130,000 | 1,090 B |
-| PumpSwap full exit + close | 88,775–99,156 | 130,000 | 1,097 B |
+| Mayhem full exit + close | 73,415–80,615 | 100,000 | 1,146 B |
+| PumpSwap buy 0.01 SOL, wSOL wrap, new ATA + volume accumulator | 118,382–131,803 | 150,000 | 1,189 B (1,157 B with an SPL Token base) |
+| PumpSwap sell 50% | 87,454–96,408 | 130,000 | 1,090 B (1,058 B) |
+| PumpSwap full exit + close | 87,679–99,156 | 130,000 | 1,097 B (1,065 B) |
 
-CU varies by up to about 13k between identical trades, mostly from PDA bump searches with each new wallet. The worst cases leave 12% headroom on the PumpSwap buy and 14% on a curve sell, less than the "about 1.3× worst case" the `DEFAULT_CU_LIMITS` comment assumes. The largest transaction is 1,189 of 1,232 bytes. Fees were 5,000 base plus 100k µL/CU × CU limit (14,000 / 10,000 / 15,000 / 13,000 lamports), plus 5,000 + 1,000 lamports of tips.
+PumpSwap rows cover both Token-2022-base pools and an SPL Token-base pool (`XLBLxbY1…`, a migrated legacy coin). The SPL-base transactions are 32 bytes smaller because they don't reference the Token-2022 program. CU varies by up to about 13k between identical trades, mostly from PDA bump searches with each new wallet. The worst cases leave 12% headroom on the PumpSwap buy and 14% on a curve sell, less than the "about 1.3× worst case" the `DEFAULT_CU_LIMITS` comment assumes. The largest transaction is 1,189 of 1,232 bytes. Fees were 5,000 base plus 100k µL/CU × CU limit (14,000 / 10,000 / 15,000 / 13,000 lamports), plus 5,000 + 1,000 lamports of tips.
 
 ## Safety
 
