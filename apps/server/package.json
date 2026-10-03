@@ -1,0 +1,19 @@
+{
+  "name": "@zerofee/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bun backend: market-data ingest (RPC logs / Yellowstone gRPC), derived market state, SQLite, WebSocket + REST gateway.",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "dev": "bun --watch src/main.ts",
+    "feed": "bun src/scripts/feed.ts",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@solana/kit": "^8.4.0",
+    "@triton-one/yellowstone-grpc": "8.0.0",
+    "@zerofee/core": "workspace:*",
+    "@zerofee/protocol": "workspace:*"
+  }
+}
