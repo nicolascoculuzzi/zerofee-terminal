@@ -4,7 +4,7 @@ import { TOKEN_2022_PROGRAM_ID, WSOL_MINT } from "@zerofee/core";
 import snap from "../../../packages/core/test/fixtures/metadata-accounts.json";
 import { AccountResolver, type MintResolved, type PoolInfo } from "../src/accounts/resolver";
 import { RpcClient } from "../src/util/rpc";
-import { mockFetch } from "./helpers";
+import { mockFetch, waitFor } from "./helpers";
 
 const ACCOUNTS = snap.accounts as Record<string, { owner: string; lamports: string; data: string }>;
 
@@ -75,7 +75,7 @@ describe("account resolver", () => {
     r.requestMint(snap.v2Mint);
     r.requestMint(snap.legacyMint);
     await r.tick();
-    await Bun.sleep(5); // metaplex PDA derivation
+    await waitFor(() => r.pending > 0); // metaplex PDA derivation is async
     await r.tick();
     expect(mints.find((m) => m.mint === snap.v2Mint)).toMatchObject({ decimals: 6, metadata: { symbol: "SPEC" } });
     expect(mints.find((m) => m.mint === snap.legacyMint)?.metadata).toBeNull();
@@ -92,7 +92,7 @@ describe("account resolver", () => {
       metaplex: () => {},
     });
     r.requestCurve(snap.v2Mint);
-    await Bun.sleep(5);
+    await waitFor(() => r.pending > 0); // curve PDA derivation is async
     await r.tick();
     expect(curves).toEqual([`${snap.v2Mint}:1000000000000000`]);
   });
