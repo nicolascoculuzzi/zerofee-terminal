@@ -11,12 +11,9 @@ const PortfolioPage = lazy(() => import("../features/portfolio/PortfolioPage"));
 const OrdersPage = lazy(() => import("../features/orders/OrdersPage"));
 const OnboardingPage = lazy(() => import("../features/onboarding/OnboardingPage"));
 
+/** While a route chunk loads: one quiet line, top-left, no spinner or shimmer (DESIGN.md 4.18). */
 function PageFallback() {
-  return (
-    <div className="flex h-full items-center justify-center text-data text-fg-3">
-      <span className="zf-live-dot">Loading…</span>
-    </div>
-  );
+  return <div className="p-3 text-data text-fg-3">Loading…</div>;
 }
 
 function page(node: ReactNode) {
