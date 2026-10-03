@@ -371,27 +371,32 @@ export class NotifyRepo {
   }
 
   /**
-   * Stores a browser subscription. Endpoints are unique: re-subscribing from the same browser (or a
-   * browser handed to another account) moves the endpoint to this user.
+   * Stores a browser subscription. Endpoints are unique: re-subscribing from the same browser updates
+   * the keys; a browser handed to another account loses the old account's row (a fresh id, so nothing
+   * queued or cached for the old owner can follow it). Returns the previous owners to invalidate.
    */
   async upsertPush(
     userId: string,
     s: { endpoint: string; p256dh: string; auth: string; userAgentHash: string | null },
     now: number,
     max: number,
-  ): Promise<PushSubscriptionInfo> {
+  ): Promise<{ info: PushSubscriptionInfo; previousOwners: string[] }> {
     return this.db.transaction(async (tx) => {
       await lockUser(tx, userId);
+      const moved = await tx.query("DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id <> $2::uuid RETURNING user_id", [
+        s.endpoint,
+        userId,
+      ]);
       const rows = await tx.query(
         `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, user_agent_hash, created_at)
          VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::timestamptz)
-         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth,
+         ON CONFLICT (endpoint) DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth,
                                              user_agent_hash = EXCLUDED.user_agent_hash, failure_count = 0
          RETURNING id, endpoint, created_at, last_success_at`,
         [crypto.randomUUID(), userId, s.endpoint, s.p256dh, s.auth, s.userAgentHash, iso(now)],
       );
       await assertWithinLimit(tx, "push_subscriptions", userId, max, "push subscriptions");
-      return mapPush(rows[0] as Row);
+      return { info: mapPush(rows[0] as Row), previousOwners: moved.map((r) => String(r.user_id)) };
     });
   }
 

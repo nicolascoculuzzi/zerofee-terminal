@@ -363,14 +363,18 @@ describe.each(DRIVERS)("$name", ({ open }) => {
       expect(t1?.kind === "discord" && [...t1.webhookEnc]).toEqual([1, 2, 3, 4, 5]);
 
       const endpoint = "https://fcm.googleapis.com/fcm/send/abc";
-      const p = await store.notify.upsertPush(u.id, { endpoint, p256dh: "k", auth: "a", userAgentHash: null }, T0, 5);
-      expect(p).toMatchObject({ endpointHost: "fcm.googleapis.com", lastSuccessAt: null });
+      const first = await store.notify.upsertPush(u.id, { endpoint, p256dh: "k", auth: "a", userAgentHash: null }, T0, 5);
+      expect(first).toMatchObject({ info: { endpointHost: "fcm.googleapis.com", lastSuccessAt: null }, previousOwners: [] });
+      const again = await store.notify.upsertPush(u.id, { endpoint, p256dh: "k1", auth: "a1", userAgentHash: null }, T0, 5);
+      expect(again.info.id).toBe(first.info.id); // same browser, same account: keys refreshed in place
       const other = await store.users.upsertOnLogin(addr("pg-user-12"), T0);
-      await store.notify.upsertPush(other.id, { endpoint, p256dh: "k2", auth: "a2", userAgentHash: null }, T0 + 1, 5);
+      const moved = await store.notify.upsertPush(other.id, { endpoint, p256dh: "k2", auth: "a2", userAgentHash: null }, T0 + 1, 5);
+      expect(moved.previousOwners).toEqual([u.id]);
+      expect(moved.info.id).not.toBe(first.info.id); // a new row: nothing of the old owner follows it
       expect(await store.notify.listPush(u.id)).toEqual([]);
       expect((await store.notify.targets(other.id, ["push", "discord"])).map((x) => x.kind)).toEqual(["push"]);
       expect((await store.notify.targets(u.id, ["push", "discord"])).map((x) => x.kind)).toEqual(["discord"]);
-      await store.notify.pushOk(p.id, T0 + 2);
+      await store.notify.pushOk(moved.info.id, T0 + 2);
       expect((await store.notify.listPush(other.id))[0]?.lastSuccessAt).toBe(T0 + 2);
       expect(await store.notify.deletePushByEndpoint(other.id, endpoint)).toBe(true);
       expect(await store.notify.deleteChannel(u.id, id)).toBe(true);

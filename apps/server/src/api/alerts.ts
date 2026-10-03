@@ -239,13 +239,13 @@ export function alertRoutes(d: AlertRoutesDeps): Route[] {
         const p256dh = str(keys.p256dh, "keys.p256dh", { max: 128 });
         const auth = str(keys.auth, "keys.auth", { max: 64 });
         if (!validPushKeys(p256dh, auth)) throw badRequest("keys must be a P-256 public key (p256dh) and a 16-byte auth secret, base64url");
-        const info = await store.notify.upsertPush(
+        const { info, previousOwners } = await store.notify.upsertPush(
           c.session.userId,
           { endpoint, p256dh, auth, userAgentHash: userAgentHash(c.req) },
           now(),
           USER_LIMITS.pushSubscriptions,
         );
-        d.dispatcher.invalidate(c.session.userId);
+        for (const u of [c.session.userId, ...previousOwners]) d.dispatcher.invalidate(u);
         return json(info);
       },
     },
