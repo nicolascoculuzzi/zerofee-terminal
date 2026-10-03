@@ -1,0 +1,41 @@
+{
+  "note": "Official Raydium interface sources used for packages/core/src/raydium. The IDL repo lags the deployed programs: layouts and fields newer than the IDL are taken from the program source (CPMM), the CPI crate and the TS SDK, and every one of them was checked against live mainnet accounts on 2026-10-03.",
+  "idl": {
+    "repo": "raydium-io/raydium-idl",
+    "commit": "e7e0c96fe77bcf6a020b84a44c47a722aac8e359",
+    "committedAt": "2026-05-18T09:58:39Z",
+    "files": {
+      "raydium_launchpad.json": {
+        "path": "raydium_launchpad/raydium_launchpad.json",
+        "sha256": "963189409945069409f32e345d4adf2892e0b3ca1be504372577fe34a23c6cdb"
+      },
+      "raydium_cp_swap.json": {
+        "path": "raydium_cpmm/raydium_cp_swap.json",
+        "sha256": "1202f6dc8e1c3216598f2ad5c620b9aa8c64ac584563fafed68125c27fb6df81"
+      }
+    }
+  },
+  "cpmmProgramSource": {
+    "repo": "raydium-io/raydium-cp-swap",
+    "commit": "b3187ae53a1b95a201f855a59024a12ca8f5b51a",
+    "committedAt": "2026-10-02T23:59:26Z"
+  },
+  "launchlabCpiCrate": {
+    "repo": "raydium-io/raydium-cpi",
+    "path": "programs/launch-cpi",
+    "commit": "115df2779d53bacc7db9d0be2773a4b48a6d372b",
+    "committedAt": "2026-07-20T07:07:34Z"
+  },
+  "sdk": {
+    "repo": "raydium-io/raydium-sdk-V2",
+    "commit": "cc33ec28a8921a35609e83293e9e07ad830b0779",
+    "committedAt": "2026-09-23T05:07:47Z",
+    "npm": "@raydium-io/raydium-sdk-v2@0.2.73-alpha"
+  },
+  "token2022": {
+    "repo": "solana-program/token-2022",
+    "path": "interface/src/extension/transfer_fee/mod.rs",
+    "commit": "bb4c841aa81282c961f617f39719faf60049f398",
+    "committedAt": "2026-10-02T18:54:19Z"
+  }
+}
