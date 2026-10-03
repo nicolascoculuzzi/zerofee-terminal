@@ -3,9 +3,14 @@
  * (the buy caps from the firewall summary, plus tips and priority fee as a separate budget) to the
  * current UTC day, whether or not it lands: a signed transaction can be submitted at any time.
  *
- * Durable-nonce transactions that share a nonce account and nonce value are mutually exclusive (at
- * most one can execute), so a whole min-out grid counts once, at the largest variant's spend.
- * Re-signing an identical message also counts once (same message => same signature).
+ * Re-signing an identical message counts once: same message => same signature => the runtime can
+ * execute it at most once.
+ *
+ * Durable-nonce variants are NOT grouped, even when they share a nonce account and lifetime token.
+ * Offline, the signer cannot tell a durable nonce value from a recent blockhash; a transaction that
+ * starts with AdvanceNonceAccount but carries a recent blockhash runs as an ordinary transaction,
+ * so several such "variants" can all land in successive slots. Counting each one in full is the
+ * only sound choice; armed buy grids therefore consume the daily cap per variant.
  *
  * The device clock defines the day; the server re-checks limits (SPEC "Limits").
  */
@@ -26,7 +31,7 @@ export interface DailySpendCaps {
 }
 
 export interface SpendEntry {
-  /** Mutual-exclusion group: "nonce:<account>:<value>" or "msg:<sha256 of message>". */
+  /** "msg:<sha256 of message bytes>" (identical messages count once) or "aggregate" (compacted history). */
   readonly group: string;
   readonly buyLamports: bigint;
   readonly feeLamports: bigint;
@@ -48,8 +53,9 @@ export interface DailySpendTotals {
 
 export type SpendReservation = { ok: true; totals: DailySpendTotals } | { ok: false; violations: string[]; totals: DailySpendTotals };
 
-/** Above this many entries, plain (non-nonce) entries are folded into one aggregate entry. */
+/** Above this many entries, all but the most recent KEEP_RECENT are folded into one aggregate entry. */
 const COMPACT_THRESHOLD = 1000;
+const KEEP_RECENT = 200;
 const WRITE_ATTEMPTS = 3;
 
 export function utcDay(epochMs: number): string {
@@ -96,14 +102,21 @@ export function computeTotals(day: string, entries: readonly SpendEntry[]): Dail
   return { day, buyLamports, feeLamports, buyQuote };
 }
 
+/**
+ * Bounds stored history. Folding only ever over-counts: a folded message re-signed later counts
+ * again, which is the conservative direction.
+ */
 function compact(entries: readonly SpendEntry[]): SpendEntry[] {
   if (entries.length <= COMPACT_THRESHOLD) return [...entries];
-  const kept = entries.filter((e) => e.group.startsWith("nonce:"));
-  const folded = computeTotals(
-    "",
-    entries.filter((e) => !e.group.startsWith("nonce:")),
-  );
-  return [...kept, { group: "aggregate", buyLamports: folded.buyLamports, feeLamports: folded.feeLamports, buyQuote: folded.buyQuote }];
+  const old = entries.slice(0, entries.length - KEEP_RECENT);
+  const folded = computeTotals("", old);
+  const aggregate: SpendEntry = {
+    group: "aggregate",
+    buyLamports: folded.buyLamports,
+    feeLamports: folded.feeLamports,
+    buyQuote: folded.buyQuote,
+  };
+  return [aggregate, ...entries.slice(entries.length - KEEP_RECENT)];
 }
 
 export interface SpendTrackerOptions {
@@ -135,9 +148,7 @@ export class SpendTracker {
   /** Checks the transaction against today's caps and records it if it fits. Atomic with respect to other reservations. */
   reserve(summary: TransactionSummary, messageBytes: Uint8Array): Promise<SpendReservation> {
     return this.#mutex.run(async () => {
-      const group = summary.durableNonce
-        ? `nonce:${summary.durableNonce.nonceAccount}:${summary.durableNonce.nonceValue}`
-        : `msg:${toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", asBufferSource(messageBytes))))}`;
+      const group = `msg:${toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", asBufferSource(messageBytes))))}`;
       const entry: SpendEntry = {
         group,
         buyLamports: summary.maxBuyLamports,
@@ -174,7 +185,7 @@ export class SpendTracker {
     }
     for (const [mint, total] of Object.entries(after.buyQuote)) {
       if (total === (before.buyQuote[mint] ?? 0n)) continue;
-      const cap = caps.buyQuote?.[mint];
+      const cap = caps.buyQuote && Object.hasOwn(caps.buyQuote, mint) ? caps.buyQuote[mint] : undefined;
       if (cap === undefined) v.push(`no daily cap is configured for quote mint ${mint}`);
       else if (total > cap) v.push(`daily cap for quote mint ${mint}: would reach ${total} (cap ${cap})`);
     }

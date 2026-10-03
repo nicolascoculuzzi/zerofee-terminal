@@ -144,7 +144,11 @@ export interface TransactionSummary {
   readonly maxBuyQuote: Readonly<Record<string, bigint>>;
   /** Upper bound on SOL paid to third parties: buys + tips + priority fee (excludes refundable rent and moves between own accounts). */
   readonly maxSolOutLamports: bigint;
-  /** Present when the first instruction advances a durable nonce: the transaction never expires on its own. */
+  /**
+   * Present when the first instruction advances an owned nonce account. If the lifetime token is
+   * that nonce's value the transaction never expires on its own; if it is a recent blockhash it runs
+   * as an ordinary transaction. The signer cannot tell which offline.
+   */
   readonly durableNonce?: { readonly nonceAccount: Address; readonly nonceValue: string };
 }
 

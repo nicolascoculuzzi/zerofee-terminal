@@ -182,7 +182,11 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
   } else {
     lines.push("No priority fee.");
   }
-  if (durableNonce) lines.push(`Uses durable nonce ${shortAddress(durableNonce.nonceAccount)}: stays valid until that nonce advances.`);
+  if (durableNonce) {
+    lines.push(
+      `Advances durable nonce ${shortAddress(durableNonce.nonceAccount)} first: if signed against its nonce value it stays valid until that nonce advances.`,
+    );
+  }
   const maxSolOutLamports = maxBuyLamports + tipLamports + budget.priorityFeeLamports;
   lines.push(
     `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and priority fees (plus the network base fee).`,

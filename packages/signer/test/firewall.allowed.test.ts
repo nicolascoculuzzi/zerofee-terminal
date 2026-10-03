@@ -199,7 +199,7 @@ describe("firewall: allowed transactions", () => {
     const tx = buildTransaction({ feePayer: a.signer, instructions, durableNonce, lookupTables: { [alt]: shared } });
     const summary = await expectAllowed(tx, makeContext(a, { addressLookupTables: { [alt]: shared } }));
     expect(summary.durableNonce).toEqual({ nonceAccount: a.nonceAccount, nonceValue: nonce });
-    expect(summary.text).toContain("stays valid until that nonce advances");
+    expect(summary.text).toContain("it stays valid until that nonce advances");
     // A pre-signed cancel is just the nonce advance.
     await expectAllowed(
       buildTransaction({

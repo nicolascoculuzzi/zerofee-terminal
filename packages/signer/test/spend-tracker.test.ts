@@ -60,19 +60,17 @@ describe("SpendTracker", () => {
     expect((await t.totals()).buyLamports).toBe(0n);
   });
 
-  test("a min-out grid on one nonce counts once, at its largest variant", async () => {
+  test("durable-nonce variants are each counted (exclusivity cannot be proven offline)", async () => {
+    // A tx that starts with AdvanceNonceAccount but carries a recent blockhash executes as a normal
+    // transaction, so "variants" sharing a nonce account and lifetime token can all land in
+    // successive slots. Grouping them would let a compromised caller multiply the daily cap.
     const { t } = tracker({ buyLamports: SOL });
-    const nonce = { account: randomAddress(), value: "nonce-value-1" };
-    for (let i = 0; i < 12; i++) {
-      const r = await t.reserve(summary({ buy: SOL / 2n - BigInt(i), tip: 1_000n * BigInt(i), nonce }), msg());
-      expect(r.ok).toBe(true);
-    }
-    const totals = await t.totals();
-    expect(totals.buyLamports).toBe(SOL / 2n);
-    expect(totals.feeLamports).toBe(11_000n);
-    // A different nonce value (or account) is a separate order.
-    expect((await t.reserve(summary({ buy: SOL / 2n, nonce: { ...nonce, value: "nonce-value-2" } }), msg())).ok).toBe(true);
-    expect((await t.reserve(summary({ buy: 1n, nonce: { account: randomAddress(), value: "x" } }), msg())).ok).toBe(false);
+    const nonce = { account: randomAddress(), value: "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi" };
+    expect((await t.reserve(summary({ buy: (SOL * 4n) / 10n, nonce }), msg())).ok).toBe(true);
+    expect((await t.reserve(summary({ buy: (SOL * 4n) / 10n, nonce }), msg())).ok).toBe(true);
+    const third = await t.reserve(summary({ buy: (SOL * 4n) / 10n, nonce }), msg());
+    expect(third.ok).toBe(false);
+    expect((await t.totals()).buyLamports).toBe((SOL * 8n) / 10n);
   });
 
   test("re-signing the identical message counts once", async () => {
@@ -105,17 +103,20 @@ describe("SpendTracker", () => {
     if (!unknown.ok) expect(unknown.violations.join()).toContain("no daily cap is configured");
   });
 
-  test("compaction keeps totals and nonce groups", async () => {
+  test("compaction bounds storage without losing totals", async () => {
     const { t, storage } = tracker({ buyLamports: 10_000n * SOL });
-    const nonce = { account: randomAddress(), value: "v" };
-    await t.reserve(summary({ buy: 7n, nonce }), msg());
+    const repeated = msg();
+    await t.reserve(summary({ buy: 7n }), repeated);
     for (let i = 0; i < 1005; i++) await t.reserve(summary({ buy: 1n, tip: 1n }), msg());
-    await t.reserve(summary({ buy: 5n, nonce }), msg());
     const state = (await storage.load())!.value;
-    expect(state.entries.length).toBeLessThan(10);
+    expect(state.entries.length).toBe(206); // folded at 1,001 entries down to aggregate + 200, then 5 more
+    expect(state.entries[0]!.group).toBe("aggregate");
     const totals = await t.totals();
     expect(totals.buyLamports).toBe(1005n + 7n);
     expect(totals.feeLamports).toBe(1005n);
+    // A message folded into the aggregate counts again if re-signed: conservative.
+    await t.reserve(summary({ buy: 7n }), repeated);
+    expect((await t.totals()).buyLamports).toBe(1005n + 14n);
   });
 
   test("concurrent reservations cannot both squeeze under the cap", async () => {
