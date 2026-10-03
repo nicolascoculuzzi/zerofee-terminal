@@ -3,17 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bun backend: market-data ingest (RPC logs / Yellowstone gRPC), derived market state, SQLite, WebSocket + REST gateway.",
+  "description": "Bun backend: market-data ingest (RPC logs / Yellowstone gRPC), derived market state, SQLite, WebSocket + REST gateway, SIWS accounts, Postgres user state and alert delivery.",
   "scripts": {
     "start": "bun src/main.ts",
     "dev": "bun --watch src/main.ts",
     "feed": "bun src/scripts/feed.ts",
+    "vapid-keys": "bun scripts/generate-vapid-keys.ts",
+    "signin-e2e": "bun scripts/signin-e2e.ts",
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@solana/kit": "^8.4.0",
     "@triton-one/yellowstone-grpc": "8.0.0",
+    "@zerofee/auth": "workspace:*",
     "@zerofee/core": "workspace:*",
-    "@zerofee/protocol": "workspace:*"
+    "@zerofee/protocol": "workspace:*",
+    "web-push": "3.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite-socket": "0.2.11"
   }
 }

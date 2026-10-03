@@ -1,6 +1,7 @@
 /**
- * `wallet:<address>` and `orders` topics. SHAPES ONLY in Phase 2: the server does not publish them yet
- * (wallet tracking arrives with Phase 3 identity; armed orders with Phase 5).
+ * `wallet:<address>` and `orders` topics (user topics: they need a signed-in session, see topics.ts).
+ * `orders` snapshots come from the server's armed-orders table (empty until the Phase 5 engine exists);
+ * `wallet:` balances are not published yet, so subscribing to an allowed wallet answers `unavailable`.
  */
 import type { Trade } from "./market";
 

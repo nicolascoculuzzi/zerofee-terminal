@@ -17,6 +17,8 @@ keystore/
 *.db-shm
 *.sqlite
 *.sqlite3
+# PGlite user-state directory (dev): PGLITE_DIR, default data/pglite
+pglite/
 
 # Dependencies and builds
 node_modules/

@@ -153,7 +153,7 @@ describe("POST /api/tx handler", () => {
       landing,
       fetchFn: m.fn,
     });
-    const anon = { id: "a", wallet: null, anonymous: true, expiresAt: null };
+    const anon = { id: "a", wallet: null, userId: null, anonymous: true, expiresAt: null };
     expect((await h.handle({ tx: signedTx, preset: "reduced" }, anon)).status).toBe(401);
     expect(m.calls).toHaveLength(0);
     expect(lanesForPreset("reduced", landing).map((l) => l.name)).toEqual(["helius-swqos-fra"]);
@@ -176,7 +176,10 @@ describe("POST /api/tx handler", () => {
       landing,
       fetchFn: m.fn,
     });
-    const r = await h.handle({ tx: signedTx, preset: "fast" }, { id: "u", wallet: "W", anonymous: false, expiresAt: null });
+    const r = await h.handle(
+      { tx: signedTx, preset: "fast" },
+      { id: "u", wallet: "W", userId: "user-1", anonymous: false, expiresAt: null },
+    );
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ dryRun: true, lanes: [], simulation: { unitsConsumed: 5 } });
     expect(simulated).toBe(1);

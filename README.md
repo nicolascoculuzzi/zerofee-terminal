@@ -11,7 +11,7 @@ An Axiom-style Solana memecoin trading terminal with **zero platform fees**. You
 
 ## Status
 
-Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve and PumpSwap buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. Phase 2, the market data feed, decodes every pump.fun and PumpSwap launch, trade and migration, derives token metrics, and streams them over a WebSocket gateway. The wallet layer and web UI are next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
+Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve and PumpSwap buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. Phase 2, the market data feed, decodes every pump.fun and PumpSwap launch, trade and migration, derives token metrics, and streams them over a WebSocket gateway. The backend also has wallet sign-in, per-user settings, the wallet tracker, server-side price alerts with Web Push / Telegram / Discord delivery, and an admin kill switch. The web UI is next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
 
 ## Quick start (developers)
 
@@ -54,6 +54,21 @@ bun run --cwd apps/server feed
 ```
 
 For production set `INGEST_SOURCE=yellowstone` with `YELLOWSTONE_ENDPOINT` and `YELLOWSTONE_X_TOKEN`. All server settings are in [.env.example](.env.example).
+
+### Accounts, settings and alerts (server)
+
+The same server handles wallet sign-in (Sign-In With Solana), per-user settings, the wallet tracker and off-app alerts. User state goes to Postgres when `DATABASE_URL` is set; without it the server keeps it in PGlite, an in-process Postgres stored in `data/pglite` (development only). The REST and WebSocket contract is in [packages/protocol](packages/protocol/src/user.ts).
+
+- **Sessions.** A successful sign-in sets the `__Host-zf_session` cookie (HttpOnly, Secure, SameSite=Strict); only its SHA-256 is stored. Requests that carry the cookie and change something must come from `PUBLIC_ORIGIN` or `ALLOWED_ORIGINS` (CSRF check).
+- **Local development over http.** Browsers treat `http://127.0.0.1` and `http://localhost` as secure contexts, so Chromium and Firefox keep the Secure cookie over plain http there. Other plain-http hosts can't hold the session, and the server refuses to start with one. With a Vite dev server, proxy `/api` and `/ws` to the backend and set `PUBLIC_ORIGIN` to the Vite origin.
+- **Try sign-in end to end** with a throwaway, never-funded key, against a running server:
+
+```bash
+SERVER_URL=http://127.0.0.1:8787 bun run --cwd apps/server signin-e2e
+```
+
+- **Alerts.** Price and market-cap alerts run on the server, so they fire with the tab closed. They go out over Web Push (`bun run --cwd apps/server vapid-keys` prints the key pair), a Telegram bot (`TELEGRAM_BOT_TOKEN`; users link a chat with a one-time `/start` code) and Discord webhooks (stored encrypted with `CHANNEL_ENCRYPTION_KEY`). A channel without its setting stays off.
+- **Kill switch.** With `ADMIN_TOKEN` set, `POST /api/admin/halt` stops every transaction submission until `POST /api/admin/resume`, and the halt is published to all clients. Every admin call, failed ones included, goes into an append-only audit log.
 
 ## Docs
 
