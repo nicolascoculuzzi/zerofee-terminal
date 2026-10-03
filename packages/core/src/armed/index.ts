@@ -3,4 +3,7 @@
  * fires, so exits run with the tab closed without custody. See SPEC.md "Armed orders".
  */
 export * from "./alt";
+export * from "./armedTx";
+export * from "./migration";
 export * from "./nonce";
+export * from "./staticAccounts";
