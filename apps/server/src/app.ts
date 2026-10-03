@@ -26,6 +26,7 @@ import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
 import { StorageWriter } from "./storage/writer";
+import type { UserLayer } from "./user";
 import { RpcClient } from "./util/rpc";
 
 const log = logger("app");
@@ -41,6 +42,11 @@ export interface AppOverrides {
   solUsd?: SolUsdFeed | null;
   /** Skip periodic network pollers (blockhash, fees, tip floor, program accounts). */
   pollers?: boolean;
+  /**
+   * Accounts layer (createUserLayer): SIWS sessions, settings / alert / admin API, user topics.
+   * Without it the gateway is anonymous-only. The app starts it and stops it with itself.
+   */
+  user?: UserLayer | null;
 }
 
 export interface App {
@@ -56,6 +62,7 @@ export interface App {
   source: Source | null;
   sink: IngestSink;
   reconciler: Reconciler | null;
+  user: UserLayer | null;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -231,6 +238,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     };
   };
 
+  const user = o.user ?? null;
   gateway = new Gateway({
     cfg,
     market: m,
@@ -238,16 +246,18 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     chain,
     reader,
     programAccounts,
-    auth: o.auth ?? new AnonymousAuth(),
+    auth: o.auth ?? user?.sessions ?? new AnonymousAuth(),
     tx,
     health,
     debugStats,
+    user,
   });
 
   // start
   writer.start();
   resolver.start();
   gateway.start();
+  user?.start();
   solUsd?.start();
   if (o.pollers !== false) {
     chain.start();
@@ -276,6 +286,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     source,
     sink,
     reconciler,
+    user,
     health,
     async stop() {
       clearInterval(evictTimer);
@@ -287,6 +298,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       resolver.stop();
       metadata.stop();
       await gateway?.stop();
+      await user?.stop();
       writer.stop();
       if (!o.db) db.close();
     },

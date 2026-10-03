@@ -69,7 +69,7 @@ export class UsersRepo {
     userAgentHash: string | null;
     now: number;
     maxActive: number;
-  }): Promise<SessionRecord> {
+  }): Promise<{ session: SessionRecord; revoked: string[] }> {
     return this.db.transaction(async (tx) => {
       const id = crypto.randomUUID();
       const rows = await tx.query(
@@ -79,17 +79,19 @@ export class UsersRepo {
                    (SELECT wallet FROM users WHERE users.id = sessions.user_id) AS wallet`,
         [id, s.tokenHash, s.userId, iso(s.now), iso(s.expiresAt), s.userAgentHash],
       );
-      await tx.query(
+      // Keep the new session plus the (maxActive - 1) most recent others; never the new one.
+      const revoked = await tx.query(
         `UPDATE sessions SET revoked_at = $3::timestamptz
          WHERE id IN (
            SELECT id FROM sessions
-           WHERE user_id = $1::uuid AND revoked_at IS NULL AND expires_at > $3::timestamptz
-           ORDER BY created_at DESC, id
+           WHERE user_id = $1::uuid AND id <> $4::uuid AND revoked_at IS NULL AND expires_at > $3::timestamptz
+           ORDER BY created_at DESC, last_seen_at DESC
            OFFSET $2
-         )`,
-        [s.userId, s.maxActive, iso(s.now)],
+         )
+         RETURNING id`,
+        [s.userId, Math.max(0, s.maxActive - 1), iso(s.now), id],
       );
-      return mapSession(rows[0] as Row);
+      return { session: mapSession(rows[0] as Row), revoked: revoked.map((r) => String(r.id)) };
     });
   }
 

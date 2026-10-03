@@ -108,14 +108,16 @@ describe.each(DRIVERS)("$name", ({ open }) => {
       const u = await store.users.upsertOnLogin(addr("pg-user-2"), T0);
       const mk = (hash: string, at: number) =>
         store.users.createSession({ userId: u.id, tokenHash: hash, expiresAt: at + 3_600_000, userAgentHash: "ua", now: at, maxActive: 2 });
-      const s1 = await mk("h1", T0);
+      const { session: s1, revoked: none } = await mk("h1", T0);
+      expect(none).toEqual([]);
       expect(s1).toMatchObject({ userId: u.id, wallet: u.wallet, createdAt: T0, expiresAt: T0 + 3_600_000 });
       expect((await store.users.findSession("h1", T0 + 1))?.id).toBe(s1.id);
       expect(await store.users.findSession("h1", T0 + 3_600_000)).toBeNull(); // expired
       expect(await store.users.findSession("nope", T0)).toBeNull();
 
       await mk("h2", T0 + 1_000);
-      await mk("h3", T0 + 2_000); // cap 2: h1 (oldest) is revoked
+      const { revoked } = await mk("h3", T0 + 2_000); // cap 2: h1 (oldest) is revoked
+      expect(revoked).toEqual([s1.id]);
       expect(await store.users.findSession("h1", T0 + 3_000)).toBeNull();
       expect(await store.users.findSession("h2", T0 + 3_000)).not.toBeNull();
       expect(await store.users.activeSessionCount(T0 + 3_000, u.id)).toBe(2);

@@ -9,6 +9,12 @@
  *
  * REST: GET /api/health, /api/tokens/:mint, /api/candles, /api/program-accounts; POST /api/tx;
  * GET /debug. Per-IP token-bucket rate limits; an AuthProvider seam for SIWS sessions.
+ *
+ * With the accounts layer (`user`, src/user.ts): the account / settings / alert / admin endpoints are
+ * routed to its API; WebSocket upgrades resolve the session cookie (a cookie-authenticated upgrade
+ * must come from an allowed Origin: cross-site WebSocket hijacking); the user topics `wallet:<address>`
+ * and `orders` need a signed-in session (orders are published on a per-user internal topic so users
+ * never see each other's); sockets close (4401) when their session is revoked or expires.
  */
 
 import {
@@ -18,6 +24,7 @@ import {
   type ErrorCode,
   type HealthResponse,
   isTimeframe,
+  type OrdersDelta,
   type ParsedTopic,
   type PulseColumn,
   parseTopic,
@@ -25,8 +32,10 @@ import {
   type Timeframe,
   type TokenSummary,
   type Topic,
+  type WalletDelta,
 } from "@zerofee/protocol";
 import type { Server, ServerWebSocket } from "bun";
+import { apiError, json } from "../api/http";
 import type { ServerConfig } from "../config";
 import type { ChainPublisher } from "../feeds/chain";
 import type { ProgramAccountsCache } from "../feeds/programAccounts";
@@ -34,6 +43,7 @@ import { logger } from "../log";
 import { COLUMNS, diffSummary, type PulseBoard } from "../market/pulse";
 import type { FeedItem, MarketState } from "../market/state";
 import type { StorageReader } from "../storage/reader";
+import type { UserTopicSource } from "../user";
 import type { AuthProvider, Session } from "./auth";
 import { DEBUG_HTML } from "./debug";
 import { RateLimiter } from "./rateLimit";
@@ -46,8 +56,26 @@ interface WsData {
   id: string;
   ip: string;
   session: Session;
-  subs: Set<string>;
+  /** Client topic -> internal pub/sub topic (they differ for per-user topics such as `orders`). */
+  subs: Map<string, string>;
+  /** User-topic subscriptions waiting for their (async) authorization and snapshot. */
+  pending: Set<string>;
 }
+
+/** What the gateway needs from the accounts layer (src/user.ts). */
+export interface UserGateway {
+  api: { handle(req: Request, ip: string): Promise<Response | null> };
+  sessions: { onRevoke(fn: (sessionIds: string[]) => void): void };
+  origins: { isAllowed(origin: string | null): boolean };
+  limits: { tx: RateLimiter };
+  topics: UserTopicSource;
+  wsConnPerUser: number;
+}
+
+/** WebSocket close code for an ended session (revoked, expired). */
+export const WS_CLOSE_SESSION_ENDED = 4401;
+
+const ordersTopic = (userId: string) => `orders@${userId}`;
 
 export interface DebugStats {
   source: string;
@@ -71,23 +99,18 @@ export interface GatewayDeps {
   tx: TxHandler;
   health(): HealthResponse;
   debugStats(): DebugStats;
+  /** Accounts layer; absent = anonymous-only gateway (user topics answer `unavailable`). */
+  user?: UserGateway | null;
+  /** Mints whose summary changed in the last Pulse flush (the alert engine listens). */
+  onTokensChanged?: (mints: string[]) => void;
 }
 
 const DEBUG_TOPIC = "debug";
 const SNAPSHOT_TRADES = 100;
 const SNAPSHOT_CANDLES = 300;
 const MAX_CANDLES_REST = 2_000;
-
-function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", "cache-control": "no-store", ...headers },
-  });
-}
-
-function apiError(status: number, code: ErrorCode, error: string): Response {
-  return json({ error, code }, status);
-}
+/** Ceiling for any request body (the tracked-wallet import is the largest legitimate one). */
+const MAX_REQUEST_BODY = 4 * 1024 * 1024;
 
 export class Gateway {
   private server: Server<WsData> | null = null;
@@ -96,6 +119,9 @@ export class Gateway {
   private readonly txLimiter: RateLimiter;
   private readonly wsLimiter: RateLimiter;
   private readonly connsPerIp = new Map<string, number>();
+  private readonly connsPerUser = new Map<string, number>();
+  /** Signed-in sockets by session id (closed on revocation / expiry). */
+  private readonly sessionSockets = new Map<string, Set<ServerWebSocket<WsData>>>();
   private readonly lastToken = new Map<string, TokenSummary>();
   private readonly recentFeed: FeedItem[] = [];
   private pendingChain: ChainDelta | null = null;
@@ -132,6 +158,7 @@ export class Gateway {
     this.server = Bun.serve<WsData, never>({
       hostname: this.d.cfg.host,
       port: this.d.cfg.port,
+      maxRequestBodySize: MAX_REQUEST_BODY,
       async fetch(req, server) {
         return self.route(req, server);
       },
@@ -142,9 +169,15 @@ export class Gateway {
         closeOnBackpressureLimit: true,
         perMessageDeflate: this.d.cfg.wsCompression,
         sendPings: true,
-        open() {
+        open(ws) {
           self.connections++;
           self.stats.connections++;
+          const s = ws.data.session;
+          if (!s.anonymous) {
+            const set = self.sessionSockets.get(s.id) ?? new Set();
+            set.add(ws);
+            self.sessionSockets.set(s.id, set);
+          }
         },
         message(ws, raw) {
           self.onMessage(ws, typeof raw === "string" ? raw : new TextDecoder().decode(raw));
@@ -154,12 +187,25 @@ export class Gateway {
           const n = (self.connsPerIp.get(ws.data.ip) ?? 1) - 1;
           if (n <= 0) self.connsPerIp.delete(ws.data.ip);
           else self.connsPerIp.set(ws.data.ip, n);
-          for (const t of ws.data.subs) self.hub.removeSubscriber(t);
+          const s = ws.data.session;
+          if (!s.anonymous) {
+            const set = self.sessionSockets.get(s.id);
+            set?.delete(ws);
+            if (set && !set.size) self.sessionSockets.delete(s.id);
+            if (s.userId) {
+              const u = (self.connsPerUser.get(s.userId) ?? 1) - 1;
+              if (u <= 0) self.connsPerUser.delete(s.userId);
+              else self.connsPerUser.set(s.userId, u);
+            }
+          }
+          for (const internal of ws.data.subs.values()) self.hub.removeSubscriber(internal);
           ws.data.subs.clear();
+          ws.data.pending.clear();
         },
       },
     });
     this.hub = new TopicHub((topic, payload) => this.server?.publish(topic, payload));
+    this.d.user?.sessions.onRevoke((ids) => this.closeSessions(ids));
     const f = this.d.cfg.flush;
     this.timers.push(
       setInterval(() => this.flushPulse(), f.pulseMs),
@@ -168,15 +214,40 @@ export class Gateway {
       setInterval(() => this.flushChain(), f.chainMs),
       setInterval(() => this.flushDebug(), 250),
       setInterval(() => this.expirePulse(), 5_000),
+      setInterval(() => this.closeExpiredSessions(), 15_000),
     );
     log.info(`listening on http://${this.d.cfg.host}:${this.port} (ws /ws, debug /debug)`);
+  }
+
+  /** Closes the sockets of revoked sessions (sign-out, rotation, session cap). */
+  closeSessions(sessionIds: string[]): void {
+    for (const id of sessionIds) {
+      for (const ws of this.sessionSockets.get(id) ?? []) ws.close(WS_CLOSE_SESSION_ENDED, "session ended");
+    }
+  }
+
+  /** Closes sockets whose session passed its absolute expiry. */
+  closeExpiredSessions(now = Date.now()): void {
+    for (const set of this.sessionSockets.values()) {
+      for (const ws of set) {
+        const exp = ws.data.session.expiresAt;
+        if (exp !== null && exp <= now) ws.close(WS_CLOSE_SESSION_ENDED, "session expired");
+      }
+    }
   }
 
   async stop(): Promise<void> {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
-    await this.server?.stop(true);
+    const server = this.server;
     this.server = null;
+    if (!server) return;
+    // Bun 1.3.14: once the server has closed a WebSocket itself (ws.close, e.g. on sign-out),
+    // stop(true) still closes the listener and every connection, but its promise never settles.
+    // Wait a bounded time instead of hanging shutdown.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([server.stop(true), new Promise<void>((r) => (timer = setTimeout(r, 500)))]);
+    clearTimeout(timer);
   }
 
   private clientIp(req: Request, server: Server<WsData>): string {
@@ -199,10 +270,20 @@ export class Gateway {
       if (conns >= this.d.cfg.rateLimit.wsConnPerIp) return apiError(429, "rate_limited", "too many connections");
       const session = await this.d.auth.authenticate(req);
       if (!session) return apiError(401, "unauthorized", "unauthorized");
+      const userId = session.anonymous ? null : session.userId;
+      if (!session.anonymous) {
+        // The cookie rode along: only our own pages may open a signed-in socket.
+        if (!this.d.user?.origins.isAllowed(req.headers.get("origin"))) return apiError(403, "forbidden", "cross-origin WebSocket refused");
+        if (userId && (this.connsPerUser.get(userId) ?? 0) >= (this.d.user?.wsConnPerUser ?? Number.POSITIVE_INFINITY)) {
+          return apiError(429, "rate_limited", "too many connections for this account");
+        }
+      }
       this.connsPerIp.set(ip, conns + 1);
-      const ok = server.upgrade(req, { data: { id: crypto.randomUUID(), ip, session, subs: new Set<string>() } });
-      if (ok) return undefined;
+      if (userId) this.connsPerUser.set(userId, (this.connsPerUser.get(userId) ?? 0) + 1);
+      const data: WsData = { id: crypto.randomUUID(), ip, session, subs: new Map(), pending: new Set() };
+      if (server.upgrade(req, { data })) return undefined;
       this.connsPerIp.set(ip, conns);
+      if (userId) this.connsPerUser.set(userId, (this.connsPerUser.get(userId) ?? 1) - 1);
       return apiError(400, "bad_request", "websocket upgrade failed");
     }
     if (!this.restLimiter.allow(ip)) {
@@ -224,6 +305,11 @@ export class Gateway {
         if (req.method !== "POST") return apiError(405, "bad_request", "POST only");
         if (!this.txLimiter.allow(ip)) return apiError(429, "rate_limited", "slow down");
         const session = await this.d.auth.authenticate(req);
+        if (session && !session.anonymous && this.d.user) {
+          // Cookie-authenticated mutation: CSRF origin check, then the per-user rate limit.
+          if (!this.d.user.origins.isAllowed(req.headers.get("origin"))) return apiError(403, "forbidden", "cross-origin request refused");
+          if (!this.d.user.limits.tx.allow(session.userId ?? session.id)) return apiError(429, "rate_limited", "slow down");
+        }
         let body: unknown;
         try {
           body = await req.json();
@@ -232,6 +318,10 @@ export class Gateway {
         }
         const r = await this.d.tx.handle(body, session);
         return json(r.body, r.status);
+      }
+      if (this.d.user) {
+        const r = await this.d.user.api.handle(req, ip);
+        if (r) return r;
       }
       return apiError(404, "not_found", "not found");
     } catch (e) {
@@ -299,10 +389,7 @@ export class Gateway {
     if (msg.type !== "subscribe") return { ok: false, code: "bad_request", message: "type must be subscribe or unsubscribe" };
     const parsed = topic === DEBUG_TOPIC ? null : parseTopic(topic);
     if (topic !== DEBUG_TOPIC && !parsed) return { ok: false, code: "unknown_topic", message: "unknown topic", topic };
-    if (parsed && (parsed.kind === "wallet" || parsed.kind === "orders")) {
-      return { ok: false, code: "unavailable", message: "wallet and orders topics are not published yet (phase 3/5)", topic };
-    }
-    if (!ws.data.subs.has(topic) && ws.data.subs.size >= this.d.cfg.wsMaxSubscriptions) {
+    if (!ws.data.subs.has(topic) && ws.data.subs.size + ws.data.pending.size >= this.d.cfg.wsMaxSubscriptions) {
       return {
         ok: false,
         code: "too_many_subscriptions",
@@ -322,10 +409,20 @@ export class Gateway {
     }
     const { msg, topic, parsed } = err;
     if (msg.type === "unsubscribe") {
-      if (ws.data.subs.delete(topic)) {
-        ws.unsubscribe(topic);
-        this.hub.removeSubscriber(topic);
+      ws.data.pending.delete(topic);
+      const internal = ws.data.subs.get(topic);
+      if (internal !== undefined) {
+        ws.data.subs.delete(topic);
+        ws.unsubscribe(internal);
+        this.hub.removeSubscriber(internal);
       }
+      return;
+    }
+    if (parsed && (parsed.kind === "wallet" || parsed.kind === "orders")) {
+      void this.subscribeUserTopic(ws, topic, parsed).catch((e) => {
+        log.error(`user topic ${parsed.kind} failed: ${e instanceof Error ? e.message : e}`);
+        this.sendError(ws, "internal", "internal error", topic);
+      });
       return;
     }
     // Snapshot and subscribe in one synchronous step: no publish can interleave.
@@ -334,10 +431,75 @@ export class Gateway {
       : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
     ws.send(this.hub.snapshot(topic, data));
     if (!ws.data.subs.has(topic)) {
-      ws.data.subs.add(topic);
+      ws.data.subs.set(topic, topic);
       ws.subscribe(topic);
       this.hub.addSubscriber(topic);
     }
+  }
+
+  /**
+   * `wallet:<address>` and `orders`: signed-in sessions only. Authorization and the snapshot need the
+   * database, so this runs async; the internal topic is counted as subscribed before the read so a
+   * concurrent publish advances its seq, and a read that raced a publish is retried. The snapshot is
+   * sent and the socket subscribed in one synchronous step, as for market topics.
+   */
+  private async subscribeUserTopic(
+    ws: ServerWebSocket<WsData>,
+    topic: string,
+    p: Extract<ParsedTopic, { kind: "wallet" | "orders" }>,
+  ): Promise<void> {
+    const user = this.d.user;
+    if (!user) return this.sendError(ws, "unavailable", "user topics need the accounts layer", topic);
+    const s = ws.data.session;
+    if (s.anonymous || !s.userId) return this.sendError(ws, "unauthorized", "sign in to subscribe to user topics", topic);
+    if (s.expiresAt !== null && s.expiresAt <= Date.now()) return this.sendError(ws, "unauthorized", "session expired", topic);
+    const userId = s.userId;
+    if (ws.data.pending.has(topic)) return; // the same subscribe is already in flight
+    ws.data.pending.add(topic);
+    const internal = p.kind === "orders" ? ordersTopic(userId) : topic;
+    let data: unknown = null;
+    let counted = false;
+    try {
+      if (p.kind === "wallet" && !(await user.topics.canWatchWallet(userId, p.address))) {
+        ws.data.pending.delete(topic);
+        return this.sendError(ws, "forbidden", "not your wallet: subscribe to your own or one of your trading wallets", topic);
+      }
+      this.hub.addSubscriber(internal);
+      counted = true;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const before = this.hub.seq(internal);
+        data = p.kind === "orders" ? await user.topics.ordersSnapshot(userId) : await user.topics.walletSnapshot(p.address);
+        if (this.hub.seq(internal) === before) break;
+      }
+    } catch (e) {
+      if (counted) this.hub.removeSubscriber(internal);
+      ws.data.pending.delete(topic);
+      throw e;
+    }
+    // A repeated subscribe re-sends the snapshot (cheap resync), as for market topics.
+    const stillWanted = ws.data.pending.delete(topic) && ws.readyState === 1;
+    if (!stillWanted || data === null) {
+      this.hub.removeSubscriber(internal);
+      if (stillWanted) this.sendError(ws, "unavailable", "wallet balances are not published yet", topic);
+      return;
+    }
+    ws.send(this.hub.snapshot(internal, data, topic));
+    if (ws.data.subs.get(topic) === internal) {
+      this.hub.removeSubscriber(internal); // resync of an existing subscription: keep one count
+      return;
+    }
+    ws.data.subs.set(topic, internal);
+    ws.subscribe(internal);
+  }
+
+  /** Publishes an orders delta to one user's sockets (armed-orders engine, Phase 5). */
+  publishOrders(userId: string, delta: OrdersDelta): boolean {
+    return this.hub.publish(ordersTopic(userId), "delta", delta, undefined, "orders");
+  }
+
+  /** Publishes a wallet delta to the sockets watching that wallet (wallet feed, Phase 6). */
+  publishWallet(address: string, delta: WalletDelta): boolean {
+    return this.hub.publish(`wallet:${address}`, "delta", delta);
   }
 
   private snapshotData(topic: Topic, p: ParsedTopic): unknown {
@@ -378,6 +540,13 @@ export class Gateway {
     const m = this.d.market;
     const changed = [...m.changes.tokens];
     m.changes.tokens.clear();
+    if (changed.length && this.d.onTokensChanged) {
+      try {
+        this.d.onTokensChanged(changed);
+      } catch (e) {
+        log.error(`token change listener failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
     const deltas = this.d.pulse.update(changed, (mint) => m.summary(mint), now);
     for (const col of COLUMNS) this.publishPulse(col, deltas[col]);
     for (const mint of changed) {

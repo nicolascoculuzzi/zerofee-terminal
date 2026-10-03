@@ -2,11 +2,13 @@
 /**
  * zerofee-terminal server. `bun run start` (or `bun run dev`) from apps/server, or
  * `bun apps/server/src/main.ts` from the repo root. Config: environment / `.env` (see .env.example).
- * Binds to 127.0.0.1 and runs with DRY_RUN=true unless configured otherwise.
+ * Binds to 127.0.0.1 and runs with DRY_RUN=true unless configured otherwise. User state goes to
+ * Postgres when DATABASE_URL is set, otherwise to an in-process PGlite database (development).
  */
 import { createApp } from "./app";
 import { loadConfig, redactUrl } from "./config";
 import { logger, setLogLevel } from "./log";
+import { createUserLayer } from "./user";
 
 const log = logger("main");
 const cfg = loadConfig();
@@ -15,8 +17,12 @@ log.info(
   `starting: source=${cfg.source} rpc=${redactUrl(cfg.rpcUrl)} ws=${redactUrl(cfg.rpcWsUrl)} db=${cfg.dbPath} dryRun=${cfg.dryRun} bind=${cfg.host}:${cfg.port}`,
 );
 if (!cfg.dryRun) log.warn("DRY_RUN=false: POST /api/tx will SEND transactions to the landing lanes");
+log.info(
+  `accounts: origin=${cfg.auth.publicOrigin} siws domain=${cfg.auth.siwsDomain} allowed origins=${cfg.auth.allowedOrigins.join(",")}`,
+);
 
-const app = createApp(cfg);
+const user = await createUserLayer(cfg);
+const app = createApp(cfg, { user });
 
 const statsTimer = setInterval(() => {
   const h = app.health();
