@@ -1,11 +1,21 @@
 /**
  * REST endpoints (JSON). Errors are `{ error, code }` with a matching HTTP status.
  *
+ * Market (public):
  *   GET  /api/health                         HealthResponse
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
  *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
  *   GET  /api/program-accounts               ProgramAccountsResponse  (pump Global / FeeConfig, PumpSwap GlobalConfig / FeeConfig)
- *   POST /api/tx                             TxSubmitRequest -> TxSubmitResponse
+ *   POST /api/tx                             TxSubmitRequest -> TxSubmitResponse (503 "halted" while the kill switch is on)
+ *
+ * Accounts, settings and the wallet tracker: user.ts. Alerts and notification channels: alerts.ts.
+ * Operator endpoints: admin.ts.
+ *
+ * Authentication: the `__Host-zf_session` cookie (HttpOnly, Secure, SameSite=Strict) set by
+ * POST /api/auth/signin. Requests that carry it and change state (POST/PUT/PATCH/DELETE, including
+ * POST /api/tx) must send an `Origin` header from the server's allowed origins, otherwise 403
+ * "forbidden". Rate limits: per IP on every endpoint, stricter per IP on sign-in, per user on
+ * authenticated calls (429 "rate_limited").
  */
 
 import type { Candle, TokenSummary, TradeContext } from "./market";

@@ -30,6 +30,18 @@ export interface SolUsdPrice {
   source: "binance";
 }
 
+/**
+ * Admin kill switch (SPEC "Kill switches"). While `halted`, POST /api/tx refuses every submission
+ * (HTTP 503, code "halted"); the web app should disable trading and show `reason`.
+ */
+export interface HaltState {
+  halted: boolean;
+  /** Operator-supplied reason, shown to users. */
+  reason: string | null;
+  /** When the current halt began (ms); null while running. */
+  since: number | null;
+}
+
 export interface ChainState {
   /** Highest processed slot seen by the ingest source. */
   slot: number | null;
@@ -42,6 +54,8 @@ export interface ChainState {
   priorityFees: PriorityFeeEstimate | null;
   jitoTipFloor: JitoTipFloor | null;
   solUsd: SolUsdPrice | null;
+  /** Trading kill switch; a delta carries the full object whenever it changes. */
+  halt: HaltState;
 }
 
 /** `chain` snapshot = full state; delta = only the changed fields. */

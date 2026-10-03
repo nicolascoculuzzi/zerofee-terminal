@@ -101,13 +101,25 @@ export interface CorrectionMessage<T extends Topic = Topic> {
   reason: CorrectionReason;
 }
 
+/**
+ * Error codes shared by WebSocket `error` messages and REST error bodies.
+ *   unauthorized    no valid session (REST 401; WS: user topics need a signed-in session)
+ *   forbidden       signed in, but not allowed (REST 403: cross-origin mutation, foreign wallet topic)
+ *   conflict        the resource already exists or changed underneath (REST 409)
+ *   limit_exceeded  a per-user cap was reached (REST 422, e.g. 10,000 tracked wallets)
+ *   halted          the admin kill switch is on; POST /api/tx refuses (REST 503)
+ */
 export type ErrorCode =
   | "bad_request"
   | "unknown_topic"
   | "unauthorized"
+  | "forbidden"
   | "rate_limited"
   | "too_many_subscriptions"
   | "not_found"
+  | "conflict"
+  | "limit_exceeded"
+  | "halted"
   | "unavailable"
   | "internal";
 
