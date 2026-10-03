@@ -5,7 +5,7 @@
  */
 import type { Order, OrderSize, OrderTrigger } from "../protocol";
 import { getServices } from "../services";
-import type { ExecutionSettings, TpSlLeg, TradeSource } from "../services/tradeService";
+import type { ExecutionSettings, TpSlLeg, TradeReceipt, TradeSource } from "../services/tradeService";
 import { useMarket } from "../state/market";
 import { type PresetId, useSettings } from "../state/settings";
 import { useToasts } from "../state/toasts";
@@ -84,7 +84,7 @@ export interface BuyArgs {
   wallets?: string[];
 }
 
-export async function buy(args: BuyArgs): Promise<void> {
+export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
   const clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].buy;
@@ -92,11 +92,11 @@ export async function buy(args: BuyArgs): Promise<void> {
   const wallets = resolveWallets(args.wallets);
   if (wallets.length === 0) {
     blocked("No trading wallet", "Create a trading wallet to trade.", { label: "Set up", run: () => navigateTo("/onboarding") });
-    return;
+    return [];
   }
   if (!(args.sol > 0)) {
     blocked("Enter an amount", "Buy amount must be greater than zero.");
-    return;
+    return [];
   }
   const caps = settingsState.caps;
   if (args.sol > caps.perTradeSol) {
@@ -104,7 +104,7 @@ export async function buy(args: BuyArgs): Promise<void> {
       label: "Caps",
       run: () => useUi.getState().openSettings("trading"),
     });
-    return;
+    return [];
   }
   const spent = useTrades.getState().spentToday();
   const total = args.sol * wallets.length;
@@ -114,7 +114,7 @@ export async function buy(args: BuyArgs): Promise<void> {
       `Daily cap ${fmtSol(caps.dailySol)} SOL: ${fmtSol(spent)} used today, this buy needs ${fmtSol(total)}.`,
       { label: "Caps", run: () => useUi.getState().openSettings("trading") },
     );
-    return;
+    return [];
   }
   const status = useWallet.getState().status;
   for (const w of wallets) {
@@ -126,15 +126,16 @@ export async function buy(args: BuyArgs): Promise<void> {
         `Need ${fmtSol(need)} SOL; ${fmtSol(Math.max(0, st.solBalance - st.reservedSol))} available (${fmtSol(st.reservedSol)} reserved by armed orders).`,
         { label: "Fund", run: () => useUi.getState().openFund("fund") },
       );
-      return;
+      return [];
     }
   }
-  if (!ensureUnlocked(`Unlock to buy $${symbol}`, () => void buy(args))) return;
+  if (!ensureUnlocked(`Unlock to buy $${symbol}`, () => void buy(args))) return [];
   const approved = await approveDirect(`Buy $${symbol} for ${fmtSol(args.sol)} SOL`, costLines(settings));
-  if (!approved) return;
+  if (!approved) return [];
 
   const { trade, wallet } = getServices();
   wallet.touch();
+  const receipts: TradeReceipt[] = [];
   await Promise.all(
     wallets.map(async (address) => {
       const id = uid("trade");
@@ -164,6 +165,7 @@ export async function buy(args: BuyArgs): Promise<void> {
           (p) => useTrades.getState().progress(id, p.stage),
         );
         useTrades.getState().finish(id, receipt);
+        receipts.push(receipt);
         if (receipt.status === "confirmed") {
           useTrades.getState().addSpend(args.sol);
           playTone("fill", useSettings.getState().display.soundVolume);
@@ -174,6 +176,7 @@ export async function buy(args: BuyArgs): Promise<void> {
       settleToast(id);
     }),
   );
+  return receipts;
 }
 
 export interface SellArgs {
@@ -188,7 +191,7 @@ export interface SellArgs {
   wallets?: string[];
 }
 
-export async function sell(args: SellArgs): Promise<void> {
+export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
   const clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].sell;
@@ -196,7 +199,7 @@ export async function sell(args: SellArgs): Promise<void> {
   const wallets = resolveWallets(args.wallets);
   if (wallets.length === 0) {
     blocked("No trading wallet", "Create a trading wallet to trade.");
-    return;
+    return [];
   }
   const status = useWallet.getState().status;
   const plans = wallets
@@ -216,16 +219,17 @@ export async function sell(args: SellArgs): Promise<void> {
     .filter((p): p is { address: string; pct: number | undefined; tokenAmount: number | undefined } => p !== null);
   if (plans.length === 0) {
     blocked("Nothing to sell", `No $${symbol} balance in the selected wallet.`);
-    return;
+    return [];
   }
-  if (!ensureUnlocked(`Unlock to sell $${symbol}`, () => void sell(args))) return;
+  if (!ensureUnlocked(`Unlock to sell $${symbol}`, () => void sell(args))) return [];
   const label =
     args.label ?? (args.pct !== undefined ? `${args.pct}%` : args.solValue !== undefined ? `${fmtSol(args.solValue)} SOL` : "amount");
   const approved = await approveDirect(`Sell ${label} of $${symbol}`, costLines(settings));
-  if (!approved) return;
+  if (!approved) return [];
 
   const { trade, wallet } = getServices();
   wallet.touch();
+  const receipts: TradeReceipt[] = [];
   await Promise.all(
     plans.map(async (plan) => {
       const id = uid("trade");
@@ -247,6 +251,7 @@ export async function sell(args: SellArgs): Promise<void> {
           (p) => useTrades.getState().progress(id, p.stage),
         );
         useTrades.getState().finish(id, receipt);
+        receipts.push(receipt);
         playTone(receipt.status === "confirmed" ? "fill" : "fail", useSettings.getState().display.soundVolume);
       } catch (e) {
         useTrades.getState().fail(id, e instanceof Error ? e.message : String(e));
@@ -254,26 +259,27 @@ export async function sell(args: SellArgs): Promise<void> {
       settleToast(id);
     }),
   );
+  return receipts;
 }
 
 /** Sells the amount whose current value equals the SOL still to recover (bought − sold). */
-export async function sellInitials(mint: string, source: TradeSource, preset?: PresetId | null): Promise<void> {
+export async function sellInitials(mint: string, source: TradeSource, preset?: PresetId | null): Promise<TradeReceipt[]> {
   const { activeAddress, status } = useWallet.getState();
   const pos = activeAddress ? status[activeAddress]?.positions.find((p) => p.mint === mint) : undefined;
   const { symbol, priceSol } = tokenInfo(mint);
   if (!pos || pos.holdingTokens <= 0) {
     blocked("Nothing to sell", `No $${symbol} balance in the active wallet.`);
-    return;
+    return [];
   }
   const remaining = pos.boughtSol - pos.soldSol;
   if (remaining <= 0) {
     useToasts
       .getState()
       .push({ kind: "info", title: "Initials already recovered", body: `You've taken out more than you put into $${symbol}.` });
-    return;
+    return [];
   }
   const tokens = priceSol > 0 ? Math.min(pos.holdingTokens, remaining / priceSol) : pos.holdingTokens;
-  await sell({ mint, tokenAmount: tokens, label: `initials (${fmtSol(remaining)} SOL)`, source, preset });
+  return sell({ mint, tokenAmount: tokens, label: `initials (${fmtSol(remaining)} SOL)`, source, preset });
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { type ChartOptions, ColorType, CrosshairMode, type DeepPartial, LineStyle } from "lightweight-charts";
+import { type ChartOptions, ColorType, CrosshairMode, type DeepPartial, LineStyle, TickMarkType, type Time } from "lightweight-charts";
 import { useSettings } from "../state/settings";
 
 export interface ChartColors {
@@ -13,7 +13,6 @@ export interface ChartColors {
   accent: string;
   warn: string;
   info: string;
-  violet: string;
 }
 
 /** Reads the live palette from the CSS variables, so charts follow the theme. */
@@ -21,19 +20,42 @@ export function chartColors(): ChartColors {
   const s = getComputedStyle(document.documentElement);
   const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback;
   return {
-    bg: v("--zf-chart-bg", "#0b0d10"),
-    grid: v("--zf-chart-grid", "#14181e"),
-    text: v("--zf-muted", "#9aa2af"),
-    line: v("--zf-line-strong", "#2a3039"),
-    fg: v("--zf-fg", "#e8eaee"),
-    dim: v("--zf-dim", "#626a77"),
-    buy: v("--zf-buy", "#1fc98c"),
-    sell: v("--zf-sell", "#f2526f"),
-    accent: v("--zf-accent", "#ff8a3d"),
-    warn: v("--zf-warn", "#f3c04f"),
-    info: v("--zf-info", "#5aa6ff"),
-    violet: v("--zf-violet", "#b18cff"),
+    bg: v("--zf-chart-bg", "#0a0b0d"),
+    grid: v("--zf-chart-grid", "#15171b"),
+    text: v("--zf-muted", "#959ba6"),
+    line: v("--zf-line-strong", "#2b2f36"),
+    fg: v("--zf-fg", "#e3e5e8"),
+    dim: v("--zf-dim", "#5e6570"),
+    buy: v("--zf-buy", "#24b47e"),
+    sell: v("--zf-sell", "#ec5b6b"),
+    accent: v("--zf-accent", "#f08537"),
+    warn: v("--zf-warn", "#dfac3c"),
+    info: v("--zf-info", "#5a93ec"),
   };
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** Charts show local time, like every table and toast in the app (the library defaults to UTC). */
+function localTime(time: Time): string {
+  const d = new Date((time as number) * 1000);
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function localTick(time: Time, type: TickMarkType): string {
+  const d = new Date((time as number) * 1000);
+  switch (type) {
+    case TickMarkType.Year:
+      return String(d.getFullYear());
+    case TickMarkType.Month:
+      return d.toLocaleDateString("en-US", { month: "short" });
+    case TickMarkType.DayOfMonth:
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    case TickMarkType.Time:
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    case TickMarkType.TimeWithSeconds:
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
 }
 
 /**
@@ -56,7 +78,8 @@ export function baseChartOptions(c: ChartColors): DeepPartial<ChartOptions> {
       horzLines: { color: c.grid },
     },
     rightPriceScale: { borderColor: c.line },
-    timeScale: { borderColor: c.line, timeVisible: true, secondsVisible: false },
+    timeScale: { borderColor: c.line, timeVisible: true, secondsVisible: false, tickMarkFormatter: localTick },
+    localization: { timeFormatter: localTime },
     crosshair: {
       mode: CrosshairMode.Normal,
       vertLine: { color: c.dim, style: LineStyle.Dashed, labelBackgroundColor: c.line },

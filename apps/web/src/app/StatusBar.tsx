@@ -108,7 +108,7 @@ export function StatusBar() {
   const simulated = getServices().simulated;
 
   return (
-    <footer className="hidden h-statusbar shrink-0 items-center gap-3 border-t border-line bg-panel px-2 text-xs text-muted md:flex">
+    <footer className="hidden h-statusbar shrink-0 items-center gap-3 overflow-hidden border-t border-line bg-panel px-2 text-xs whitespace-nowrap text-muted md:flex">
       <DockToggle active={docks.tracker} onClick={() => setDocks({ tracker: !docks.tracker })}>
         <Wallet className="icon-sm" /> Wallet tracker
         {unreadTrades > 0 && !docks.tracker && (
@@ -124,12 +124,12 @@ export function StatusBar() {
         <span className="flex items-center gap-2">
           <span className={cn("size-2 rounded-full", live ? "zf-live-dot bg-buy" : connection === "connecting" ? "bg-warn" : "bg-sell")} />
           <span className={live ? "text-fg" : ""}>{live ? "Live" : connection}</span>
-          <span className="text-dim">
+          <span className="hidden text-dim xl:inline">
             {hz} Hz · lag {feed.lagMs} ms · {feed.eventsPerSec.toFixed(1)} ev/s
           </span>
         </span>
       </Tooltip>
-      <span className="flex items-center gap-1 text-dim">
+      <span className="hidden items-center gap-1 text-dim xl:flex">
         <Activity className="icon-sm" /> Slot {slot ? slot.toLocaleString("en-US") : "—"}
       </span>
       <span>

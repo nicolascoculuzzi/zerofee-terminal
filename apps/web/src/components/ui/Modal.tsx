@@ -83,6 +83,50 @@ export function Modal({ open, onClose, title, children, footer, width = 480, cla
   );
 }
 
+/* Bottom sheet for narrow screens, after Phantom's token page sheet: https://mobbin.com/screens/76e93b20-0652-4758-8e2d-4925312a1fba */
+export function BottomSheet({
+  open,
+  onClose,
+  title,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: ReactNode;
+  children: ReactNode;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  useOverlayBehaviour(open, onClose, panel);
+  if (!open) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[115] flex items-end bg-scrim">
+      <button type="button" aria-label="Close sheet" className="absolute inset-0 cursor-default" onClick={onClose} tabIndex={-1} />
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : "Sheet"}
+        tabIndex={-1}
+        className="relative flex max-h-[88vh] w-full flex-col rounded-t-xl border-t border-line-strong bg-panel pb-[env(safe-area-inset-bottom)] outline-none"
+      >
+        <div className="flex h-10 shrink-0 items-center justify-between border-b border-line pr-2 pl-4">
+          <div className="text-base font-semibold">{title}</div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex size-6 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
+          >
+            <X className="icon-md" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export interface DrawerProps {
   open: boolean;
   onClose: () => void;

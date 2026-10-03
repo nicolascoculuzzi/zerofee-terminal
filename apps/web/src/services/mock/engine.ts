@@ -824,6 +824,8 @@ export class SimEngine {
     tagBits: number,
     signature?: string,
   ): Trade {
+    // Scheduled fills can land a tick late; keep each token's tape strictly time-ordered.
+    const at = Math.max(ts, t.trades[t.trades.length - 1]?.ts ?? 0);
     const price = this.priceOf(t);
     if (t.pool) t.pool.feeBps = poolFeeBps(price * t.supply);
     const sig = signature ?? fakeSignature(this.rng);
@@ -831,7 +833,7 @@ export class SimEngine {
       id: `${sig}:0`,
       signature: sig,
       mint: t.mint,
-      ts,
+      ts: at,
       slot,
       side,
       solAmount: q.sol,
@@ -851,11 +853,11 @@ export class SimEngine {
     else t.sells++;
     const priority = this.rng.chance(0.7) ? this.rng.range(0.00001, 0.0015) : this.rng.range(0.002, 0.012);
     t.feesSol += q.feeSol + priority + BASE_FEE_SOL;
-    t.lastTradeAt = ts;
+    t.lastTradeAt = at;
     t.dirty = true;
     t.detailDirty = true;
     if (!this.seeding) {
-      this.eventsWindow.push(ts);
+      this.eventsWindow.push(at);
       if (this.hasSubs(`trades:${t.mint}`) || this.hasCandleSubs(t.mint)) {
         let list = this.pendingTrades.get(t.mint);
         if (!list) {
@@ -2237,6 +2239,15 @@ export class SimEngine {
     if (!o) return false;
     if (o.order.status !== "armed" && o.order.status !== "stale" && o.order.status !== "submitted") return false;
     this.setStatus(o, "cancelled", "Cancelled: the stored nonce-advance transaction was fired.");
+    // OCO legs share one durable nonce: advancing it kills the sibling too.
+    if (o.order.ocoGroupId) {
+      for (const sib of this.orders.values()) {
+        if (sib === o || sib.order.ocoGroupId !== o.order.ocoGroupId) continue;
+        if (sib.order.status === "armed" || sib.order.status === "stale" || sib.order.status === "submitted") {
+          this.setStatus(sib, "cancelled", "Cancelled with its OCO sibling: the shared durable nonce was advanced.");
+        }
+      }
+    }
     return true;
   }
 
