@@ -6,6 +6,7 @@ import { type Address, getAddressDecoder, getAddressEncoder } from "@solana/kit"
 const addressDecoder = getAddressDecoder();
 const addressEncoder = getAddressEncoder();
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export function utf8(s: string): Uint8Array {
   return textEncoder.encode(s);
@@ -143,10 +144,33 @@ export class Reader {
     return v;
   }
 
+  /** Signed two's-complement i64 (Anchor `i64`, e.g. event timestamps). */
+  i64(): bigint {
+    const raw = this.u64();
+    return raw >= 1n << 63n ? raw - (1n << 64n) : raw;
+  }
+
   u128(): bigint {
     const lo = this.u64();
     const hi = this.u64();
     return (hi << 64n) | lo;
+  }
+
+  /**
+   * Borsh `String` (u32 LE length + UTF-8). A length running past the end of the buffer or above
+   * `maxLen` throws (it is corrupt or not this layout), unlike fixed-size reads which zero-pad.
+   * A string that starts exactly at the end of the buffer reads as "" (missing trailing field).
+   */
+  string(maxLen = 1024): string {
+    if (!this.has(4)) {
+      this.offset += 4;
+      return "";
+    }
+    const len = this.u32();
+    if (len > maxLen || !this.has(len)) throw new RangeError(`string length ${len} invalid at offset ${this.offset - 4}`);
+    const s = textDecoder.decode(this.data.subarray(this.offset, this.offset + len));
+    this.offset += len;
+    return s;
   }
 
   /** Signed two's-complement i128 (e.g. PumpSwap Pool.virtual_quote_reserves). */

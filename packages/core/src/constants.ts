@@ -146,7 +146,11 @@ export const ACCOUNT_DISCRIMINATORS = {
   ammGlobalConfig: new Uint8Array([149, 8, 156, 202, 160, 252, 176, 217]),
 } as const;
 
-/** Event discriminators (Anchor event-CPI; inner ix data = EVENT_IX_TAG + disc + borsh). idl/pump.json, idl/pump_amm.json */
+/**
+ * Event discriminators (Anchor event-CPI; inner ix data = EVENT_IX_TAG + disc + borsh). idl/pump.json, idl/pump_amm.json
+ * (pump-sdk 2.0.0 vendored IDLs). NOTE: a discriminator is sha256("event:<Name>")[..8], so generic names (TradeEvent,
+ * BuyEvent, CreateEvent) collide across Anchor programs - always attribute an event to its emitting program first.
+ */
 export const EVENT_IX_TAG = new Uint8Array([0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d]);
 export const EVENT_DISCRIMINATORS = {
   pumpTrade: new Uint8Array([189, 219, 127, 211, 78, 230, 97, 238]),
@@ -155,7 +159,14 @@ export const EVENT_DISCRIMINATORS = {
   pumpCompleteAmmMigration: new Uint8Array([189, 233, 93, 185, 92, 148, 234, 148]),
   ammBuy: new Uint8Array([103, 244, 82, 31, 44, 245, 119, 119]),
   ammSell: new Uint8Array([62, 47, 55, 10, 165, 3, 220, 42]),
+  ammCreatePool: new Uint8Array([177, 49, 12, 210, 160, 118, 167, 116]),
 } as const;
+
+/**
+ * Burn destination excluded from holder concentration metrics (the incinerator account).
+ * https://docs.rs/solana-sdk/latest/solana_sdk/incinerator/index.html
+ */
+export const INCINERATOR: Address = address("1nc1nerator11111111111111111111111111111111");
 
 /** Expected fixed account counts (runtime assertions). Notes §9. */
 export const EXPECTED_ACCOUNT_COUNTS = {
