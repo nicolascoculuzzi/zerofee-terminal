@@ -65,7 +65,7 @@ The e2e files are named `*.e2e.ts`, which `bun test` doesn't pick up, so the def
    On 2026-10-03 that was 6 programs, 59 accounts and 24 optional accounts, 20 of which existed. User-side accounts (ATAs, volume accumulators) are created by the trades themselves.
 3. **Validator.** It runs with `--reset --bind-address 127.0.0.1 --clone-feature-set` and a fresh ledger in `FORK_DIR`, detached. `--clone-feature-set` matters: by default the test validator turns on every feature, including the 37 that mainnet hasn't activated.
 4. **Checks.** Every required clone must exist on the fork. Every program's ELF must be byte-identical to mainnet's: the validator zeroes the deploy slot in the programdata header, so only bytes after the 45-byte header are hashed. The hashes go into `fork.json`.
-5. **Rent normalization** (see Findings). Cloned accounts that satisfy mainnet's rent rules but break the fork's are topped up, and each top-up is recorded in `fork.json`. Trade math never reads these lamports.
+5. **Rent normalization** (see Findings). Every account owned by the pump, PumpSwap or fees program gets exactly `rent_fork(len) − rent_mainnet(len)` added, with mainnet rent read live. Any other account below the fork's rent-exempt minimum is lifted to it. Each top-up is recorded in `fork.json`. Trade math never reads these lamports.
 6. **e2e.** `harness.ts` mirrors `apps/cli/src/index.ts` with the `.env.example` defaults (15% slippage, standard landing mode, fast preset, 100k µL/CU floor):
    - It builds and signs the trade with `loadTokenState`, `buildTrade`, `planFees`, `assembleTransaction` and `signAssembled`.
    - It simulates with `sigVerify`, then sends through `SubmitRouter({ dryRun: false })` with one `RpcLane`.
@@ -106,18 +106,18 @@ Every trade also checks the fee (5,000 base plus the planned priority fee), that
 - Anything outside the clone list, upgrades after the clone, or Clock-dependent logic. The fork starts at slot 0 with wall-clock time; no trade path read the slot in these runs.
 - The live Jito tip-account list. The fork uses the documented list.
 
-## Findings (2026-10-03, Agave 4.3.0, mainnet slots 453,021,560–453,026,107)
+## Findings (2026-10-03, Agave 4.3.0, mainnet slots 453,021,560–453,028,966)
 
 1. **The fork's rent rate is not mainnet's.** Even with `--clone-feature-set`, the test validator's genesis keeps the classic rent rate: 6,960 lamports/byte including the 128-byte overhead (a 0-byte account needs 890,880). Mainnet now charges 5,080 (650,240). Two problems follow, and `fork:start` fixes both:
    - **Rent-paying accounts.** Jito tip accounts are swept down to about the mainnet minimum (690,880 for 8 bytes). On the fork that is "rent-paying" (minimum 946,560), and the runtime rejects any transaction that credits such an account without lifting it to the minimum. In one run, 6 of 8 Jito tip accounts were below the line, so most standard-mode trades would have failed with `InsufficientFundsForRent`.
-   - **Bonding-curve cushion.** pump keeps every bonding curve at exactly `rent(len) + real_quote_reserves` lamports (true on mainnet for both 141- and 151-byte curves) and charges the trader any shortfall. On an un-normalized fork the first buy paid an extra 524,520 lamports ((151 + 128) bytes × the 1,880-lamport rate difference) into the curve, a cost that doesn't exist on mainnet. The fix is to top every curve up to the fork's `rent(len) + real_quote_reserves`.
-2. **Mayhem coins have no buyback carve-out.** The reserved fee recipient gets the whole protocol fee (93,828 of 93,828 on a 0.01 SOL buy). The buyback recipient is passed, writable, and gets nothing. Normal coins split 50/50 (46,914 / 46,914). The research notes say the buyback recipient applies to "all coins". `curveFeeRates` now returns `buybackBps: 0` for mayhem curves; the value is informational and doesn't affect instruction building.
-3. **PumpSwap `buy_exact_quote_in` events swap two field meanings.** `quote_amount_in` is the total paid including fees (10,000,000) and `user_quote_amount_in` is the pre-fee quote (9,900,989). For `buy`, the notes record the reverse. `quote_amount_in_with_lp_fee` (9,920,791) and every fee field match our quote. The decoder documents both meanings.
-4. **Smaller confirmations.** Some mayhem curves are 141 bytes, and the program doesn't resize them on trade. The user volume accumulator is 137 bytes and Token-2022 ATAs are 170 bytes, both created at the payer's expense. The PumpSwap buyback split is a floor (2,475 of a 4,951 protocol fee), as the notes say. Fee tiers came from the live FeeConfig through the fee program: 95/30 bps on the curve, and 20/5/75 bps on a pool in the 4,420–9,820 SOL band.
+   - **Program lamport accounting.** pump treats lamports above `rent(len)` as program state. A bonding curve holds rent plus its real SOL, plus tracked extras: a fee-sharing curve held 40.6M lamports beyond both. pump charges the trader whenever the rent cushion falls short. On an un-normalized fork the first buy paid an extra 524,520 lamports ((151 + 128) bytes × the 1,880-lamport rate difference) into the curve, a cost that doesn't exist on mainnet. Topping curves up to `rent + real_quote_reserves` was not enough for the fee-sharing curve. Adding the exact rent difference to every program-owned account (which preserves `lamports − rent`) fixed every coin.
+2. **Mayhem coins have no buyback carve-out.** The reserved fee recipient gets the whole protocol fee (93,828 of 93,828 on a 0.01 SOL buy), and the buyback recipient is passed, writable, and gets nothing. The program's own TradeEvent agrees: `buyback_fee_basis_points = 0`, `buyback_fee = 0`. Normal coins split 50/50 (46,914 / 46,914). The research notes say the buyback recipient applies to "all coins". `curveFeeRates` now returns `buybackBps: 0` for mayhem curves; the value is informational and doesn't affect instruction building.
+3. **PumpSwap `buy_exact_quote_in` events swap two field meanings.** `quote_amount_in` is the total paid including fees (10,000,000) and `user_quote_amount_in` is the pre-fee quote (9,900,989). For `buy`, the notes record the reverse. `quote_amount_in_with_lp_fee` (9,920,791) and every fee field match our quote. The decoder (`events/types.ts`) documents both meanings.
+4. **`ix_name` hides the v2 instructions.** The curve TradeEvent reports `buy_exact_quote_in` and `sell` for `buy_exact_quote_in_v2` and `sell_v2`, so an indexer can't tell v2 from legacy by name.
+5. **Coin variants trade unchanged.** The creator fee always lands in the creator vault derived from the live `bonding_curve.creator`. On a holder-rewards coin (`2ssUBRVx…`) that is the holder-rewards PDA, and the event labels the fee `holder_rewards` (30 bps). On a fee-sharing coin (`HtzBLBrV…`) it is the sharing-config PDA.
+6. **Smaller confirmations.** Some mayhem curves are 141 bytes, and the program doesn't resize them on trade. The user volume accumulator is 137 bytes and Token-2022 ATAs are 170 bytes, both created at the payer's expense. The PumpSwap buyback split is a floor (2,475 of a 4,951 protocol fee), as the notes say. Fee tiers came from the live FeeConfig through the fee program: 95/30 bps on curves, and 20/5/75 and 20/5/85 bps (LP/protocol/creator) on two pools in different market-cap bands.
 
-5. **Holder-rewards coins trade unchanged.** The creator fee lands in the creator vault derived from the live creator (the holder-rewards PDA). Verified on `2ssUBRVx…` as the curve coin of a fourth fork.
-
-### Compute and size (four forks, three coin sets, fresh wallet each run)
+### Compute and size (six forks, five coin sets, fresh wallet each run)
 
 | Case | CU used | CU limit | Size |
 |---|---|---|---|
@@ -125,7 +125,7 @@ Every trade also checks the fee (5,000 base plus the planned priority fee), that
 | Curve sell 50% | 72,094–82,562 | 100,000 | 1,139 B |
 | Curve full exit + close | 73,807–85,738 | 100,000 | 1,146 B |
 | Mayhem buy 0.01 SOL | 104,286–112,841 | 140,000 | 1,182 B |
-| Mayhem full exit + close | 73,415–79,440 | 100,000 | 1,146 B |
+| Mayhem full exit + close | 73,415–79,467 | 100,000 | 1,146 B |
 | PumpSwap buy 0.01 SOL, wSOL wrap, new ATA + volume accumulator | 118,382–131,803 | 150,000 | 1,189 B |
 | PumpSwap sell 50% | 90,146–96,408 | 130,000 | 1,090 B |
 | PumpSwap full exit + close | 88,775–99,156 | 130,000 | 1,097 B |
@@ -134,7 +134,7 @@ CU varies by up to about 13k between identical trades, mostly from PDA bump sear
 
 ## Safety
 
-- The mainnet RPC client refuses every method that isn't a read (`getAccountInfo`, `getMultipleAccounts`, `getSignaturesForAddress`, `getTransaction`, `getSlot`, `getVersion`).
+- The mainnet RPC client refuses every method that isn't a read (`getAccountInfo`, `getMinimumBalanceForRentExemption`, `getMultipleAccounts`, `getSignaturesForAddress`, `getTransaction`, `getSlot`, `getVersion`).
 - Every e2e send goes through `SubmitRouter` with `dryRun: false`, which is set explicitly and only against the fork. The single `RpcLane` uses a fetch that throws on any non-loopback URL, and the harness refuses non-loopback `FORK_RPC_URL` / `FORK_WS_URL`.
 - Keys exist only in memory. The ledger lives in the OS temp dir.
 - `fork:stop` signals the process only after confirming the pid really is a `solana-test-validator`. It deletes files only inside a directory `fork:start` created (marker file), never a home, temp or working-directory root.
