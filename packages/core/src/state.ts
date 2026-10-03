@@ -47,7 +47,10 @@ export interface RawAccount {
 const b64 = getBase64Encoder();
 
 /** getMultipleAccounts (base64) -> decoded raw accounts (null when missing). Max 100 per call. */
-export async function fetchRawAccounts(rpc: StateRpc, addresses: readonly Address[]): Promise<(RawAccount | null)[]> {
+export async function fetchRawAccounts(
+  rpc: Rpc<Pick<SolanaRpcApi, "getMultipleAccounts">>,
+  addresses: readonly Address[],
+): Promise<(RawAccount | null)[]> {
   const out: (RawAccount | null)[] = [];
   for (let i = 0; i < addresses.length; i += 100) {
     const chunk = addresses.slice(i, i + 100);
