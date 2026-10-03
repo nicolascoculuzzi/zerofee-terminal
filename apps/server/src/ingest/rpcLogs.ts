@@ -65,7 +65,6 @@ export class RpcLogsSource implements Source {
   private stopped = false;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private connectedAt = 0;
   private readonly subs = new Map<number, string>();
   readonly lag = new SampleRing(20_000);
   /**
@@ -118,9 +117,10 @@ export class RpcLogsSource implements Source {
     const Impl = this.opts.WebSocketImpl ?? WebSocket;
     const ws = new Impl(this.opts.wsUrl);
     this.ws = ws;
+    let openedAt: number | null = null;
     ws.onopen = () => {
       this.stats.connected = true;
-      this.connectedAt = Date.now();
+      openedAt = Date.now();
       this.stats.lastMessageAt = Date.now();
       log.info(`connected; subscribing to ${this.opts.programs.length} program(s) at ${this.opts.commitment}`);
       for (const [i, p] of this.opts.programs.entries()) {
@@ -148,8 +148,9 @@ export class RpcLogsSource implements Source {
       this.ws = null;
       this.subs.clear();
       if (this.stopped) return;
-      // A connection that stayed up for a minute resets the backoff.
-      if (Date.now() - this.connectedAt > 60_000) this.backoff.reset();
+      // Only a connection that opened AND stayed up for a minute resets the backoff. (Using the last
+      // successful open here made every refused upgrade reset it: reconnect storms every ~400 ms.)
+      if (openedAt !== null && Date.now() - openedAt > 60_000) this.backoff.reset();
       const delay = this.backoff.next();
       this.stats.reconnects++;
       log.warn(`socket closed (${ev.code} ${ev.reason || ""}); reconnect #${this.stats.reconnects} in ${delay} ms`);
