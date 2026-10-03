@@ -31,6 +31,7 @@ import {
 } from "../src/firewall/programs";
 import { findCanonicalPumpPool } from "../src/firewall/rules/pump";
 import {
+  PUMP_AMM_EXTEND_ACCOUNT,
   PUMP_AMM_INSTRUCTION_NAMES,
   PUMP_AMM_INSTRUCTIONS,
   PUMP_CURVE_INSTRUCTIONS,
@@ -113,6 +114,7 @@ describe("discriminators equal core's", () => {
     ["PumpSwap buy", def(PUMP_AMM_INSTRUCTIONS, "buy"), core.PUMP_AMM_IX.buy],
     ["PumpSwap buy_exact_quote_in", def(PUMP_AMM_INSTRUCTIONS, "buy_exact_quote_in"), core.PUMP_AMM_IX.buyExactQuoteIn],
     ["PumpSwap sell", def(PUMP_AMM_INSTRUCTIONS, "sell"), core.PUMP_AMM_IX.sell],
+    ["PumpSwap extend_account", PUMP_AMM_EXTEND_ACCOUNT, core.PUMP_AMM_IX.extendAccount],
   ])("%s", (_name, signer, fromCore) => {
     expect(toHex(Uint8Array.from(signer.discriminator))).toBe(toHex(fromCore));
   });
@@ -236,6 +238,19 @@ describe("layouts match the instructions core builds", () => {
         expectLayout(amm("sell"), core.ammSellInstruction(a, pool, 55n, 66n), want, { base: 55n, minOut: 66n });
       }
     }
+  });
+
+  test("PumpSwap extend_account (core prepends it for pools shorter than POOL_ACCOUNT_NEW_SIZE)", async () => {
+    const X = PUMP_AMM_EXTEND_ACCOUNT;
+    const pool = randomAddress();
+    const user = randomAddress();
+    const ix = await core.ammExtendAccountInstruction(pool, user);
+    expect(ix.programAddress).toBe(PUMP_AMM_PROGRAM);
+    expect(ix.data).toHaveLength(X.dataLength);
+    expect(ix.accounts).toHaveLength(X.accountCount);
+    expect(ix.accounts?.[X.account]).toEqual({ address: pool, role: AccountRole.WRITABLE });
+    expect(ix.accounts?.[X.user]).toEqual({ address: user, role: AccountRole.WRITABLE_SIGNER });
+    expect(ix.accounts?.[X.systemProgram]?.address).toBe(SYSTEM_PROGRAM);
   });
 });
 

@@ -209,8 +209,11 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
   const networkFeeLamports = BASE_FEE_LAMPORTS_PER_SIGNATURE; // exactly one signature (checked above)
   const maxSolOutLamports = maxBuyLamports + tipLamports + budget.priorityFeeLamports + networkFeeLamports;
   const deposits = actions.some(({ action }) => action.kind === "create_ata" || action.kind === "nonce_create");
+  const extension = actions.some(({ action }) => action.kind === "extend_account");
   lines.push(
-    `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and fees${deposits ? "; refundable deposits are listed above" : ""}.`,
+    `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and fees${
+      deposits ? "; refundable deposits are listed above" : ""
+    }${extension ? "; plus the pool extension rent above" : ""}.`,
   );
 
   const summary: TransactionSummary = {

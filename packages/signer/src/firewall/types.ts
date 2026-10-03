@@ -91,8 +91,22 @@ export interface TradeAction {
   readonly minQuoteOut?: bigint;
 }
 
+/**
+ * A venue instruction that grows one of the venue's own accounts, with the trading wallet paying the
+ * rent for the added bytes (PumpSwap extend_account on the trade's canonical pool). The rent is not
+ * refundable and its exact amount is not knowable offline, so it is not part of maxSolOutLamports.
+ */
+export interface AccountExtensionAction {
+  readonly kind: "extend_account";
+  readonly venue: string;
+  readonly account: Address;
+}
+
+/** What a venue rule reports for an instruction it accepts. */
+export type VenueAction = TradeAction | AccountExtensionAction;
+
 export type SummaryAction =
-  | TradeAction
+  | VenueAction
   | { readonly kind: "tip"; readonly to: Address; readonly lamports: bigint }
   | {
       readonly kind: "sol_transfer";
@@ -116,7 +130,7 @@ export type SummaryAction =
   | { readonly kind: "nonce_withdraw"; readonly nonceAccount: Address; readonly to: Address; readonly lamports: bigint }
   | { readonly kind: "nonce_create"; readonly nonceAccount: Address; readonly lamports: bigint };
 
-export type VenueCheck = { ok: true; action: TradeAction } | { ok: false; violations: string[] };
+export type VenueCheck = { ok: true; action: VenueAction } | { ok: false; violations: string[] };
 
 /**
  * Pluggable rule for one venue program. It must refuse every instruction it does not explicitly

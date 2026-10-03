@@ -43,8 +43,9 @@ import {
   makeContext,
   PROGRAMS,
   randomAddress,
+  type TestActors,
 } from "./helpers/fixtures";
-import { ammInstruction, curveInstruction } from "./helpers/pump";
+import { ammExtendInstruction, ammInstruction, curveInstruction } from "./helpers/pump";
 import { AMM_COIN, ammParams, curveBuyV2, curveParams, expectAllowed, expectRefused } from "./helpers/scenarios";
 import { buildTransaction, computeBudget, createAtaIdempotent, noop, tipWithDontFront, transferSol, withExtraAccounts } from "./helpers/tx";
 
@@ -541,7 +542,7 @@ describe("firewall: pump.fun and PumpSwap", () => {
     );
   });
 
-  test("unknown pump.fun / PumpSwap instructions (migrate, collect_creator_fee, withdraw, extend_account)", async () => {
+  test("unknown pump.fun / PumpSwap instructions (migrate, collect_creator_fee, withdraw, curve extend_account)", async () => {
     const a = makeActors();
     const ctx = makeContext(a);
     const signerMeta: AccountMeta = { address: a.signer, role: AccountRole.WRITABLE_SIGNER };
@@ -549,8 +550,9 @@ describe("firewall: pump.fun and PumpSwap", () => {
       [PROGRAMS.pump, "9beae792ec9ea21e", /"migrate" is not allowed/],
       [PROGRAMS.pump, "1416567bc61cdb84", /"collect_creator_fee" is not allowed/],
       [PROGRAMS.pump, "d6904cec5f8b31b4", /"create_v2" is not allowed/],
-      [PROGRAMS.pumpAmm, "b712469c946da122", /"withdraw" is not allowed/],
-      [PROGRAMS.pumpAmm, "ea66c2cb96483ee5", /"extend_account" is not allowed/],
+      // Same discriminator as PumpSwap's, but the curve's extend_account has no use in a trade.
+      [PROGRAMS.pump, "ea66c2cb96483ee5", /"extend_account" is not allowed/],
+      [PROGRAMS.pumpAmm, "b712469c946da122", /"withdraw" is not allowed \(only buy, buy_exact_quote_in, sell, extend_account\)/],
       [PROGRAMS.pumpAmm, "0102030405060708", /"unknown 0102030405060708" is not allowed/],
     ];
     for (const [program, disc, pattern] of cases) {
@@ -716,5 +718,85 @@ describe("firewall: mints from lookup tables, rent and nonce funding", () => {
     const strict = makeContext(a, { caps: { ...DEFAULT_CAPS, maxNonceAccountLamports: 1_000_000n } });
     await expectRefused(tx(1_500_000n), strict, /above the cap of 1000000/);
     await expectAllowed(tx(1_500_000n), makeContext(a));
+  });
+});
+
+describe("firewall: PumpSwap extend_account (the trading wallet pays the rent)", () => {
+  const canonicalPool = () => findCanonicalPumpPool(PROGRAMS.pump, PROGRAMS.pumpAmm, AMM_COIN, WSOL_MINT);
+  const sell = (a: TestActors, extra: Partial<Parameters<typeof ammParams>[1]> = {}) =>
+    ammInstruction("sell", ammParams(a, extra), { base_amount_in: 1n, min_quote_amount_out: 1n });
+  const tx = (a: TestActors, instructions: Instruction[]) => buildTransaction({ feePayer: a.signer, instructions });
+
+  test("on an account that is not the pool of a trade in the transaction", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const pool = await canonicalPool();
+    const extend = (account: Address) => ammExtendInstruction({ user: a.signer, account });
+    const notTraded = /is not the pool of a PumpSwap trade in this transaction/;
+    await expectRefused(tx(a, [await extend(pool)]), ctx, notTraded);
+    const curveBuy = await curveInstruction("buy_v2", curveParams(a), { amount: 1n, max_sol_cost: 1n });
+    await expectRefused(tx(a, [await extend(pool), curveBuy]), ctx, notTraded);
+    // While trading AMM_COIN: another coin's canonical pool, the AMM's GlobalConfig, any other account.
+    const otherCoinPool = await findCanonicalPumpPool(PROGRAMS.pump, PROGRAMS.pumpAmm, randomAddress(), WSOL_MINT);
+    for (const account of [otherCoinPool, MAINNET.ammGlobalConfig, randomAddress()]) {
+      await expectRefused(tx(a, [await extend(account), await sell(a)]), ctx, notTraded);
+    }
+  });
+
+  test("on a non-canonical pool, even when the opt-out lets the trade itself through", async () => {
+    const a = makeActors();
+    const attackerPool = randomAddress();
+    const instructions = [await ammExtendInstruction({ user: a.signer, account: attackerPool }), await sell(a, { pool: attackerPool })];
+    await expectRefused(tx(a, instructions), makeContext(a), /is not the canonical pool[\s\S]*only that pool may be extended/);
+    const optOut = createPumpSwapRule({ programId: PROGRAMS.pumpAmm, pumpProgramId: PROGRAMS.pump, allowNonCanonicalPools: true });
+    const violations = await expectRefused(tx(a, instructions), makeContext(a, { venueRules: [optOut] }), /only that pool may be extended/);
+    expect(violations).toHaveLength(1);
+  });
+
+  test("rent paid by an account other than the trading wallet", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const pool = await canonicalPool();
+    // An attacker as payer must co-sign; the connected wallet named as payer without a signature.
+    await expectRefused(
+      tx(a, [await ammExtendInstruction({ user: a.attacker, account: pool }), await sell(a)]),
+      ctx,
+      /requires 2 signatures[\s\S]*rent payer \(user\) must be the trading wallet/,
+    );
+    const viaConnected = await ammExtendInstruction({ user: a.connected, account: pool });
+    const unsigned: Instruction = {
+      ...viaConnected,
+      accounts: (viaConnected.accounts ?? []).map((m, i) => (i === 1 ? { address: a.connected, role: AccountRole.WRITABLE } : m)),
+    };
+    await expectRefused(tx(a, [unsigned, await sell(a)]), ctx, /rent payer \(user\) must be the trading wallet/);
+  });
+
+  test("a program other than System in the system_program slot (it runs with the wallet's signature)", async () => {
+    const a = makeActors();
+    const ix = await ammExtendInstruction({
+      user: a.signer,
+      account: await canonicalPool(),
+      overrides: { system_program: randomAddress() },
+    });
+    await expectRefused(tx(a, [ix, await sell(a)]), makeContext(a), /position 2 must be the System program/);
+  });
+
+  test("twice in one transaction, malformed, or with the pool loaded from a lookup table", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const pool = await canonicalPool();
+    const extend = await ammExtendInstruction({ user: a.signer, account: pool });
+    const trade = await sell(a);
+    await expectRefused(tx(a, [extend, extend, trade]), ctx, /only one extend_account per transaction/);
+    await expectRefused(tx(a, [{ ...extend, data: Uint8Array.from([...(extend.data ?? []), 0]) }, trade]), ctx, /data must be 8 bytes/);
+    const extra = await ammExtendInstruction(
+      { user: a.signer, account: pool },
+      { extraAccounts: [{ address: randomAddress(), role: AccountRole.WRITABLE }] },
+    );
+    await expectRefused(tx(a, [extra, trade]), ctx, /expected 5 accounts/);
+    const alt = randomAddress();
+    const tables = { [alt]: [pool] };
+    const viaAlt = buildTransaction({ feePayer: a.signer, instructions: [extend, trade], lookupTables: tables });
+    await expectRefused(viaAlt, makeContext(a, { addressLookupTables: tables }), /extended account must be a static account key/);
   });
 });

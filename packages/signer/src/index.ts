@@ -21,6 +21,7 @@ export {
   WSOL_MINT,
 } from "./firewall/programs";
 export {
+  type AuxiliaryInstruction,
   createIdlVenueRule,
   createPumpBondingCurveRule,
   createPumpSwapRule,
@@ -28,7 +29,14 @@ export {
   type IdlVenueRuleOptions,
   type PumpSwapRuleOptions,
 } from "./firewall/rules/pump";
-export { PUMP_AMM_INSTRUCTIONS, PUMP_CURVE_INSTRUCTIONS, type VenueInstruction, type VenueLayout } from "./firewall/rules/pump-idl";
+export {
+  type AccountExtensionInstruction,
+  PUMP_AMM_EXTEND_ACCOUNT,
+  PUMP_AMM_INSTRUCTIONS,
+  PUMP_CURVE_INSTRUCTIONS,
+  type VenueInstruction,
+  type VenueLayout,
+} from "./firewall/rules/pump-idl";
 export {
   computeTotals,
   type DailySpendCaps,
@@ -42,6 +50,7 @@ export {
   utcDay,
 } from "./firewall/spend-tracker";
 export type {
+  AccountExtensionAction,
   AccountRef,
   AddressLookupTables,
   DecodedInstruction,
@@ -53,6 +62,7 @@ export type {
   SummaryAction,
   TradeAction,
   TransactionSummary,
+  VenueAction,
   VenueCheck,
   VenueRule,
 } from "./firewall/types";
