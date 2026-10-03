@@ -7,6 +7,7 @@ import { Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
 import { cn } from "../lib/cn";
 import { fmtSol, shortAddr } from "../lib/format";
+import { LANDING_INFO } from "../lib/landing";
 import { getServices } from "../services";
 import { isOpenOrder, useOrders } from "../state/orders";
 import { PRESET_IDS, type PresetId, useSettings } from "../state/settings";
@@ -26,30 +27,6 @@ export const NAV_ITEMS = [
   { to: "/trackers", label: "Trackers" },
   { to: "/portfolio", label: "Portfolio" },
 ] as const;
-
-export const LANDING_INFO = {
-  reduced: {
-    label: "Reduced",
-    risky: false,
-    route: "Helius Sender with swqos_only + mev-protect",
-    tip: "0.000005 SOL + priority-fee estimate (clamped)",
-    note: "Default. MEV-protected route at minimal cost.",
-  },
-  secure: {
-    label: "Secure",
-    risky: false,
-    route: "Jito bundle-only with a jitodontfront account",
-    tip: "max(1,000 lamports, live Jito p50–p75)",
-    note: "Strongest sandwich protection; only works when the transaction actually goes through Jito.",
-  },
-  fast: {
-    label: "Fast",
-    risky: true,
-    route: "Sender Max: all lanes in parallel",
-    tip: "0.001 SOL",
-    note: "Fastest landing, not protected: expect sandwich risk on large buys.",
-  },
-} as const;
 
 export function LandingIndicator() {
   const preset = useSettings((s) => s.presets[s.activePreset]);

@@ -15,6 +15,7 @@ import { useUi } from "../state/ui";
 import { useWallet } from "../state/wallet";
 import { uid } from "./cn";
 import { fmtSol } from "./format";
+import { LANDING_INFO } from "./landing";
 import { navigateTo } from "./nav";
 import { playTone } from "./sound";
 
@@ -61,7 +62,7 @@ function costLines(settings: ExecutionSettings): { label: string; value: string 
     { label: "Slippage", value: `${settings.slippagePct}%` },
     { label: "Priority fee", value: `${fmtSol(settings.priorityFeeSol)} SOL` },
     { label: "Tip", value: `${fmtSol(settings.tipSol)} SOL` },
-    { label: "Landing", value: settings.landing },
+    { label: "Landing", value: LANDING_INFO[settings.landing].label },
   ];
 }
 
@@ -85,7 +86,7 @@ export interface BuyArgs {
 }
 
 export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
-  const clickedAt = Date.now();
+  let clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].buy;
   const { symbol, priceSol } = tokenInfo(args.mint);
@@ -132,6 +133,7 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
   if (!ensureUnlocked(`Unlock to buy $${symbol}`, () => void buy(args))) return [];
   const approved = await approveDirect(`Buy $${symbol} for ${fmtSol(args.sol)} SOL`, costLines(settings));
   if (!approved) return [];
+  if (useWallet.getState().mode === "direct") clickedAt = Date.now();
 
   const { trade, wallet } = getServices();
   wallet.touch();
@@ -192,7 +194,7 @@ export interface SellArgs {
 }
 
 export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
-  const clickedAt = Date.now();
+  let clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].sell;
   const { symbol, priceSol } = tokenInfo(args.mint);
@@ -226,6 +228,7 @@ export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
     args.label ?? (args.pct !== undefined ? `${args.pct}%` : args.solValue !== undefined ? `${fmtSol(args.solValue)} SOL` : "amount");
   const approved = await approveDirect(`Sell ${label} of $${symbol}`, costLines(settings));
   if (!approved) return [];
+  if (useWallet.getState().mode === "direct") clickedAt = Date.now();
 
   const { trade, wallet } = getServices();
   wallet.touch();

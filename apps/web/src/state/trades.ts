@@ -20,8 +20,10 @@ export interface ClientTrade {
   error: string | null;
 }
 
+/** Local calendar day: the daily cap resets at the trader's midnight. */
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export interface TradesState {

@@ -130,40 +130,44 @@ export const TokenCard = memo(function TokenCard({
           </span>
         </Tooltip>
 
-        {/* Row 2: age, socials, holder stats | volume and txns (compact: buy action) */}
+        {/* Row 2: age, socials, holder stats | volume and txns (compact: buy action).
+            Items never shrink (a squeezed tooltip wrapper lets digits overlap); the row clips
+            at its end, and pro traders drop out below a 384px column. */}
         <div className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted">
-          <Tooltip content={METRICS.age.definition}>
+          <Tooltip wrapperClassName="shrink-0" content={METRICS.age.definition}>
             <Age ts={t.createdAt} className="font-medium text-fg" />
           </Tooltip>
-          <SocialLinks socials={t.socials} />
-          <Tooltip content={`${METRICS.holders.label}: ${METRICS.holders.definition}`}>
+          {column === "final" && (
+            <Tooltip wrapperClassName="shrink-0" content={METRICS.progress.definition}>
+              <span className="text-fg">{fmtPct(t.bondingProgress * 100)}</span>
+            </Tooltip>
+          )}
+          {danger.length > 0 && (
+            <Tooltip wrapperClassName="shrink-0" content={`Token-2022 danger: ${danger.join(", ")}. ${METRICS.token2022.definition}`}>
+              <span className="flex items-center gap-px text-sell">
+                <TriangleAlert className="icon-xs" />
+                <span className="text-2xs font-semibold">T22</span>
+              </span>
+            </Tooltip>
+          )}
+          <SocialLinks socials={t.socials} className="shrink-0" />
+          <Tooltip wrapperClassName="shrink-0" content={`${METRICS.holders.label}: ${METRICS.holders.definition}`}>
             <span className="flex items-center gap-1">
               <Users className="icon-xs" />
               {fmtCount(t.holders)}
             </span>
           </Tooltip>
-          <Tooltip content={`${METRICS.proTraders.label}: ${METRICS.proTraders.definition}`}>
-            <span className="flex items-center gap-1">
-              <Sparkles className="icon-xs" />
-              {t.proTraders}
-            </span>
-          </Tooltip>
-          {column === "final" && (
-            <Tooltip content={METRICS.progress.definition}>
-              <span className="text-fg">{fmtPct(t.bondingProgress * 100)}</span>
-            </Tooltip>
-          )}
-          {t.dexPaid && (
-            <Tooltip content={METRICS.dexPaid.definition}>
-              <span className="rounded-sm border border-line-strong px-1 text-2xs font-semibold text-fg">DEX</span>
-            </Tooltip>
-          )}
-          {danger.length > 0 && (
-            <Tooltip content={`Token-2022 danger: ${danger.join(", ")}. ${METRICS.token2022.definition}`}>
-              <span className="flex items-center gap-px text-sell">
-                <TriangleAlert className="icon-xs" />
-                <span className="text-2xs font-semibold">T22</span>
+          <span className="hidden shrink-0 @sm:flex">
+            <Tooltip content={`${METRICS.proTraders.label}: ${METRICS.proTraders.definition}`}>
+              <span className="flex items-center gap-1">
+                <Sparkles className="icon-xs" />
+                {t.proTraders}
               </span>
+            </Tooltip>
+          </span>
+          {t.dexPaid && (
+            <Tooltip wrapperClassName="shrink-0" content={METRICS.dexPaid.definition}>
+              <span className="rounded-sm border border-line-strong px-1 text-2xs font-semibold text-fg">DEX</span>
             </Tooltip>
           )}
         </div>

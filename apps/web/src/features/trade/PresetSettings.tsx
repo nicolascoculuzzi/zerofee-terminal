@@ -1,10 +1,10 @@
 import { ArrowDownUp, Coins, Gauge, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
-import { LANDING_INFO } from "../../app/TopNav";
 import { NumberInput, Segmented } from "../../components/ui/controls";
 import { Popover } from "../../components/ui/Popover";
 import { cn } from "../../lib/cn";
 import { fmtSolShort } from "../../lib/format";
+import { LANDING_INFO } from "../../lib/landing";
 import type { LandingPreset } from "../../protocol";
 import { PRESET_IDS, type PresetId, useSettings } from "../../state/settings";
 

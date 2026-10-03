@@ -81,6 +81,7 @@ export interface NumberInputProps {
   disabled?: boolean;
   /** Right-align the value (order-form style). */
   alignRight?: boolean;
+  id?: string;
 }
 
 function display(v: number | null): string {
@@ -103,6 +104,7 @@ export function NumberInput({
   autoFocus,
   disabled,
   alignRight,
+  id,
 }: NumberInputProps) {
   const [text, setText] = useState(display(value));
   const focused = useRef(false);
@@ -130,6 +132,7 @@ export function NumberInput({
     >
       {prefix && <span className="flex shrink-0 items-center text-dim">{prefix}</span>}
       <input
+        id={id}
         inputMode="decimal"
         aria-label={ariaLabel}
         disabled={disabled}

@@ -79,6 +79,15 @@ export function fmtSol(n: number): string {
   return fmtSmall(n, 3);
 }
 
+/**
+ * Wallet balances: always 4 decimals so balances shown side by side line up
+ * (60.9800 next to 1.0000), grouped above 1,000.
+ */
+export function fmtSolBalance(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
+
 /** User-entered amounts (preset buttons, inputs): shortest form, "0.5", "1", "0.25". */
 export function fmtSolShort(n: number): string {
   if (!Number.isFinite(n)) return "—";

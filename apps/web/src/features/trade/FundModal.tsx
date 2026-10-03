@@ -4,7 +4,7 @@ import { Button } from "../../components/ui/Button";
 import { CopyButton, NumberInput, Segmented } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
 import { cn } from "../../lib/cn";
-import { fmtSol, shortAddr } from "../../lib/format";
+import { fmtSolBalance, fmtSolShort, shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import { useSettings } from "../../state/settings";
 import { useToasts } from "../../state/toasts";
@@ -29,7 +29,7 @@ function FundFromConnected({ address }: { address: string }) {
     setBusy(true);
     try {
       await getServices().wallet.fundFromConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Funded ${fmtSol(amount)} SOL`, body: "From your connected wallet" });
+      useToasts.getState().push({ kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: "From your connected wallet" });
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Funding failed", body: e instanceof Error ? e.message : String(e) });
@@ -45,7 +45,7 @@ function FundFromConnected({ address }: { address: string }) {
           <Wallet className="icon-md" /> <span className="capitalize">{connected?.provider ?? "Wallet"}</span>{" "}
           <span className="font-mono">{connected ? shortAddr(connected.address) : ""}</span>
         </span>
-        <span className="font-semibold">◎ {connectedSol === null ? "…" : fmtSol(connectedSol)}</span>
+        <span className="font-semibold">{connectedSol === null ? "…" : `${fmtSolBalance(connectedSol)} SOL`}</span>
       </div>
       <NumberInput value={amount} onChange={setAmount} suffix="SOL" min={0} className="h-9" ariaLabel="Amount to fund" />
       <div className="flex gap-1">
@@ -67,7 +67,7 @@ function FundFromConnected({ address }: { address: string }) {
         One approval in your connected wallet moves SOL into the trading wallet. Keep only what you're willing to lose in it.
       </p>
       <Button variant="primary" size="lg" className="w-full" disabled={busy || !amount} onClick={() => void submit()}>
-        {busy ? "Waiting for wallet…" : `Fund ${amount ? fmtSol(amount) : ""} SOL`}
+        {busy ? "Waiting for wallet…" : amount ? `Fund ${fmtSolShort(amount)} SOL` : "Fund"}
       </Button>
     </div>
   );
@@ -129,7 +129,7 @@ function Withdraw({ address }: { address: string }) {
     setBusy(true);
     try {
       await getServices().wallet.withdrawToConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Withdrew ${fmtSol(amount)} SOL`, body: "To your connected wallet" });
+      useToasts.getState().push({ kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: "To your connected wallet" });
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Withdrawal failed", body: e instanceof Error ? e.message : String(e) });
@@ -143,7 +143,8 @@ function Withdraw({ address }: { address: string }) {
       <div className="flex justify-between text-sm text-muted">
         <span>Available</span>
         <span className="text-fg">
-          ◎ {fmtSol(available)} {reserved > 0 && <span className="text-dim">({fmtSol(reserved)} reserved by armed orders)</span>}
+          {fmtSolBalance(available)} SOL{" "}
+          {reserved > 0 && <span className="text-dim">({fmtSolBalance(reserved)} reserved by armed orders)</span>}
         </span>
       </div>
       <NumberInput
