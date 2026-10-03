@@ -139,6 +139,14 @@ export async function expectCurveFill(fork: Fork, run: TradeRun, exp: CurveExpec
   const refunded = expectClosed(run, exp.closed ?? []);
   const fixedCosts = run.tx.fee + run.plan.totalTipLamports;
 
+  // The program's own record of the trade. ix_name carries the legacy names for the v2 instructions, and the
+  // buyback share it applied is 0 on mayhem coins (core models both).
+  expect(ev.ixName).toBe(q.side === "buy" ? "buy_exact_quote_in" : "sell");
+  expect(ev.mayhemMode).toBe(s.curve.isMayhemMode);
+  expect(ev.feeRecipient).toBe(feeRecipient);
+  expect(ev.creator).toBe(s.curve.creator);
+  expect(ev.buybackFeeBps).toBe(rates.buybackBps);
+
   // A curve shorter than the current layout is extended by the program, at the trader's expense.
   const preLen = s.curve.dataLength;
   const postLen = (await accountDataLength(fork.rpc, curveAddr)) as number;
@@ -152,6 +160,7 @@ export async function expectCurveFill(fork: Fork, run: TradeRun, exp: CurveExpec
     expect(ev.quoteAmount).toBe(x.quoteNet);
     expect(ev.fee).toBe(x.protocolFee);
     expect(ev.creatorFee).toBe(x.creatorFee);
+    expect(ev.buybackFee).toBe(x.buybackFee);
     expect(run.tx.tokens(userAta).delta).toBe(x.tokenAmount);
     expect(run.tx.tokens(curveAta).delta).toBe(-x.tokenAmount);
     expect(run.tx.lamports(feeRecipient).delta).toBe(x.protocolFee - x.buybackFee);
@@ -176,6 +185,7 @@ export async function expectCurveFill(fork: Fork, run: TradeRun, exp: CurveExpec
   expect(ev.quoteAmount).toBe(x.quoteGross);
   expect(ev.fee).toBe(x.protocolFee);
   expect(ev.creatorFee).toBe(x.creatorFee);
+  expect(ev.buybackFee).toBe(x.buybackFee);
   expect(run.tx.tokens(userAta).delta).toBe(-q.amountIn);
   expect(run.tx.tokens(curveAta).delta).toBe(q.amountIn);
   expect(run.tx.lamports(feeRecipient).delta).toBe(x.protocolFee - x.buybackFee);
@@ -240,18 +250,25 @@ export async function expectAmmFill(fork: Fork, run: TradeRun, exp: CurveExpecta
   const createdRent = await expectCreated(fork, run, exp.created ?? []);
   const refunded = expectClosed(run, exp.closed ?? []);
   const fixedCosts = run.tx.fee + run.plan.totalTipLamports;
+  // The program priced off the same boost-pool virtual reserves and paid the same fee ATA we built.
+  expect(ev.virtualQuoteReserves).toBe(s.reserves.virtualQuoteReserves);
+  expect(ev.protocolFeeRecipientTokenAccount).toBe(protocolAta);
 
   if (q.side === "buy") {
     const x = quoteAmmBuyExactQuoteIn(s.reserves, q.amountIn, rates);
     expect(q.expectedOut).toBe(x.baseOut);
+    expect(ev.ixName).toBe("buy_exact_quote_in");
     expect(ev.baseAmount).toBe(x.baseOut);
     expect(ev.quoteLimit).toBe(q.amountIn);
     // buy_exact_quote_in swaps the meaning of the two quote fields relative to `buy`:
-    // quote_amount_in = total paid incl. fees, user_quote_amount_in = pre-fee quote (see events.ts).
+    // quote_amount_in = total paid incl. fees, user_quote_amount_in = pre-fee quote (see events/types.ts).
     expect(ev.quoteAmount).toBe(x.totalQuote);
     expect(ev.userQuoteAmount).toBe(x.quoteIn);
+    expect(ev.quoteAmountVault).toBe(x.quoteIn + x.lpFee);
     expect(ev.lpFee).toBe(x.lpFee);
     expect(ev.protocolFee).toBe(x.protocolFee);
+    expect(ev.coinCreatorFee).toBe(x.creatorFee);
+    expect(ev.buybackFee).toBe(x.buybackFee);
     expect(ev.poolBaseReserves).toBe(s.reserves.baseReserve);
     expect(ev.poolQuoteReserves).toBe(s.reserves.quoteVaultReserve);
     expect(run.tx.tokens(userBase).delta).toBe(x.baseOut);
@@ -268,8 +285,11 @@ export async function expectAmmFill(fork: Fork, run: TradeRun, exp: CurveExpecta
   expect(q.expectedOut).toBe(x.quoteOutNet);
   expect(ev.baseAmount).toBe(q.amountIn);
   expect(ev.quoteAmount).toBe(x.quoteOutGross);
+  expect(ev.quoteAmountVault).toBe(x.quoteOutGross - x.lpFee);
   expect(ev.lpFee).toBe(x.lpFee);
   expect(ev.protocolFee).toBe(x.protocolFee);
+  expect(ev.coinCreatorFee).toBe(x.creatorFee);
+  expect(ev.buybackFee).toBe(x.buybackFee);
   expect(ev.userQuoteAmount).toBe(x.quoteOutNet);
   expect(run.tx.tokens(userBase).delta).toBe(-q.amountIn);
   expect(run.tx.tokens(poolBase).delta).toBe(q.amountIn);
