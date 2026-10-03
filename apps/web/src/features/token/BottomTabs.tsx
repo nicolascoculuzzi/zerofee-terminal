@@ -42,20 +42,20 @@ export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; 
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-panel">
-      <div className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-line px-2">
+    <div className="flex h-full min-h-0 flex-col bg-surface-1">
+      <div className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-hairline px-2">
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
             className={cn(
-              "-mb-px flex h-9 shrink-0 items-center gap-1 border-b-2 px-2 text-sm font-medium",
-              tab === t.id ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
+              "-mb-px flex h-9 shrink-0 items-center gap-1 border-b-2 px-2 text-data font-medium",
+              tab === t.id ? "border-fg-1 text-fg-1" : "border-transparent text-fg-2 hover:text-fg-1",
             )}
           >
             {t.label}
-            {t.count !== undefined && t.count > 0 && <span className="text-xs text-dim">{t.count.toLocaleString("en-US")}</span>}
+            {t.count !== undefined && t.count > 0 && <span className="text-label text-fg-3">{t.count.toLocaleString("en-US")}</span>}
           </button>
         ))}
         {tab === "positions" && (
@@ -73,7 +73,7 @@ export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; 
           </div>
         )}
         {tab === "orders" && (
-          <Link to="/orders" className="mb-2 ml-auto shrink-0 text-xs text-muted hover:text-fg">
+          <Link to="/orders" className="mb-2 ml-auto shrink-0 text-label text-fg-2 hover:text-fg-1">
             All armed orders
           </Link>
         )}

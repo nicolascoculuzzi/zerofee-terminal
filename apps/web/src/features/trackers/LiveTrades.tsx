@@ -14,7 +14,7 @@ function TradeFiltersBar({ status }: { status: ReactNode }) {
   const f = useTrackerPrefs((s) => s.trades);
   const set = useTrackerPrefs((s) => s.setTrades);
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+    <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
       <Segmented<SideFilter>
         value={f.side}
         onChange={(side) => set({ side })}
@@ -88,7 +88,7 @@ export function LiveTrades() {
       <TradeHeader />
       <div className="flex min-h-0 flex-1 flex-col" {...bind}>
         {shown.length === 0 ? (
-          <p className="px-3 py-4 text-sm text-dim">{empty}</p>
+          <p className="px-3 py-4 text-data text-fg-3">{empty}</p>
         ) : (
           <VirtualList
             label="Tracked wallet trades"

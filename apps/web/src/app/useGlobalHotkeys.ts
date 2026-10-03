@@ -10,6 +10,7 @@ import {
   parseBinding,
   TRADE_ACTIONS,
 } from "../lib/hotkeys";
+import { overlayOpen } from "../lib/overlayStack";
 import { useSettings } from "../state/settings";
 
 const SEQUENCE_WINDOW_MS = 900;
@@ -43,19 +44,21 @@ export function useGlobalHotkeys(): void {
     const onKeyDown = (e: KeyboardEvent) => {
       const typing = isTypingTarget(e.target);
       if (e.code === "Space" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (tradeTargetAvailable()) {
+        if (tradeTargetAvailable() && !overlayOpen()) {
           e.preventDefault();
           spaceHeld = true;
         }
         return;
       }
       const now = performance.now();
+      // The same key can mean different things per page ("L": next column on Pulse, Limit on a
+      // token page); only actions with a live handler count, sequences before single keys.
       let matched: HotkeyAction | null = null;
       if (last && now - last.at < SEQUENCE_WINDOW_MS && !typing) {
         const prev = last.e;
         for (const s of sequences) {
           const [first, second] = s.binding;
-          if (first && second && chordMatches(first, prev, false) && chordMatches(second, e, false)) {
+          if (first && second && hasHandler(s.action) && chordMatches(first, prev, false) && chordMatches(second, e, false)) {
             matched = s.action;
             break;
           }
@@ -64,7 +67,7 @@ export function useGlobalHotkeys(): void {
       if (!matched) {
         for (const s of single) {
           const [chord] = s.binding;
-          if (chord && chordMatches(chord, e, spaceHeld)) {
+          if (chord && hasHandler(s.action) && chordMatches(chord, e, spaceHeld)) {
             matched = s.action;
             break;
           }
@@ -74,6 +77,8 @@ export function useGlobalHotkeys(): void {
       last = plain && !typing ? { e, at: now } : null;
       if (!matched) return;
       if (typing && !TYPING_ALLOWED.has(matched)) return;
+      // With a modal, drawer, palette or menu open, only Esc reaches the app (DESIGN.md 6.4).
+      if (overlayOpen() && matched !== "ui.close") return;
       if (TRADE_ACTIONS.has(matched)) {
         if (!tradeHotkeys || e.repeat) return;
       }

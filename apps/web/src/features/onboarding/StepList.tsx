@@ -34,15 +34,15 @@ export function StepList({
   return (
     <>
       <div className="md:hidden">
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <span className="text-muted">
+        <div className="flex items-center justify-between gap-2 text-label">
+          <span className="text-fg-2">
             Step {current + 1} of {steps.length}
           </span>
-          <span className="font-semibold text-fg">{steps[current]?.title}</span>
+          <span className="font-semibold text-fg-1">{steps[current]?.title}</span>
         </div>
         <div className="mt-2 flex gap-1">
           {steps.map((s, i) => (
-            <span key={s.id} className={cn("h-1 flex-1 rounded-full", i === current ? "bg-fg" : done[i] ? "bg-buy" : "bg-elev")} />
+            <span key={s.id} className={cn("h-1 flex-1 rounded-full", i === current ? "bg-accent" : done[i] ? "bg-buy" : "bg-surface-3")} />
           ))}
         </div>
       </div>
@@ -59,31 +59,33 @@ export function StepList({
               <>
                 <span
                   className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded-full border text-2xs font-semibold",
-                    state === "done" && "border-buy bg-buy text-on-buy",
-                    state === "current" && "border-fg text-fg",
-                    state === "todo" && "border-line-strong text-dim",
+                    "flex size-5 shrink-0 items-center justify-center rounded-full border text-micro font-semibold",
+                    state === "done" && "border-buy bg-buy text-ink",
+                    state === "current" && "border-fg-1 text-fg-1",
+                    state === "todo" && "border-hairline-strong text-fg-3",
                   )}
                 >
                   {state === "done" ? <Check className="icon-xs" /> : i + 1}
                 </span>
                 <span className="min-w-0">
-                  <span className={cn("block text-sm", state === "todo" ? "text-dim" : "text-fg", state === "current" && "font-semibold")}>
+                  <span
+                    className={cn("block text-data", state === "todo" ? "text-fg-3" : "text-fg-1", state === "current" && "font-semibold")}
+                  >
                     {s.title}
                   </span>
-                  {summary && <span className="block truncate text-xs text-muted">{summary}</span>}
+                  {summary && <span className="block truncate text-label text-fg-2">{summary}</span>}
                 </span>
               </>
             );
-            const base = "flex w-full items-start gap-2 rounded-md px-2 py-2 text-left";
+            const base = "flex w-full items-start gap-2 rounded-sm px-2 py-2 text-left";
             return (
               <li key={s.id}>
                 {state !== "current" && !disabled && canVisit(i) ? (
-                  <button type="button" onClick={() => onSelect(i)} className={cn(base, "transition-colors hover:bg-hover")}>
+                  <button type="button" onClick={() => onSelect(i)} className={cn(base, "transition-colors hover:bg-surface-3")}>
                     {body}
                   </button>
                 ) : (
-                  <div aria-current={state === "current" ? "step" : undefined} className={cn(base, state === "current" && "bg-elev")}>
+                  <div aria-current={state === "current" ? "step" : undefined} className={cn(base, state === "current" && "bg-surface-3")}>
                     {body}
                   </div>
                 )}

@@ -48,7 +48,7 @@ export function ConnectStep({
         </StepFooter>
       }
     >
-      <ul className="divide-y divide-line rounded-lg border border-line">
+      <ul className="divide-y divide-hairline rounded-md border border-hairline">
         {PROVIDERS.map((id) => {
           const name = PROVIDER_NAME[id];
           const isConnected = connected?.provider === id;
@@ -59,27 +59,27 @@ export function ConnectStep({
                 disabled={busy}
                 onClick={() => void connect(id)}
                 className={cn(
-                  "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-hover disabled:cursor-wait",
-                  isConnected && "bg-elev",
+                  "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-surface-3 disabled:cursor-wait",
+                  isConnected && "bg-surface-3",
                 )}
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-line-strong bg-panel-2 text-sm font-semibold text-fg">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-sm border border-hairline-strong bg-surface-2 text-data font-semibold text-fg-1">
                   {name.charAt(0)}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold text-fg">{name}</span>
-                  <span className="block text-xs text-dim">Wallet Standard</span>
+                  <span className="block text-data font-semibold text-fg-1">{name}</span>
+                  <span className="block text-label text-fg-3">Wallet Standard</span>
                 </span>
                 {pending === id ? (
-                  <span className="flex items-center gap-1 text-xs text-muted">
+                  <span className="flex items-center gap-1 text-label text-fg-2">
                     <LoaderCircle className="icon-sm animate-spin" /> Connecting…
                   </span>
                 ) : isConnected ? (
-                  <span className="flex items-center gap-1 text-xs text-buy">
+                  <span className="flex items-center gap-1 text-label text-buy">
                     <Check className="icon-sm" /> Connected
                   </span>
                 ) : (
-                  <ChevronRight className="icon-md text-dim" />
+                  <ChevronRight className="icon-md text-fg-3" />
                 )}
               </button>
             </li>
@@ -90,16 +90,16 @@ export function ConnectStep({
       {error && <InlineError>{error}</InlineError>}
 
       {connected && (
-        <div className="rounded-lg border border-line bg-panel-2 px-3 py-2">
+        <div className="rounded-md border border-hairline bg-surface-2 px-3 py-2">
           <div className="zf-label">Connected address · {PROVIDER_NAME[connected.provider]}</div>
-          <div className="mt-1 flex items-start gap-2 font-mono text-sm break-all text-fg">
+          <div className="mt-1 flex items-start gap-2 font-mono text-data break-all text-fg-1">
             {connected.address}
             <CopyButton text={connected.address} label="Copy connected address" className="mt-px" />
           </div>
         </div>
       )}
 
-      <p className="text-xs text-dim">
+      <p className="text-label text-fg-3">
         zerofee finds installed wallets through Wallet Standard and sees only your public address. Simulated here: no extension is needed,
         and connecting creates a demo address.
       </p>

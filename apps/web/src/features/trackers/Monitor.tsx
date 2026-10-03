@@ -76,7 +76,7 @@ const MonitorRow = memo(function MonitorRow({ flow, tracked }: { flow: Flow; tra
   const net = flow.inSol - flow.outSol;
   const names = flow.buyers.map((a) => tracked.get(a)?.name ?? shortAddr(a));
   return (
-    <div className="relative flex h-7 items-center gap-2 px-3 text-xs hover:bg-hover">
+    <div className="relative flex h-7 items-center gap-2 px-3 text-label hover:bg-surface-3">
       <Link to={`/t/${token.mint}`} className="absolute inset-0">
         <span className="sr-only">
           Open {token.symbol}: {flow.buyers.length} tracked wallets bought
@@ -84,8 +84,8 @@ const MonitorRow = memo(function MonitorRow({ flow, tracked }: { flow: Flow; tra
       </Link>
       <span className="flex min-w-0 flex-1 items-center gap-1">
         <TokenAvatar mint={token.mint} symbol={token.symbol} imageUri={token.imageUri} size="xs" />
-        <span className="truncate font-medium text-fg">{token.symbol}</span>
-        <Age ts={token.createdAt} className="hidden shrink-0 text-dim @sm:inline" />
+        <span className="truncate font-medium text-fg-1">{token.symbol}</span>
+        <Age ts={token.createdAt} className="hidden shrink-0 text-fg-3 @sm:inline" />
       </span>
       <Tooltip
         content={names.length > 0 ? `Bought: ${names.slice(0, 12).join(", ")}${names.length > 12 ? "…" : ""}` : "No tracked buys"}
@@ -98,17 +98,17 @@ const MonitorRow = memo(function MonitorRow({ flow, tracked }: { flow: Flow; tra
               return <WalletGlyph key={a} emoji={w?.emoji} name={w?.name ?? a} />;
             })}
           </span>
-          <span className="font-semibold text-fg">{flow.buyers.length}</span>
+          <span className="font-semibold text-fg-1">{flow.buyers.length}</span>
         </span>
       </Tooltip>
       <span className="hidden w-14 shrink-0 text-right @md:block">
         <span className="text-buy">{flow.buys}</span>
-        <span className="text-dim">/</span>
+        <span className="text-fg-3">/</span>
         <span className="text-sell">{flow.sells}</span>
       </span>
       <span className={cn("w-16 shrink-0 text-right font-medium", net >= 0 ? "text-buy" : "text-sell")}>{fmtSignedSol(net)}</span>
-      <span className="hidden w-14 shrink-0 text-right text-muted @lg:block">{fmtUsd(flow.lastMc)}</span>
-      <Age ts={flow.lastTs} className="w-8 shrink-0 text-right text-dim" />
+      <span className="hidden w-14 shrink-0 text-right text-fg-2 @lg:block">{fmtUsd(flow.lastMc)}</span>
+      <Age ts={flow.lastTs} className="w-8 shrink-0 text-right text-fg-3" />
       <span className="flex w-14 shrink-0 justify-end">
         <QuickBuyButton mint={token.mint} symbol={token.symbol} source="tracker" />
       </span>
@@ -133,7 +133,7 @@ export function Monitor() {
 
   return (
     <div className="@container flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
         <Segmented<MonitorSort>
           value={sort}
           onChange={setSort}
@@ -152,7 +152,7 @@ export function Monitor() {
           />
         </span>
       </div>
-      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-line px-3">
+      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-hairline px-3">
         <span className="min-w-0 flex-1">Token</span>
         <span className="w-12 shrink-0 text-right @md:w-20" title="Distinct tracked wallets that bought">
           Wallets
@@ -167,7 +167,7 @@ export function Monitor() {
       </div>
       <div className="flex min-h-0 flex-1 flex-col" {...bind}>
         {shown.length === 0 ? (
-          <p className="px-3 py-4 text-sm text-dim">No tracked activity yet.</p>
+          <p className="px-3 py-4 text-data text-fg-3">No tracked activity yet.</p>
         ) : (
           <VirtualList
             label="Tokens bought by tracked wallets"

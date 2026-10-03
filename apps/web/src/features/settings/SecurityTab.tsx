@@ -35,23 +35,23 @@ function WalletRow({ wallet, exportOpen, onToggleExport }: { wallet: TradingWall
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{wallet.label}</span>
+            <span className="text-data font-semibold text-fg-1">{wallet.label}</span>
             {wallet.backedUpAt !== null ? (
               <Chip tone="buy">Backed up {fmtDate(wallet.backedUpAt)}</Chip>
             ) : (
               <Chip tone="warn">Not backed up</Chip>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
+          <div className="flex flex-wrap items-center gap-x-2 text-label text-fg-2">
             <span className="inline-flex items-center gap-1 font-mono">
               {shortAddr(wallet.address, 6, 6)}
               <CopyButton text={wallet.address} label={`Copy ${wallet.label} address`} />
             </span>
             <span>{METHOD_LABEL[wallet.unlockMethod]}</span>
-            <span className="text-dim">Created {fmtDate(wallet.createdAt)}</span>
+            <span className="text-fg-3">Created {fmtDate(wallet.createdAt)}</span>
           </div>
         </div>
-        <Button size="xs" variant="outline" icon={<KeyRound className="icon-sm" />} aria-expanded={exportOpen} onClick={onToggleExport}>
+        <Button size="xs" variant="secondary" icon={<KeyRound className="icon-sm" />} aria-expanded={exportOpen} onClick={onToggleExport}>
           Export key
         </Button>
       </div>
@@ -113,7 +113,7 @@ export function SecurityTab() {
         <Row
           label={
             <span className="flex items-center gap-2">
-              {locked ? <Lock className="icon-sm text-muted" /> : <LockOpen className="icon-sm text-muted" />}
+              {locked ? <Lock className="icon-sm text-fg-2" /> : <LockOpen className="icon-sm text-fg-2" />}
               {locked ? "Locked" : "Unlocked"}
             </span>
           }
@@ -130,7 +130,7 @@ export function SecurityTab() {
               Unlock
             </Button>
           ) : (
-            <Button size="xs" variant="outline" icon={<Lock className="icon-sm" />} onClick={() => getServices().wallet.lock()}>
+            <Button size="xs" variant="secondary" icon={<Lock className="icon-sm" />} onClick={() => getServices().wallet.lock()}>
               Lock now
             </Button>
           )}
@@ -148,7 +148,7 @@ export function SecurityTab() {
       <Group title="Trading wallets" description="Generated and encrypted in this browser; never sent to the server.">
         {wallets.length === 0 ? (
           <Row label="No trading wallet yet" hint="Create one to trade in Instant mode.">
-            <Button size="xs" variant="outline" onClick={() => go("/onboarding")}>
+            <Button size="xs" variant="secondary" onClick={() => go("/onboarding")}>
               Create wallet
             </Button>
           </Row>
@@ -171,7 +171,7 @@ export function SecurityTab() {
               label={
                 <span className="flex flex-wrap items-center gap-2">
                   {PROVIDER_NAME[connected.provider]}
-                  <span className="inline-flex items-center gap-1 font-mono text-xs text-muted">
+                  <span className="inline-flex items-center gap-1 font-mono text-label text-fg-2">
                     {shortAddr(connected.address, 6, 6)}
                     <CopyButton text={connected.address} label="Copy connected wallet address" />
                   </span>
@@ -181,7 +181,7 @@ export function SecurityTab() {
             >
               <Button
                 size="xs"
-                variant="outline"
+                variant="secondary"
                 icon={<LogOut className="icon-sm" />}
                 disabled={disconnecting}
                 onClick={() => void disconnect()}
@@ -192,14 +192,14 @@ export function SecurityTab() {
             {session ? (
               <div className="px-3 py-2">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm text-fg">Session</span>
+                  <span className="text-data text-fg-1">Session</span>
                   {session.expiresAt > now ? (
                     <Chip tone="buy">Signed in · {fmtCountdown(session.expiresAt - now)} left</Chip>
                   ) : (
                     <Chip tone="warn">Expired</Chip>
                   )}
                 </div>
-                <dl className="space-y-1 text-xs">
+                <dl className="space-y-1 text-label">
                   {[
                     { k: "Domain", v: session.domain },
                     { k: "Nonce", v: session.nonce },
@@ -207,21 +207,21 @@ export function SecurityTab() {
                     { k: "Expires", v: fmtDateTime(session.expiresAt) },
                   ].map((item) => (
                     <div key={item.k} className="flex justify-between gap-4">
-                      <dt className="text-muted">{item.k}</dt>
-                      <dd className="min-w-0 truncate text-right font-mono text-fg">{item.v}</dd>
+                      <dt className="text-fg-2">{item.k}</dt>
+                      <dd className="min-w-0 truncate text-right font-mono text-fg-1">{item.v}</dd>
                     </div>
                   ))}
                 </dl>
                 <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-muted hover:text-fg">Signed message</summary>
-                  <pre className="mt-2 overflow-x-auto rounded-md border border-line bg-bg p-2 font-mono text-xs whitespace-pre-wrap break-all text-muted">
+                  <summary className="cursor-pointer text-label text-fg-2 hover:text-fg-1">Signed message</summary>
+                  <pre className="mt-2 overflow-x-auto rounded-sm border border-hairline bg-bg p-2 font-mono text-label whitespace-pre-wrap break-all text-fg-2">
                     {session.message}
                   </pre>
                 </details>
               </div>
             ) : (
               <Row label="Not signed in" hint="Sign a message with your wallet to start a session.">
-                <Button size="xs" variant="outline" onClick={() => go("/onboarding")}>
+                <Button size="xs" variant="secondary" onClick={() => go("/onboarding")}>
                   Sign in
                 </Button>
               </Row>
@@ -248,7 +248,7 @@ export function SecurityTab() {
           <button
             type="button"
             onClick={() => go("/orders")}
-            className="inline-flex items-center gap-1 text-sm text-fg underline underline-offset-2 hover:text-muted"
+            className="inline-flex items-center gap-1 text-data text-fg-1 underline underline-offset-2 hover:text-fg-2"
           >
             Open Armed orders <ArrowRight className="icon-sm" />
           </button>

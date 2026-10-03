@@ -20,7 +20,7 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
   const position = useActivePosition(detail.summary.mint);
   return (
     <>
-      <div className="grid shrink-0 grid-cols-[1fr_1fr_auto] gap-2 border-t border-line bg-panel p-2">
+      <div className="grid shrink-0 grid-cols-[1fr_1fr_auto] gap-2 border-t border-hairline bg-surface-1 p-2">
         <Button
           variant="buy"
           size="lg"
@@ -32,7 +32,7 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
         <Button variant="sell" size="lg" disabled={!position || position.holdingTokens <= 0} onClick={() => setOpen(true)}>
           Sell
         </Button>
-        <Button variant="outline" size="lg" onClick={() => setOpen(true)}>
+        <Button variant="secondary" size="lg" onClick={() => setOpen(true)}>
           Trade
         </Button>
       </div>

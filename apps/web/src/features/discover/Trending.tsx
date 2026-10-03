@@ -83,36 +83,36 @@ const TrendingRow = memo(function TrendingRow({ mint, rank, fallback }: { mint: 
   const t = useMarket((s) => s.tokens[mint]) ?? fallback;
   const up = t.change5mPct >= 0;
   return (
-    <div className="relative flex h-7 items-center gap-1 px-3 text-xs hover:bg-hover @md:gap-2">
+    <div className="relative flex h-7 items-center gap-1 px-3 text-label hover:bg-surface-3 @md:gap-2">
       <Link to={`/t/${t.mint}`} className="absolute inset-0">
         <span className="sr-only">
           Open {t.symbol}, {t.name}
         </span>
       </Link>
-      <span className={cn(COL.rank, "shrink-0 text-right text-dim")}>{rank}</span>
+      <span className={cn(COL.rank, "shrink-0 text-right text-fg-3")}>{rank}</span>
       <span className="flex min-w-0 flex-1 items-center gap-1 @md:gap-2">
         <TokenAvatar mint={t.mint} symbol={t.symbol} imageUri={t.imageUri} size="xs" />
-        <span className="truncate font-semibold text-fg">{t.symbol}</span>
-        <span className="hidden min-w-0 truncate text-dim @lg:inline">{t.name}</span>
-        <Age ts={t.createdAt} className="hidden shrink-0 text-dim @sm:inline" />
+        <span className="truncate font-semibold text-fg-1">{t.symbol}</span>
+        <span className="hidden min-w-0 truncate text-fg-3 @lg:inline">{t.name}</span>
+        <Age ts={t.createdAt} className="hidden shrink-0 text-fg-3 @sm:inline" />
         <span className="relative hidden shrink-0 @xl:inline-flex">
           <SocialLinks socials={t.socials} />
         </span>
       </span>
-      <span className={cn(COL.price, "shrink-0 justify-end text-fg")}>{fmtUsdPrice(t.priceUsd)}</span>
+      <span className={cn(COL.price, "shrink-0 justify-end text-fg-1")}>{fmtUsdPrice(t.priceUsd)}</span>
       <span className={cn(COL.change, "shrink-0 justify-end", up ? "text-buy" : "text-sell")}>
-        {fmtPct(t.change5mPct, { signed: true, digits: 1 })}
+        {fmtPct(t.change5mPct, { signed: true })}
       </span>
-      <span className={cn(COL.mc, "shrink-0 justify-end font-medium text-fg")}>{fmtUsd(t.marketCapUsd)}</span>
-      <span className={cn(COL.liq, "shrink-0 justify-end text-muted")}>{fmtUsd(t.liquidityUsd)}</span>
-      <span className={cn(COL.vol, "shrink-0 justify-end text-muted")}>{fmtUsd(t.volumeUsd)}</span>
-      <span className={cn(COL.txns, "shrink-0 justify-end text-muted")}>{fmtCount(t.txns)}</span>
-      <span className={cn(COL.holders, "shrink-0 justify-end text-muted")}>{fmtCount(t.holders)}</span>
+      <span className={cn(COL.mc, "shrink-0 justify-end font-medium text-fg-1")}>{fmtUsd(t.marketCapUsd)}</span>
+      <span className={cn(COL.liq, "shrink-0 justify-end text-fg-2")}>{fmtUsd(t.liquidityUsd)}</span>
+      <span className={cn(COL.vol, "shrink-0 justify-end text-fg-2")}>{fmtUsd(t.volumeUsd)}</span>
+      <span className={cn(COL.txns, "shrink-0 justify-end text-fg-2")}>{fmtCount(t.txns)}</span>
+      <span className={cn(COL.holders, "shrink-0 justify-end text-fg-2")}>{fmtCount(t.holders)}</span>
       <span className={cn(COL.top10, "shrink-0 justify-end", TONE_TEXT[riskTone("top10", t.risk.top10Pct)])}>
-        {fmtPct(t.risk.top10Pct, { digits: 1 })}
+        {fmtPct(t.risk.top10Pct)}
       </span>
       <span className={cn(COL.dex, "shrink-0 justify-center")}>
-        {t.dexPaid ? <Check className="icon-sm text-fg" aria-label="Dex paid" /> : <span className="text-dim">—</span>}
+        {t.dexPaid ? <Check className="icon-sm text-fg-1" aria-label="Dex paid" /> : <span className="text-fg-3">—</span>}
       </span>
       <span className={cn(COL.buy, "shrink-0 justify-end")}>
         <QuickBuyButton mint={t.mint} symbol={t.symbol} source="discover" />
@@ -134,7 +134,7 @@ function SortHeader({ k, label, col, title }: { k: SortKey; label: string; col: 
       type="button"
       title={title}
       onClick={() => setSort(active ? { key: k, dir: sort.dir === "asc" ? "desc" : "asc" } : { key: k, dir: defaultDir(k) })}
-      className={cn(col, "shrink-0 items-center justify-end gap-1 uppercase hover:text-fg", active && "text-fg")}
+      className={cn(col, "shrink-0 items-center justify-end gap-1 hover:text-fg-1", active && "text-fg-1")}
     >
       {active && <Arrow className="icon-xs" />}
       {label}
@@ -144,7 +144,7 @@ function SortHeader({ k, label, col, title }: { k: SortKey; label: string; col: 
 
 function TrendingHeader() {
   return (
-    <div className="zf-label sticky top-0 z-10 flex h-6 items-center gap-1 border-b border-line bg-panel px-3 @md:gap-2">
+    <div className="zf-label sticky top-0 z-10 flex h-6 items-center gap-1 border-b border-hairline bg-surface-1 px-3 @md:gap-2">
       <SortHeader k="rank" label="#" col={cn(COL.rank, "flex")} title="Trending rank for the selected window" />
       <span className="min-w-0 flex-1">Token</span>
       <SortHeader k="price" label="Price" col={COL.price} title={METRICS.price.definition} />
@@ -172,8 +172,8 @@ function ToggleChip({ pressed, onClick, children, title }: { pressed: boolean; o
       title={title}
       onClick={onClick}
       className={cn(
-        "flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-sm transition-colors",
-        pressed ? "border-line-strong bg-elev text-fg" : "border-line text-muted hover:text-fg",
+        "flex h-7 shrink-0 items-center gap-1 rounded-sm border px-2 text-data transition-colors",
+        pressed ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
       )}
     >
       {pressed && <Check className="icon-sm" />}
@@ -213,9 +213,12 @@ export function TrendingSection({ className }: { className?: string }) {
   const active = discoverFiltersActive(filters) || deferredQuery.trim() !== "";
 
   return (
-    <section aria-label="Trending" className={cn("@container flex min-w-0 flex-col rounded-lg border border-line bg-panel", className)}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
-        <h2 className="pl-1 text-md font-semibold">Trending</h2>
+    <section
+      aria-label="Trending"
+      className={cn("@container flex min-w-0 flex-col rounded-md border border-hairline bg-surface-1", className)}
+    >
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
+        <h2 className="pl-1 text-heading font-semibold">Trending</h2>
         <Segmented<TrendWindow>
           value={trendWindow}
           onChange={setWindow}
@@ -228,18 +231,18 @@ export function TrendingSection({ className }: { className?: string }) {
             <span className="flex flex-col gap-1">
               <span className="font-semibold">How trending is ranked</span>
               {TREND_WINDOWS.map((w) => (
-                <span key={w} className="text-muted">
+                <span key={w} className="text-fg-2">
                   {TREND_EXPLAINER[w]}
                 </span>
               ))}
-              <span className="text-dim">Estimated from cumulative live stats until windowed stats are served.</span>
+              <span className="text-fg-3">Estimated from cumulative live stats until windowed stats are served.</span>
             </span>
           }
         >
           <button
             type="button"
             aria-label="How trending is ranked"
-            className="flex size-6 items-center justify-center rounded-md text-dim hover:text-fg"
+            className="flex size-6 items-center justify-center rounded-sm text-fg-3 hover:text-fg-1"
           >
             <Info className="icon-sm" />
           </button>
@@ -253,7 +256,7 @@ export function TrendingSection({ className }: { className?: string }) {
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
         <SearchField
           className="flex-1 basis-40 sm:max-w-64"
           value={query}
@@ -319,7 +322,7 @@ export function TrendingSection({ className }: { className?: string }) {
           onPointerLeave={() => setHovered(false)}
         >
           {rows.length === 0 ? (
-            <p className="px-3 py-4 text-sm text-dim">
+            <p className="px-3 py-4 text-data text-fg-3">
               {total === 0 ? "Waiting for the live market." : active ? "No tokens match these filters." : "No tokens are trending yet."}
             </p>
           ) : (

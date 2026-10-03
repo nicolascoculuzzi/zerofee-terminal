@@ -29,7 +29,7 @@ export function ExportMenu({
       <span ref={anchor} className="inline-flex">
         <Button
           size="md"
-          variant="subtle"
+          variant="secondary"
           disabled={disabled}
           onClick={() => setOpen((o) => !o)}
           aria-haspopup="menu"
@@ -51,9 +51,9 @@ export function ExportMenu({
                 setOpen(false);
                 void a.run();
               }}
-              className="flex h-7 items-center gap-2 rounded-md px-2 text-left text-sm text-fg hover:bg-hover"
+              className="flex h-7 items-center gap-2 rounded-sm px-2 text-left text-data text-fg-1 hover:bg-surface-3"
             >
-              <span className="flex text-muted">{a.icon}</span>
+              <span className="flex text-fg-2">{a.icon}</span>
               {a.label}
             </button>
           ))}

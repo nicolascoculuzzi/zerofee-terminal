@@ -18,7 +18,7 @@ export function positionPnl(p: Position): number {
 
 /** Text colour for a signed amount: buy green above zero, sell red below, muted at zero. */
 export function pnlTone(value: number): string {
-  if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return "text-muted";
+  if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return "text-fg-2";
   return value > 0 ? "text-buy" : "text-sell";
 }
 

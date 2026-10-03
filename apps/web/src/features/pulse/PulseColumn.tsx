@@ -51,12 +51,12 @@ const ColumnHeader = memo(function ColumnHeader({
   const setColumn = useSettings((s) => s.setColumn);
   const filterCount = activeFilterCount(settings.filters[settings.activeFilter]);
   return (
-    <div className="shrink-0 border-b border-line bg-panel">
+    <div className="shrink-0 border-b border-hairline bg-surface-1">
       <div className="flex h-9 items-center gap-2 px-3">
-        <h2 className="text-md font-semibold">{COLUMN_TITLE[column]}</h2>
-        <span className="text-xs text-dim">{count}</span>
+        <h2 className="text-heading font-semibold">{COLUMN_TITLE[column]}</h2>
+        <span className="text-label text-fg-3">{count}</span>
         {paused && (
-          <span className="flex h-5 items-center gap-1 rounded-sm border border-info/40 px-1 text-2xs font-semibold text-info">
+          <span className="flex h-5 items-center gap-1 rounded-xs border border-info/40 px-1 text-micro font-semibold text-info">
             <Pause className="icon-xs" />
             Paused{pending > 0 ? ` · ${pending} new` : ""}
           </span>
@@ -73,22 +73,22 @@ const ColumnHeader = memo(function ColumnHeader({
             type="button"
             onClick={onOpenFilters}
             className={cn(
-              "flex h-6 items-center gap-1 rounded-md border px-2 text-xs",
-              filterCount > 0 ? "border-line-strong bg-elev text-fg" : "border-line text-muted hover:text-fg",
+              "flex h-6 items-center gap-1 rounded-sm border px-2 text-label",
+              filterCount > 0 ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
             )}
           >
             <SlidersHorizontal className="icon-sm" />
             Filters
             {filterCount > 0 && <span className="font-semibold">{filterCount}</span>}
-            <span className="text-dim">P{settings.activeFilter + 1}</span>
+            <span className="text-fg-3">P{settings.activeFilter + 1}</span>
           </button>
         </div>
       </div>
       <div className="flex h-9 items-center gap-2 px-3 pb-1">
-        <label className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-line-strong bg-bg px-2 text-sm focus-within:border-accent">
-          <Search className="icon-sm shrink-0 text-dim" />
+        <label className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-sm border border-hairline-strong bg-bg px-2 text-data focus-within:border-accent">
+          <Search className="icon-sm shrink-0 text-fg-3" />
           <input
-            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-dim"
+            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-fg-3"
             placeholder="Search"
             value={settings.search}
             onChange={(e) => setColumn(column, { search: e.target.value })}
@@ -153,7 +153,7 @@ export function PulseColumn({ column, onOpenFilters }: { column: PulseColumnId; 
   const pending = frozen ? visible.filter((m) => !frozen.set.has(m)).length : 0;
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rowH = cssPx(display.compactCards ? "--zf-pulse-card-h-compact" : "--zf-pulse-card-h", display.compactCards ? 56 : 76);
+  const rowH = cssPx(display.compactCards ? "--zf-card" : "--zf-card", display.compactCards ? 56 : 76);
   const virtualizer = useVirtualizer({
     count: shown.length,
     getScrollElement: () => scrollRef.current,
@@ -181,7 +181,7 @@ export function PulseColumn({ column, onOpenFilters }: { column: PulseColumnId; 
         onPointerLeave={() => setFrozen(null)}
       >
         {shown.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-dim">
+          <div className="px-3 py-4 text-data text-fg-3">
             {mints.length === 0 ? "Waiting for the feed…" : "No tokens match this column's filters or search."}
           </div>
         ) : (

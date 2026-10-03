@@ -70,10 +70,10 @@ function ImportForm({ onClose }: { onClose: () => void }) {
         spellCheck={false}
         placeholder={PLACEHOLDER}
         aria-label="Wallet list"
-        className="h-40 w-full resize-y rounded-md border border-line-strong bg-bg p-2 font-mono text-xs outline-none placeholder:text-dim focus:border-accent"
+        className="h-40 w-full resize-y rounded-sm border border-hairline-strong bg-bg p-2 font-mono text-label outline-none placeholder:text-fg-3 focus:border-accent"
       />
       <div className="flex items-start justify-between gap-3">
-        <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
+        <ul className="list-disc space-y-1 pl-4 text-label text-fg-2">
           <li>zerofee JSON export</li>
           <li>GMGN text: address name · name:address · address,name</li>
           <li>BullX JSON: address or walletAddress with name, label or tag</li>
@@ -88,56 +88,56 @@ function ImportForm({ onClose }: { onClose: () => void }) {
             e.target.value = "";
           }}
         />
-        <Button size="sm" variant="subtle" icon={<FileUp className="icon-sm" />} onClick={() => fileRef.current?.click()}>
+        <Button size="sm" variant="secondary" icon={<FileUp className="icon-sm" />} onClick={() => fileRef.current?.click()}>
           Load file
         </Button>
       </div>
 
       {parsed.error && (
-        <p role="alert" className="text-xs text-sell">
+        <p role="alert" className="text-label text-sell">
           {parsed.error}
         </p>
       )}
 
       {parsed.format !== "empty" && !parsed.error && (
-        <div className="rounded-md border border-line">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-3 py-2 text-xs">
-            <span className="font-semibold text-fg">{plural(parsed.wallets.length, "wallet")} found</span>
-            <span className="text-muted">{fresh.length.toLocaleString("en-US")} new</span>
-            {already > 0 && <span className="text-muted">{already.toLocaleString("en-US")} already tracked</span>}
-            {parsed.duplicates > 0 && <span className="text-muted">{plural(parsed.duplicates, "duplicate")}</span>}
+        <div className="rounded-sm border border-hairline">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-3 py-2 text-label">
+            <span className="font-semibold text-fg-1">{plural(parsed.wallets.length, "wallet")} found</span>
+            <span className="text-fg-2">{fresh.length.toLocaleString("en-US")} new</span>
+            {already > 0 && <span className="text-fg-2">{already.toLocaleString("en-US")} already tracked</span>}
+            {parsed.duplicates > 0 && <span className="text-fg-2">{plural(parsed.duplicates, "duplicate")}</span>}
             {parsed.skipped.length > 0 && <span className="text-warn">{parsed.skipped.length.toLocaleString("en-US")} skipped</span>}
           </div>
           {fresh.length > 0 && (
             <ul className="py-1">
               {fresh.slice(0, PREVIEW_ROWS).map((w) => (
-                <li key={w.address} className="flex h-6 items-center gap-2 px-3 text-xs">
+                <li key={w.address} className="flex h-6 items-center gap-2 px-3 text-label">
                   <WalletGlyph emoji={w.emoji} name={w.name} />
-                  <span className="min-w-0 flex-1 truncate text-fg">{w.name}</span>
-                  <span className="font-mono text-dim">{shortAddr(w.address, 4, 4)}</span>
-                  {w.alerts && <span className="text-2xs text-muted uppercase">Alerts</span>}
+                  <span className="min-w-0 flex-1 truncate text-fg-1">{w.name}</span>
+                  <span className="font-mono text-fg-3">{shortAddr(w.address, 4, 4)}</span>
+                  {w.alerts && <span className="text-micro text-fg-2">Alerts</span>}
                 </li>
               ))}
               {fresh.length > PREVIEW_ROWS && (
-                <li className="px-3 pb-1 text-xs text-dim">and {plural(fresh.length - PREVIEW_ROWS, "more wallet")}</li>
+                <li className="px-3 pb-1 text-label text-fg-3">and {plural(fresh.length - PREVIEW_ROWS, "more wallet")}</li>
               )}
             </ul>
           )}
           {parsed.skipped.length > 0 && (
-            <div className="border-t border-line px-3 py-2">
+            <div className="border-t border-hairline px-3 py-2">
               <div className="zf-label mb-1">Skipped</div>
-              <ul className="space-y-1 text-xs">
+              <ul className="space-y-1 text-label">
                 {parsed.skipped.slice(0, SKIPPED_ROWS).map((s) => (
                   <li key={s.where} className="flex gap-2">
-                    <span className="w-16 shrink-0 text-dim">{s.where}</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-muted" title={s.text}>
+                    <span className="w-16 shrink-0 text-fg-3">{s.where}</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-fg-2" title={s.text}>
                       {s.text}
                     </span>
                     <span className="shrink-0 text-warn">{s.reason}</span>
                   </li>
                 ))}
                 {parsed.skipped.length > SKIPPED_ROWS && (
-                  <li className="text-dim">and {plural(parsed.skipped.length - SKIPPED_ROWS, "more line")}</li>
+                  <li className="text-fg-3">and {plural(parsed.skipped.length - SKIPPED_ROWS, "more line")}</li>
                 )}
               </ul>
             </div>
@@ -146,12 +146,12 @@ function ImportForm({ onClose }: { onClose: () => void }) {
       )}
 
       {fresh.length > room && (
-        <p className="text-xs text-warn">
+        <p className="text-label text-warn">
           The tracker holds {MAX_TRACKED_WALLETS.toLocaleString("en-US")} wallets: only the first {plural(room, "wallet")} will be imported.
         </p>
       )}
 
-      <div className="flex items-center justify-end gap-2 border-t border-line pt-3">
+      <div className="flex items-center justify-end gap-2 border-t border-hairline pt-3">
         <Button variant="ghost" size="md" onClick={onClose}>
           Cancel
         </Button>

@@ -17,8 +17,8 @@ export function TabHeader({ title, description, actions }: { title: ReactNode; d
   return (
     <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <h2 className="text-md font-semibold text-fg">{title}</h2>
-        {description && <p className="mt-1 text-xs text-muted">{description}</p>}
+        <h2 className="text-heading font-semibold text-fg-1">{title}</h2>
+        {description && <p className="mt-1 text-label text-fg-2">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>
@@ -46,13 +46,13 @@ export function Group({
       {(title || extra) && (
         <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
           <div className="min-w-0">
-            {title && <h3 className="text-sm font-semibold text-fg">{title}</h3>}
-            {description && <p className="text-xs text-dim">{description}</p>}
+            {title && <h3 className="text-data font-semibold text-fg-1">{title}</h3>}
+            {description && <p className="text-label text-fg-3">{description}</p>}
           </div>
           {extra}
         </div>
       )}
-      <div className={cn("divide-y divide-line rounded-lg border border-line", bodyClassName)}>{children}</div>
+      <div className={cn("divide-y divide-hairline rounded-md border border-hairline", bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -76,13 +76,13 @@ export function Row({
     <div className={cn("flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4", className)}>
       <div className="min-w-0">
         {htmlFor ? (
-          <label htmlFor={htmlFor} className="block text-sm text-fg">
+          <label htmlFor={htmlFor} className="block text-data text-fg-1">
             {label}
           </label>
         ) : (
-          <div className="text-sm text-fg">{label}</div>
+          <div className="text-data text-fg-1">{label}</div>
         )}
-        {hint && <div className="text-xs text-dim">{hint}</div>}
+        {hint && <div className="text-label text-fg-3">{hint}</div>}
       </div>
       {children && <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>}
     </div>
@@ -113,17 +113,17 @@ export function Field({
         <div className="zf-label mb-1">{label}</div>
       )}
       {children}
-      {hint && <div className="mt-1 text-xs text-dim">{hint}</div>}
+      {hint && <div className="mt-1 text-label text-fg-3">{hint}</div>}
     </div>
   );
 }
 
 const NOTE_TONE: Record<Tone, { box: string; icon: string; text: string }> = {
-  neutral: { box: "border-line bg-panel-2", icon: "text-dim", text: "text-muted" },
-  info: { box: "border-info/30 bg-info/5", icon: "text-info", text: "text-muted" },
-  warn: { box: "border-warn/30 bg-warn/5", icon: "text-warn", text: "text-fg" },
-  buy: { box: "border-buy/30 bg-buy/5", icon: "text-buy", text: "text-fg" },
-  sell: { box: "border-sell/30 bg-sell/5", icon: "text-sell", text: "text-fg" },
+  neutral: { box: "border-hairline bg-surface-2", icon: "text-fg-3", text: "text-fg-2" },
+  info: { box: "border-info/30 bg-info-tint", icon: "text-info", text: "text-fg-2" },
+  warn: { box: "border-warn-edge bg-warn-tint", icon: "text-warn", text: "text-fg-1" },
+  buy: { box: "border-buy-edge bg-buy-tint", icon: "text-buy", text: "text-fg-1" },
+  sell: { box: "border-sell-edge bg-sell-tint", icon: "text-sell", text: "text-fg-1" },
 };
 
 /** Inline callout: hairline box, tone-coloured icon, plain text. */
@@ -141,7 +141,7 @@ export function Note({
   const t = NOTE_TONE[tone];
   const glyph = icon ?? (tone === "warn" || tone === "sell" ? <TriangleAlert className="icon-sm" /> : <Info className="icon-sm" />);
   return (
-    <div className={cn("flex items-start gap-2 rounded-md border px-3 py-2 text-xs", t.box, t.text, className)}>
+    <div className={cn("flex items-start gap-2 rounded-sm border px-3 py-2 text-label", t.box, t.text, className)}>
       <span className={cn("mt-px flex shrink-0", t.icon)}>{glyph}</span>
       <div className="min-w-0 flex-1">{children}</div>
     </div>
@@ -149,18 +149,22 @@ export function Note({
 }
 
 const CHIP_TONE: Record<Tone, string> = {
-  neutral: "border-line text-muted",
+  neutral: "border-hairline text-fg-2",
   info: "border-info/40 text-info",
-  warn: "border-warn/40 text-warn",
-  buy: "border-buy/40 text-buy",
-  sell: "border-sell/40 text-sell",
+  warn: "border-warn-edge text-warn",
+  buy: "border-buy-edge text-buy",
+  sell: "border-sell-edge text-sell",
 };
 
 /** Status tag (3px radius chip). */
 export function Chip({ tone = "neutral", children, className }: { tone?: Tone; children: ReactNode; className?: string }) {
   return (
     <span
-      className={cn("inline-flex h-4 shrink-0 items-center gap-1 rounded-sm border px-1 text-2xs font-medium", CHIP_TONE[tone], className)}
+      className={cn(
+        "inline-flex h-4 shrink-0 items-center gap-1 rounded-xs border px-1 text-micro font-medium",
+        CHIP_TONE[tone],
+        className,
+      )}
     >
       {children}
     </span>
@@ -193,8 +197,8 @@ export function RadioCard({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition-colors",
-        checked ? "border-line-strong bg-elev" : "border-line hover:bg-hover",
+        "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 transition-colors",
+        checked ? "border-hairline-strong bg-surface-3" : "border-hairline hover:bg-surface-3",
         disabled && "cursor-not-allowed opacity-40",
       )}
     >
@@ -208,10 +212,10 @@ export function RadioCard({
       />
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center justify-between gap-x-2">
-          <span className="text-sm font-semibold text-fg">{title}</span>
+          <span className="text-data font-semibold text-fg-1">{title}</span>
           {meta}
         </span>
-        {children && <span className="mt-1 block space-y-1 text-xs text-muted">{children}</span>}
+        {children && <span className="mt-1 block space-y-1 text-label text-fg-2">{children}</span>}
       </span>
     </label>
   );

@@ -108,7 +108,7 @@ export function DisplayTab() {
             onChange={(e) => setDisplay({ pulseHz: Number(e.target.value) })}
             className="w-32 accent-fg"
           />
-          <span className="w-12 text-right font-mono text-sm text-fg">{display.pulseHz} Hz</span>
+          <span className="w-12 text-right font-mono text-data text-fg-1">{display.pulseHz} Hz</span>
         </Row>
       </Group>
 
@@ -124,10 +124,10 @@ export function DisplayTab() {
             onChange={(e) => setDisplay({ soundVolume: Number(e.target.value) / 100 })}
             className="w-32 accent-fg"
           />
-          <span className="w-12 text-right font-mono text-sm text-fg">{volumePct === 0 ? "Off" : `${volumePct}%`}</span>
+          <span className="w-12 text-right font-mono text-data text-fg-1">{volumePct === 0 ? "Off" : `${volumePct}%`}</span>
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             icon={<Volume2 className="icon-sm" />}
             disabled={volumePct === 0}
             onClick={() => playTone("new", display.soundVolume)}

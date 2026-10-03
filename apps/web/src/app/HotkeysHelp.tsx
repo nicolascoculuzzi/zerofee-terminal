@@ -19,14 +19,14 @@ export function HotkeysHelp() {
       title="Keyboard shortcuts"
       width={560}
       footer={
-        <div className="flex items-center justify-between text-xs text-dim">
+        <div className="flex items-center justify-between text-label text-fg-3">
           <span>
             Trade hotkeys are {tradeHotkeys ? "on" : "off"}. Hold Space, then press the key. Buys target the hovered Pulse card or the open
             token.
           </span>
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             onClick={() => {
               setOpen(false);
               openSettings("hotkeys");
@@ -43,8 +43,8 @@ export function HotkeysHelp() {
             <div className="zf-label mb-2">{g}</div>
             <div className="space-y-1">
               {HOTKEY_ACTIONS.filter((a) => a.group === g).map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-muted">{a.label}</span>
+                <div key={a.id} className="flex items-center justify-between gap-2 text-data">
+                  <span className="text-fg-2">{a.label}</span>
                   <span className="flex gap-1">
                     {(hotkeys[a.id] ?? []).map((b) => (
                       <Hotkey key={b} binding={b} />

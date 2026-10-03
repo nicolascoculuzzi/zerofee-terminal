@@ -84,26 +84,26 @@ export function SignInStep({
       <div>
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
           <span className="zf-label">{signed ? "Signed message" : "Message preview"}</span>
-          <span className="text-xs text-dim">Signing with {shortAddr(connected.address, 4, 4)}</span>
+          <span className="text-label text-fg-3">Signing with {shortAddr(connected.address, 4, 4)}</span>
         </div>
-        <pre className="overflow-x-auto rounded-md border border-line bg-bg p-3 font-mono text-xs whitespace-pre-wrap break-all text-fg">
+        <pre className="overflow-x-auto rounded-sm border border-hairline bg-bg p-3 font-mono text-label whitespace-pre-wrap break-all text-fg-1">
           {signed
             ? signed.message
             : lines.map((line) => (
                 <span key={line.id} className="block">
                   {line.text || " "}
-                  {line.placeholder && <span className="text-dim">{line.placeholder}</span>}
+                  {line.placeholder && <span className="text-fg-3">{line.placeholder}</span>}
                 </span>
               ))}
         </pre>
       </div>
 
       {signed ? (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-data">
           <CircleCheck className="icon-sm text-buy" />
-          <span className="text-fg">Signed in</span>
-          <span className="text-muted">· session expires {fmtDateTime(signed.expiresAt)}</span>
-          <span className="font-mono text-xs text-dim">signature {shortAddr(signed.signature, 6, 6)}</span>
+          <span className="text-fg-1">Signed in</span>
+          <span className="text-fg-2">· session expires {fmtDateTime(signed.expiresAt)}</span>
+          <span className="font-mono text-label text-fg-3">signature {shortAddr(signed.signature, 6, 6)}</span>
         </div>
       ) : (
         <Note tone="info">

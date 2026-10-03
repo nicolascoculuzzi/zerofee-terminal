@@ -14,6 +14,8 @@ export interface MarketState {
   tokens: Record<string, TokenSummary>;
   columns: Record<PulseColumnId, string[]>;
   solUsd: number;
+  /** When solUsd last updated (staleness check, DESIGN.md 3.9). */
+  solUsdAt: number;
   slot: number;
   feed: FeedHealth;
   connection: FeedConnectionState;
@@ -34,6 +36,7 @@ export const useMarket = create<MarketState>()((set, get) => ({
   tokens: {},
   columns: { new: [], final: [], migrated: [] },
   solUsd: 119.5,
+  solUsdAt: Date.now(),
   slot: 0,
   feed: { state: "reconnecting", lagMs: 0, eventsPerSec: 0 },
   connection: "connecting",
@@ -77,7 +80,7 @@ export const useMarket = create<MarketState>()((set, get) => ({
   },
 
   setMarket(status) {
-    set({ solUsd: status.solUsd, slot: status.slot, feed: status.feed });
+    set({ solUsd: status.solUsd, solUsdAt: Date.now(), slot: status.slot, feed: status.feed });
   },
 
   setConnection(connection) {

@@ -22,18 +22,18 @@ export interface StepFrame {
  */
 export function StepPanel({ index, total, title, description, children, footer }: StepFrame & { children: ReactNode; footer: ReactNode }) {
   return (
-    <div className="rounded-lg border border-line bg-panel">
-      <div className="border-b border-line px-4 py-3">
+    <div className="rounded-md border border-hairline bg-surface-1">
+      <div className="border-b border-hairline px-4 py-3">
         <div className="zf-label">
           Step {index + 1} of {total}
         </div>
-        <h2 id={STEP_TITLE_ID} className="mt-1 text-md font-semibold text-fg">
+        <h2 id={STEP_TITLE_ID} className="mt-1 text-heading font-semibold text-fg-1">
           {title}
         </h2>
-        <p className="text-sm text-muted">{description}</p>
+        <p className="text-data text-fg-2">{description}</p>
       </div>
       <div className="space-y-4 p-4">{children}</div>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3">{footer}</div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline px-4 py-3">{footer}</div>
     </div>
   );
 }
@@ -55,7 +55,7 @@ export function StepFooter({ onBack, backDisabled, children }: { onBack?: () => 
 
 export function InlineError({ children }: { children: ReactNode }) {
   return (
-    <div role="alert" className="flex items-start gap-2 text-sm text-sell">
+    <div role="alert" className="flex items-start gap-2 text-data text-sell">
       <CircleAlert className="icon-sm mt-px" />
       <span className="min-w-0">{children}</span>
     </div>

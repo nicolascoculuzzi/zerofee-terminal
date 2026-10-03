@@ -39,8 +39,8 @@ export function TabBar<T extends string>({
             aria-selected={active}
             onClick={() => onChange(t.id)}
             className={cn(
-              "flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-sm font-medium whitespace-nowrap transition-colors",
-              active ? "bg-elev text-fg" : "text-muted hover:text-fg",
+              "flex h-6 shrink-0 items-center gap-1 rounded-sm px-2 text-data font-medium whitespace-nowrap transition-colors",
+              active ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:text-fg-1",
             )}
           >
             {t.label}

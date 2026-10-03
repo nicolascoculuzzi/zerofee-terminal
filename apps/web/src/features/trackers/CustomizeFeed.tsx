@@ -38,15 +38,15 @@ function removeWithUndo(h: TrackedHandle): void {
 const HandleRow = memo(function HandleRow({ h, blacklisted }: { h: TrackedHandle; blacklisted: boolean }) {
   const update = (patch: Partial<TrackedHandle>) => useTrackers.getState().updateHandle(h.handle, patch);
   return (
-    <div className="flex h-7 items-center gap-2 px-3 text-xs hover:bg-hover">
+    <div className="flex h-7 items-center gap-2 px-3 text-label hover:bg-surface-3">
       <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="truncate font-medium text-fg">@{h.handle}</span>
+        <span className="truncate font-medium text-fg-1">@{h.handle}</span>
         {blacklisted && (
-          <span className="shrink-0 text-2xs text-warn uppercase" title="Blacklisted in Settings: its posts stay hidden">
+          <span className="shrink-0 text-micro text-warn" title="Blacklisted in Settings: its posts stay hidden">
             Blacklisted
           </span>
         )}
-        <Age ts={h.addedAt} className="hidden shrink-0 text-dim @sm:inline" />
+        <Age ts={h.addedAt} className="hidden shrink-0 text-fg-3 @sm:inline" />
       </span>
       <span className="flex w-14 shrink-0 justify-center">
         <Switch
@@ -99,23 +99,23 @@ function ImportHandlesForm({ onClose }: { onClose: () => void }) {
         spellCheck={false}
         aria-label="Handle list"
         placeholder={"@handle, one per line or comma-separated\nx.com links work too\nor a zerofee JSON export"}
-        className="h-32 w-full resize-y rounded-md border border-line-strong bg-bg p-2 font-mono text-xs outline-none placeholder:text-dim focus:border-accent"
+        className="h-32 w-full resize-y rounded-sm border border-hairline-strong bg-bg p-2 font-mono text-label outline-none placeholder:text-fg-3 focus:border-accent"
       />
       {parsed.error ? (
-        <p role="alert" className="text-xs text-sell">
+        <p role="alert" className="text-label text-sell">
           {parsed.error}
         </p>
       ) : (
         deferred.trim() && (
-          <div className="flex flex-col gap-1 text-xs">
+          <div className="flex flex-col gap-1 text-label">
             <div className="flex flex-wrap gap-x-3">
-              <span className="font-semibold text-fg">{plural(parsed.handles.length, "handle")} found</span>
-              <span className="text-muted">{fresh.length.toLocaleString("en-US")} new</span>
-              {parsed.duplicates > 0 && <span className="text-muted">{plural(parsed.duplicates, "duplicate")}</span>}
+              <span className="font-semibold text-fg-1">{plural(parsed.handles.length, "handle")} found</span>
+              <span className="text-fg-2">{fresh.length.toLocaleString("en-US")} new</span>
+              {parsed.duplicates > 0 && <span className="text-fg-2">{plural(parsed.duplicates, "duplicate")}</span>}
               {parsed.invalid.length > 0 && <span className="text-warn">{parsed.invalid.length.toLocaleString("en-US")} invalid</span>}
             </div>
             {parsed.invalid.length > 0 && (
-              <p className="truncate font-mono text-dim" title={parsed.invalid.join(", ")}>
+              <p className="truncate font-mono text-fg-3" title={parsed.invalid.join(", ")}>
                 Skipped: {parsed.invalid.slice(0, 8).join(", ")}
                 {parsed.invalid.length > 8 ? "…" : ""}
               </p>
@@ -123,7 +123,7 @@ function ImportHandlesForm({ onClose }: { onClose: () => void }) {
           </div>
         )
       )}
-      <div className="flex justify-end gap-2 border-t border-line pt-3">
+      <div className="flex justify-end gap-2 border-t border-hairline pt-3">
         <Button variant="ghost" size="md" onClick={onClose}>
           Cancel
         </Button>
@@ -199,12 +199,12 @@ export function CustomizeFeed() {
 
   return (
     <div className="@container flex min-h-0 flex-1 flex-col">
-      <form onSubmit={add} className="flex flex-col gap-1 border-b border-line p-2">
+      <form onSubmit={add} className="flex flex-col gap-1 border-b border-hairline p-2">
         <div className="flex items-center gap-2">
-          <label className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-line-strong bg-bg px-2 text-sm focus-within:border-accent">
-            <AtSign className="icon-sm shrink-0 text-dim" />
+          <label className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-sm border border-hairline-strong bg-bg px-2 text-data focus-within:border-accent">
+            <AtSign className="icon-sm shrink-0 text-fg-3" />
             <input
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-dim"
+              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-fg-3"
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -222,13 +222,13 @@ export function CustomizeFeed() {
           </Button>
         </div>
         {error && (
-          <p role="alert" className="text-xs text-sell">
+          <p role="alert" className="text-label text-sell">
             {error}
           </p>
         )}
       </form>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
         <SearchField
           className="flex-1 basis-32"
           value={query}
@@ -236,16 +236,16 @@ export function CustomizeFeed() {
           placeholder="Search handle"
           label="Search tracked handles"
         />
-        <span className="text-xs whitespace-nowrap text-dim">{plural(handles.length, "handle")}</span>
+        <span className="text-label whitespace-nowrap text-fg-3">{plural(handles.length, "handle")}</span>
         <div className="flex items-center gap-2">
-          <Button size="md" variant="subtle" title="Import" icon={<Upload className="icon-sm" />} onClick={() => setImportOpen(true)}>
+          <Button size="md" variant="secondary" title="Import" icon={<Upload className="icon-sm" />} onClick={() => setImportOpen(true)}>
             <span className="hidden @lg:inline">Import</span>
           </Button>
           <ExportMenu actions={exportActions} disabled={handles.length === 0} compactLabel />
         </div>
       </div>
 
-      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-line px-3">
+      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-hairline px-3">
         <span className="min-w-0 flex-1">Handle</span>
         <span className="w-14 shrink-0 text-center" title="Tweets, replies, quotes and retweets">
           Tweets
@@ -256,9 +256,9 @@ export function CustomizeFeed() {
       </div>
 
       {handles.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-dim">No handles yet. Add one above or import a list.</p>
+        <p className="px-3 py-4 text-data text-fg-3">No handles yet. Add one above or import a list.</p>
       ) : rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-dim">No handles match “{query.trim()}”.</p>
+        <p className="px-3 py-4 text-data text-fg-3">No handles match “{query.trim()}”.</p>
       ) : (
         <VirtualList
           label="Tracked X handles"
@@ -272,7 +272,7 @@ export function CustomizeFeed() {
         />
       )}
 
-      <p className="flex items-center gap-2 border-t border-line px-3 py-2 text-xs text-dim">
+      <p className="flex items-center gap-2 border-t border-hairline px-3 py-2 text-label text-fg-3">
         <Info className="icon-sm" />
         Keyword and trend alerts are planned. Untracked handles show everything in “All posts”.
       </p>

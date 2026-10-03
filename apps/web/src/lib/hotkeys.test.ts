@@ -29,7 +29,7 @@ describe("hotkey bindings", () => {
 
   test("two-step sequences and labels", () => {
     expect(parseBinding("G P")).toHaveLength(2);
-    expect(bindingLabel("Space+Q")).toEqual([["␣", "Q"]]);
+    expect(bindingLabel("Space+Q")).toEqual([["Space", "Q"]]);
     expect(bindingLabel("Shift+/")).toEqual([["?"]]);
   });
 

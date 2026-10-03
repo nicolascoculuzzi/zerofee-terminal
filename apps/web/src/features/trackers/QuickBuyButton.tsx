@@ -38,7 +38,7 @@ export const QuickBuyButton = memo(function QuickBuyButton({
       title={`Buy ${fmtSolShort(sol)} SOL of ${symbol}`}
       aria-label={`Quick buy ${fmtSolShort(sol)} SOL of ${symbol}`}
       className={cn(
-        "relative inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-buy/10 px-2 text-xs font-semibold text-buy transition-colors hover:bg-buy/20",
+        "relative inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-buy-tint px-2 text-label font-semibold text-buy transition-colors hover:bg-buy-tint-hover",
         className,
       )}
     >
@@ -66,8 +66,8 @@ export const WatchStar = memo(function WatchStar({ mint, symbol, className }: { 
       }}
       onKeyDown={(e) => e.stopPropagation()}
       className={cn(
-        "relative flex size-5 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover",
-        watched ? "text-fg" : "text-dim hover:text-fg",
+        "relative flex size-5 shrink-0 items-center justify-center rounded-sm transition-colors hover:bg-surface-3",
+        watched ? "text-fg-1" : "text-fg-3 hover:text-fg-1",
         className,
       )}
     >

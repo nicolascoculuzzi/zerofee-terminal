@@ -42,33 +42,33 @@ function TokenRow({
       onClick={onOpen}
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
       onPointerMove={onHover}
-      className={cn("flex cursor-pointer items-center gap-2 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
+      className={cn("flex cursor-pointer items-center gap-2 px-3 py-2", active ? "bg-surface-3" : "hover:bg-surface-3/60")}
     >
       <TokenAvatar mint={token.mint} symbol={token.symbol} imageUri={token.imageUri} launchpad={token.launchpad} size="md" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1">
-          <span className="text-base font-semibold">{token.symbol}</span>
-          <span className="truncate text-sm text-dim">{token.name}</span>
-          {watched && <Star className="icon-sm fill-fg text-fg" />}
+          <span className="text-body font-semibold">{token.symbol}</span>
+          <span className="truncate text-data text-fg-3">{token.name}</span>
+          {watched && <Star className="icon-sm fill-fg-1 text-fg-1" />}
           <CopyButton text={token.mint} label="Copy contract address" />
         </div>
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-2 text-label">
           <span className="text-buy">{fmtAge(token.createdAt, now)}</span>
-          <span className="font-mono text-dim">{shortAddr(token.mint, 4, 4)}</span>
+          <span className="font-mono text-fg-3">{shortAddr(token.mint, 4, 4)}</span>
           <SocialLinks socials={token.socials} />
         </div>
       </div>
-      <div className="hidden w-[150px] grid-cols-3 gap-2 text-right text-xs sm:grid">
+      <div className="hidden w-[150px] grid-cols-3 gap-2 text-right text-label sm:grid">
         <span>
-          <span className="block text-dim">MC</span>
+          <span className="block text-fg-3">MC</span>
           <span className="font-semibold">{fmtUsd(token.marketCapUsd)}</span>
         </span>
         <span>
-          <span className="block text-dim">V</span>
+          <span className="block text-fg-3">V</span>
           {fmtUsd(token.volumeUsd)}
         </span>
         <span>
-          <span className="block text-dim">L</span>
+          <span className="block text-fg-3">L</span>
           {fmtUsd(token.liquidityUsd)}
         </span>
       </div>
@@ -78,7 +78,7 @@ function TokenRow({
           e.stopPropagation();
           void buy({ mint: token.mint, sol: quickBuy, source: "search" });
         }}
-        className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-buy/10 px-2 text-xs font-semibold text-buy hover:bg-buy/20"
+        className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-buy-tint px-2 text-label font-semibold text-buy hover:bg-buy-tint-hover"
         aria-label={`Quick buy ${fmtSolShort(quickBuy)} SOL of ${token.symbol}`}
       >
         <Zap className="icon-sm" /> {fmtSolShort(quickBuy)}
@@ -108,21 +108,21 @@ function WalletRow({
       onClick={onOpen}
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
       onPointerMove={onHover}
-      className={cn("flex cursor-pointer items-center gap-2 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
+      className={cn("flex cursor-pointer items-center gap-2 px-3 py-2", active ? "bg-surface-3" : "hover:bg-surface-3/60")}
     >
-      <span className="flex h-[34px] w-[34px] items-center justify-center rounded-md bg-elev text-muted">
+      <span className="flex h-[34px] w-[34px] items-center justify-center rounded-sm bg-surface-3 text-fg-2">
         <Wallet className="icon-lg" />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1">
-          <span className="font-mono text-sm">{shortAddr(wallet.address, 6, 6)}</span>
-          {wallet.label && <span className="truncate text-sm text-muted">{wallet.label}</span>}
+          <span className="font-mono text-data">{shortAddr(wallet.address, 6, 6)}</span>
+          {wallet.label && <span className="truncate text-data text-fg-2">{wallet.label}</span>}
           {wallet.tags.map((t) => (
             <Tag key={t} tag={t} />
           ))}
           <CopyButton text={wallet.address} label="Copy address" />
         </div>
-        <div className="text-xs text-dim">
+        <div className="text-label text-fg-3">
           Wallet · {wallet.holdings} live token{wallet.holdings === 1 ? "" : "s"} held
         </div>
       </div>
@@ -135,7 +135,7 @@ function WalletRow({
               useToasts.getState().push({ kind: "success", title: "Wallet tracked", body: shortAddr(wallet.address, 6, 6), ttl: 2000 });
             }
           }}
-          className="flex h-6 items-center gap-1 rounded-full border border-line px-2 text-xs text-muted hover:text-fg"
+          className="flex h-6 items-center gap-1 rounded-full border border-hairline px-2 text-label text-fg-2 hover:text-fg-1"
         >
           <UserPlus className="icon-sm" /> Track
         </button>
@@ -237,11 +237,11 @@ export function SearchModal() {
 
   return (
     <Modal open={open} onClose={() => setOpen(false)} bare width={660} label="Search">
-      <div className="flex h-12 items-center gap-2 border-b border-line px-3">
-        <Search className="icon-lg text-dim" />
+      <div className="flex h-12 items-center gap-2 border-b border-hairline px-3">
+        <Search className="icon-lg text-fg-3" />
         <input
           data-autofocus
-          className="h-full flex-1 bg-transparent text-md outline-none placeholder:text-dim"
+          className="h-full flex-1 bg-transparent text-heading outline-none placeholder:text-fg-3"
           placeholder="Search by name, ticker, contract address or wallet…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -249,7 +249,7 @@ export function SearchModal() {
           aria-label="Search"
         />
         {query && (
-          <button type="button" aria-label="Clear" onClick={() => setQuery("")} className="text-dim hover:text-fg">
+          <button type="button" aria-label="Clear" onClick={() => setQuery("")} className="text-fg-3 hover:text-fg-1">
             <X className="icon-md" />
           </button>
         )}
@@ -262,7 +262,7 @@ export function SearchModal() {
               <span className="zf-label flex items-center gap-1">
                 <Clock className="icon-xs" /> Recent searches
               </span>
-              <button type="button" className="text-2xs text-dim hover:text-fg" onClick={clearRecent}>
+              <button type="button" className="text-micro text-fg-3 hover:text-fg-1" onClick={clearRecent}>
                 Clear
               </button>
             </div>
@@ -272,7 +272,7 @@ export function SearchModal() {
                   key={r}
                   type="button"
                   onClick={() => setQuery(r)}
-                  className="max-w-[220px] truncate rounded-full border border-line px-2 py-px text-xs text-muted hover:text-fg"
+                  className="max-w-[220px] truncate rounded-full border border-hairline px-2 py-px text-label text-fg-2 hover:text-fg-1"
                 >
                   {r}
                 </button>
@@ -299,13 +299,13 @@ export function SearchModal() {
           ),
         )}
         {query.trim() && items.length === 0 && (
-          <div className="px-3 py-8 text-center text-sm text-dim">No tokens or wallets match “{query}”.</div>
+          <div className="px-3 py-8 text-center text-data text-fg-3">No tokens or wallets match “{query}”.</div>
         )}
         {!query.trim() && items.length === 0 && recent.length === 0 && (
-          <div className="px-3 py-8 text-center text-sm text-dim">Type a name, $ticker, contract address or wallet address.</div>
+          <div className="px-3 py-8 text-center text-data text-fg-3">Type a name, $ticker, contract address or wallet address.</div>
         )}
       </div>
-      <div className="flex items-center gap-3 border-t border-line px-3 py-1 text-2xs text-dim">
+      <div className="flex items-center gap-3 border-t border-hairline px-3 py-1 text-micro text-fg-3">
         <span className="flex items-center gap-1">
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd> navigate

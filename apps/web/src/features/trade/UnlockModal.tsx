@@ -60,7 +60,7 @@ export function UnlockModal() {
           void submit();
         }}
       >
-        <div className="flex items-start gap-2 rounded-md bg-panel-2 p-3 text-sm text-muted">
+        <div className="flex items-start gap-2 rounded-sm bg-surface-2 p-3 text-data text-fg-2">
           <Lock className="icon-md mt-1 shrink-0 text-warn" />
           <span>
             {unlock.reason || "Your keystore is locked"}. The key is decrypted in this browser only and locks again after{" "}
@@ -79,12 +79,12 @@ export function UnlockModal() {
             placeholder={demo ? "Demo wallet: any password" : "Keystore password"}
           />
         </label>
-        {error && <div className="text-xs text-sell">{error}</div>}
+        {error && <div className="text-label text-sell">{error}</div>}
         <div className="flex gap-2">
           <Button type="submit" variant="primary" size="md" className="flex-1" disabled={busy || !password}>
             {busy ? "Unlocking…" : "Unlock"}
           </Button>
-          <Button size="md" variant="outline" onClick={() => void passkey()} disabled={busy} icon={<KeyRound className="icon-md" />}>
+          <Button size="md" variant="secondary" onClick={() => void passkey()} disabled={busy} icon={<KeyRound className="icon-md" />}>
             {hasPasskey ? "Passkey" : "Passkey (demo)"}
           </Button>
         </div>

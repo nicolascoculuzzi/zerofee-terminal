@@ -4,7 +4,7 @@ import { cn } from "../../lib/cn";
 
 export interface VirtualListProps {
   count: number;
-  /** Fixed row height in px (the --zf-row-h token; rows render with h-7). */
+  /** Fixed row height in px (the --zf-row token; rows render with h-7). */
   rowHeight: number;
   getKey: (index: number) => string | number;
   renderRow: (index: number) => ReactNode;

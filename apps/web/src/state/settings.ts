@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { type BlacklistEntry, type Blacklists, emptyFilter, normalizeFilter, type PulseFilter } from "../lib/filters";
 import { DEFAULT_HOTKEYS, type HotkeyAction } from "../lib/hotkeys";
+import { RISK_DEFAULTS, type RiskThresholds } from "../lib/metrics";
 import type { LandingPreset, PulseColumnId } from "../protocol";
 import type { ExecutionSettings, TradeMode } from "../services/tradeService";
 
@@ -37,10 +38,25 @@ export interface ColumnSettings {
 }
 
 export type ToastPosition = "top-right" | "bottom-right" | "bottom-left" | "top-center";
-export type Theme = "dark" | "light";
+export type Theme = "dark" | "light" | "system";
+/** "auto": compact at 1024px and up with a fine pointer, comfortable with a coarse one (DESIGN.md 2.10). */
+export type Density = "auto" | "compact" | "comfortable";
+/** Colour-vision palette (DESIGN.md 2.1): blue/orange swaps buy and sell. */
+export type ColourVision = "default" | "blue-orange";
+export type QuoteCurrency = "USD" | "SOL";
 
 export interface DisplaySettings {
   theme: Theme;
+  density: Density;
+  cvd: ColourVision;
+  /** One global quote for market caps, liquidity, volume, values and PnL (DESIGN.md 3.9). */
+  quote: QuoteCurrency;
+  /** Pulse insertion: "live" at the feed rate, "calm" at most once per second (DESIGN.md 6.7). */
+  insertMode: "live" | "calm";
+  /** Risk-chip band edges; defaults per DESIGN.md 3.11. */
+  riskThresholds: RiskThresholds;
+  /** Review sheet before trades on touch devices (DESIGN.md 5.8). */
+  confirmOnTouch: boolean;
   metricColors: boolean;
   compactCards: boolean;
   showProgressRing: boolean;
@@ -186,6 +202,12 @@ export const useSettings = create<SettingsState>()(
       tradeHotkeys: true,
       display: {
         theme: "dark",
+        density: "auto",
+        cvd: "default",
+        quote: "USD",
+        insertMode: "live",
+        riskThresholds: RISK_DEFAULTS,
+        confirmOnTouch: true,
         metricColors: true,
         compactCards: false,
         showProgressRing: true,

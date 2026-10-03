@@ -7,7 +7,6 @@ import { closeTopOverlay } from "../lib/overlayStack";
 import { buy } from "../lib/tradeActions";
 import { getServices } from "../services";
 import { PRESET_IDS, useSettings } from "../state/settings";
-import { useToasts } from "../state/toasts";
 import { useUi } from "../state/ui";
 import { GlobalOverlays } from "./GlobalOverlays";
 import { MobileNav } from "./MobileNav";
@@ -35,12 +34,22 @@ function useGlobalActions(): void {
       registerHotkey("nav.trackers", () => navigateTo("/trackers")),
       registerHotkey("nav.portfolio", () => navigateTo("/portfolio")),
       registerHotkey("nav.orders", () => navigateTo("/orders")),
-      ...PRESET_IDS.map((id, i) =>
-        registerHotkey(`preset.${i + 1}` as "preset.1", () => {
-          useSettings.getState().setActivePreset(id);
-          useToasts.getState().push({ kind: "info", title: `Preset ${id} active`, ttl: 1200 });
-        }),
-      ),
+      registerHotkey("nav.settings", () => ui().openSettings()),
+      registerHotkey("quote.toggle", () => {
+        const s = useSettings.getState();
+        s.setDisplay({ quote: s.display.quote === "USD" ? "SOL" : "USD" });
+      }),
+      registerHotkey("density.toggle", () => {
+        const s = useSettings.getState();
+        const current = document.documentElement.dataset.density === "comfortable" ? "comfortable" : "compact";
+        s.setDisplay({ density: current === "compact" ? "comfortable" : "compact" });
+      }),
+      registerHotkey("wallet.lock", () => {
+        void getServices().wallet.lock();
+      }),
+      registerHotkey("panic", () => ui().openPanic()),
+      // Preset switches show on the control itself (a highlight), never as a toast (DESIGN.md 4.1).
+      ...PRESET_IDS.map((id, i) => registerHotkey(`preset.${i + 1}` as "preset.1", () => useSettings.getState().setActivePreset(id))),
     ];
     return () => {
       for (const off of offs) off();
@@ -64,8 +73,8 @@ function usePasteToTrade(): void {
             useSettings.getState().addRecentToken(token.mint);
             navigateTo(`/t/${token.mint}`);
             const s = useSettings.getState();
+            // Opening is the confirmation; no "opened from clipboard" toast (DESIGN.md 4.13).
             if (s.autoBuyOnPaste) void buy({ mint: token.mint, sol: s.quickBuySol, source: "paste" });
-            else useToasts.getState().push({ kind: "info", title: `Opened $${token.symbol} from clipboard`, ttl: 2000 });
             return;
           }
           navigateTo(`/portfolio?wallet=${encodeURIComponent(text)}`);
@@ -108,8 +117,14 @@ export function Shell() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">
+      <a
+        href="#main"
+        className="fixed top-2 left-2 z-tooltip -translate-y-16 rounded-sm bg-accent px-3 py-1.5 text-data font-medium text-ink focus-visible:translate-y-0"
+      >
+        Skip to main content
+      </a>
       <TopNav />
-      <main className="relative min-h-0 flex-1 overflow-hidden">
+      <main id="main" tabIndex={-1} className="relative min-h-0 flex-1 overflow-hidden outline-none">
         <Outlet />
       </main>
       <StatusBar />

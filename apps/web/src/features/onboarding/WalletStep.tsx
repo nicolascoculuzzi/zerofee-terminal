@@ -11,8 +11,8 @@ import { MIN_PASSWORD, type PasswordStrength, passwordStrength } from "./passwor
 const FORM_ID = "zf-create-trading-wallet";
 const LABEL_MAX = 24;
 
-const TONE_BG: Record<PasswordStrength["tone"], string> = { neutral: "bg-elev", sell: "bg-sell", warn: "bg-warn", buy: "bg-buy" };
-const TONE_TEXT: Record<PasswordStrength["tone"], string> = { neutral: "text-dim", sell: "text-sell", warn: "text-warn", buy: "text-buy" };
+const TONE_BG: Record<PasswordStrength["tone"], string> = { neutral: "bg-surface-3", sell: "bg-sell", warn: "bg-warn", buy: "bg-buy" };
+const TONE_TEXT: Record<PasswordStrength["tone"], string> = { neutral: "text-fg-3", sell: "text-sell", warn: "text-warn", buy: "text-buy" };
 const SEGMENTS = [1, 2, 3, 4] as const;
 
 /* Strength bar + label under the field, after Brave Wallet's "Create a Password":
@@ -22,10 +22,10 @@ function StrengthMeter({ strength }: { strength: PasswordStrength }) {
     <div className="mt-1 flex items-center gap-2">
       <div className="flex flex-1 gap-1">
         {SEGMENTS.map((n) => (
-          <span key={n} className={cn("h-1 flex-1 rounded-full", strength.score >= n ? TONE_BG[strength.tone] : "bg-elev")} />
+          <span key={n} className={cn("h-1 flex-1 rounded-full", strength.score >= n ? TONE_BG[strength.tone] : "bg-surface-3")} />
         ))}
       </div>
-      <span aria-live="polite" className={cn("w-16 text-right text-xs", TONE_TEXT[strength.tone])}>
+      <span aria-live="polite" className={cn("w-16 text-right text-label", TONE_TEXT[strength.tone])}>
         {strength.label}
       </span>
     </div>
@@ -93,17 +93,19 @@ export function WalletStep({
           </StepFooter>
         }
       >
-        <div className="flex items-start gap-2 rounded-lg border border-line bg-panel-2 px-3 py-2">
+        <div className="flex items-start gap-2 rounded-md border border-hairline bg-surface-2 px-3 py-2">
           <CircleCheck className="icon-sm mt-px text-buy" />
-          <div className="min-w-0 text-sm">
-            <div className="font-semibold text-fg">{created.label} created</div>
-            <div className="font-mono text-xs break-all text-muted">{created.address}</div>
-            <div className="text-xs text-dim">
+          <div className="min-w-0 text-data">
+            <div className="font-semibold text-fg-1">{created.label} created</div>
+            <div className="font-mono text-label break-all text-fg-2">{created.address}</div>
+            <div className="text-label text-fg-3">
               {created.unlockMethod === "passkey" ? "Unlocks with your passkey" : "Unlocks with your password"} · locks {lockText}
             </div>
           </div>
         </div>
-        <p className="text-xs text-dim">To add another trading wallet, finish setup first, then choose New wallet in the wallet menu.</p>
+        <p className="text-label text-fg-3">
+          To add another trading wallet, finish setup first, then choose New wallet in the wallet menu.
+        </p>
       </StepPanel>
     );
   }
@@ -148,7 +150,7 @@ export function WalletStep({
                   aria-label={show ? "Hide password" : "Show password"}
                   aria-pressed={show}
                   onClick={() => setShow((s) => !s)}
-                  className="absolute inset-y-0 right-0 flex w-7 items-center justify-center text-dim hover:text-fg"
+                  className="absolute inset-y-0 right-0 flex w-7 items-center justify-center text-fg-3 hover:text-fg-1"
                 >
                   {show ? <EyeOff className="icon-sm" /> : <Eye className="icon-sm" />}
                 </button>
@@ -166,7 +168,7 @@ export function WalletStep({
                 onChange={(e) => setConfirm(e.target.value)}
               />
               {confirm.length > 0 && (
-                <div className={cn("mt-1 flex items-center gap-1 text-xs", mismatch ? "text-sell" : "text-buy")}>
+                <div className={cn("mt-1 flex items-center gap-1 text-label", mismatch ? "text-sell" : "text-buy")}>
                   {mismatch ? (
                     "Doesn't match"
                   ) : (
@@ -182,8 +184,8 @@ export function WalletStep({
 
         <label
           className={cn(
-            "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 transition-colors",
-            usePasskey ? "border-line-strong bg-elev" : "border-line hover:bg-hover",
+            "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 transition-colors",
+            usePasskey ? "border-hairline-strong bg-surface-3" : "border-hairline hover:bg-surface-3",
           )}
         >
           <input
@@ -192,10 +194,10 @@ export function WalletStep({
             onChange={(e) => setUsePasskey(e.target.checked)}
             className="mt-px size-3 shrink-0 accent-fg"
           />
-          <KeyRound className="icon-md shrink-0 text-muted" />
+          <KeyRound className="icon-md shrink-0 text-fg-2" />
           <span className="min-w-0">
-            <span className="block text-sm font-semibold text-fg">Use a passkey instead</span>
-            <span className="block text-xs text-muted">
+            <span className="block text-data font-semibold text-fg-1">Use a passkey instead</span>
+            <span className="block text-label text-fg-2">
               Touch ID, Windows Hello or a security key. The key is encrypted with a secret from WebAuthn PRF, so there's no password to
               remember. Simulated here: no system prompt appears.
             </span>

@@ -25,7 +25,7 @@ export function TableHead({ cols, className }: { cols: Col[]; className?: string
   return (
     <div
       className={cn(
-        "sticky top-0 z-10 grid h-7 items-center gap-2 border-b border-line bg-panel px-3 text-2xs tracking-wide text-dim uppercase",
+        "sticky top-0 z-10 grid h-7 items-center gap-2 border-b border-hairline bg-surface-1 px-3 text-micro text-fg-3",
         className,
       )}
       style={{ gridTemplateColumns: template(cols) }}

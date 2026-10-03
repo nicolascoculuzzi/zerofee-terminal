@@ -20,7 +20,7 @@ const DOCK_POSTS = 20;
 
 /*
  * Floating dock panel. Anatomy follows Kraken Pro's Activity side panel (title row, compact list,
- * "see all" link) and Coinbase Advanced's watchlist sidebar; flat bg-panel with a strong hairline,
+ * "see all" link) and Coinbase Advanced's watchlist sidebar; flat bg-surface-1 with a strong hairline,
  * no shadow:
  * https://mobbin.com/screens/fe204312-8607-4018-b0dd-a36dc71f4978
  * https://mobbin.com/screens/faec9f03-a00c-4718-ab12-44a3053cdac3
@@ -43,16 +43,16 @@ function DockPanel({
   return (
     <section
       aria-label={title}
-      className="@container pointer-events-auto flex max-h-[50vh] w-85 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel"
+      className="@container pointer-events-auto flex max-h-[50vh] w-85 flex-col overflow-hidden rounded-md border border-hairline-strong bg-surface-1"
     >
-      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-line pr-1 pl-3">
-        <span className="flex text-muted">{icon}</span>
-        <h2 className="text-sm font-semibold">{title}</h2>
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline pr-1 pl-3">
+        <span className="flex text-fg-2">{icon}</span>
+        <h2 className="text-data font-semibold">{title}</h2>
         {extra}
         <span className="ml-auto">{status}</span>
         <Link
           to="/trackers"
-          className="flex h-6 items-center gap-1 rounded-md px-1 text-xs text-muted hover:bg-hover hover:text-fg"
+          className="flex h-6 items-center gap-1 rounded-sm px-1 text-label text-fg-2 hover:bg-surface-3 hover:text-fg-1"
           title="Open the Trackers page"
         >
           Trackers
@@ -84,7 +84,7 @@ function TradesDock() {
       icon={<Wallet className="icon-sm" />}
       extra={
         filtered ? (
-          <span className="flex text-dim" title="Live Trades filters from the Trackers page apply here">
+          <span className="flex text-fg-3" title="Live Trades filters from the Trackers page apply here">
             <ListFilter className="icon-sm" />
           </span>
         ) : null
@@ -94,7 +94,7 @@ function TradesDock() {
     >
       <div className="min-h-0 flex-1 overflow-y-auto" {...bind}>
         {shown.length === 0 ? (
-          <p className="px-3 py-3 text-sm text-dim">
+          <p className="px-3 py-3 text-data text-fg-3">
             {live.length === 0 ? "Waiting for tracked wallets to trade." : "No trades match the filters."}
           </p>
         ) : (
@@ -124,7 +124,7 @@ function SocialDock() {
     >
       <div className="min-h-0 flex-1 overflow-y-auto" {...bind}>
         {shown.length === 0 ? (
-          <p className="px-3 py-3 text-sm text-dim">{posts.length === 0 ? "Waiting for posts." : "No posts match your feed toggles."}</p>
+          <p className="px-3 py-3 text-data text-fg-3">{posts.length === 0 ? "Waiting for posts." : "No posts match your feed toggles."}</p>
         ) : (
           shown.map((post) => (
             <PostItem key={post.id} post={post} fresh={isFresh(post.id)} compact tracked={tracked.has(normalizeHandle(post.handle))} />

@@ -1,57 +1,84 @@
-import { Boxes, ChefHat, Crosshair, Crown, Ghost, type LucideIcon } from "lucide-react";
 import { memo } from "react";
+import { MetricTip } from "../../components/ui/bits";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { fmtPct } from "../../lib/format";
-import { METRICS, type MetricKey, riskTone, TONE_CHIP } from "../../lib/metrics";
+import { fmtRiskPct } from "../../lib/format";
+import { bandsText, RISK_LETTER, type RiskKey, riskTone, TONE_CHIP, TONE_TEXT } from "../../lib/metrics";
 import type { TokenRisk } from "../../protocol";
+import { useSettings } from "../../state/settings";
 
-const CHIPS: { key: "top10" | "dev" | "snipers" | "insiders" | "bundlers"; icon: LucideIcon; field: keyof TokenRisk }[] = [
-  { key: "top10", icon: Crown, field: "top10Pct" },
-  { key: "dev", icon: ChefHat, field: "devPct" },
-  { key: "snipers", icon: Crosshair, field: "snipersPct" },
-  { key: "insiders", icon: Ghost, field: "insidersPct" },
-  { key: "bundlers", icon: Boxes, field: "bundlersPct" },
+const CHIPS: { key: RiskKey; field: keyof TokenRisk; spoken: string }[] = [
+  { key: "top10", field: "top10Pct", spoken: "Top 10 holders" },
+  { key: "dev", field: "devPct", spoken: "Dev holdings" },
+  { key: "snipers", field: "snipersPct", spoken: "Snipers" },
+  { key: "insiders", field: "insidersPct", spoken: "Insiders" },
+  { key: "bundlers", field: "bundlersPct", spoken: "Bundlers" },
 ];
 
-function chipValue(v: number): string {
-  if (v > 0 && v < 1) return v.toFixed(1);
-  return String(Math.round(v));
-}
+const BAND_WORD = { good: "low", warn: "medium", bad: "high", neutral: "", unknown: "not computed yet" } as const;
 
 /**
- * Five holder-risk chips (Top 10, Dev, Snipers, Insiders, Bundlers). Colour = risk level only
- * (low / medium / high from lib/metrics thresholds); every chip carries its published definition.
- * Chip row anatomy after Binance Meme Rank cards: https://mobbin.com/screens/5fb08bd4-fd7c-4a78-8ca9-77bf63a3a1a8
+ * Five holder-risk chips T D S I B (DESIGN.md 4.5, bands per 3.11): 16px tall, min-width 40px,
+ * letter in text-3, value in the band colour. Low is unfilled, mid warn-tint, high sell-tint with
+ * a sell-edge border. "DS" when the dev sold everything; "–" before the metric is computed.
+ * Letters replace Axiom's icon metaphors; severity tints after Railway:
+ * https://mobbin.com/screens/ea8d53dc-8270-430d-bbdd-1df73b4ca531
+ *
+ * `letters="auto"` hides the letters in narrow Pulse columns (container under 424px), where the
+ * column shows a legend row instead.
  */
-export const RiskChips = memo(function RiskChips({ risk, colored = true }: { risk: TokenRisk; colored?: boolean }) {
+export const RiskChips = memo(function RiskChips({
+  risk,
+  colored = true,
+  letters = "always",
+  className,
+}: {
+  risk: TokenRisk | null;
+  colored?: boolean;
+  letters?: "always" | "auto";
+  className?: string;
+}) {
+  const thresholds = useSettings((s) => s.display.riskThresholds);
   return (
-    <div className="flex min-w-0 items-center gap-1">
-      {CHIPS.map(({ key, icon: Icon, field }) => {
-        const value = risk[field] as number;
-        const devSold = key === "dev" && risk.devSold;
-        const tone = devSold ? "neutral" : riskTone(key, value);
-        const def = METRICS[key as MetricKey];
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      {CHIPS.map(({ key, field, spoken }) => {
+        const raw = risk ? (risk[field] as number) : null;
+        const devSold = key === "dev" && !!risk?.devSold;
+        const tone = devSold ? "neutral" : riskTone(key, raw, thresholds);
+        const text = devSold ? "DS" : raw === null ? "–" : fmtRiskPct(raw);
+        const aria = devSold
+          ? `${spoken}: dev sold 100%`
+          : raw === null
+            ? `${spoken}: not computed yet`
+            : `${spoken} ${text.replace("%", " percent")}, ${BAND_WORD[tone]} risk`;
         return (
           <Tooltip
             key={key}
             content={
-              <span>
-                <span className="font-semibold">
-                  {def.label}: {devSold ? "dev sold everything" : fmtPct(value)}
-                </span>
-                <span className="mt-1 block text-muted">{def.definition}</span>
-              </span>
+              raw === null && !devSold ? (
+                "Computing (needs 3 slots)"
+              ) : (
+                <MetricTip
+                  metric={key}
+                  value={<span className={devSold ? "text-fg-2" : TONE_TEXT[tone]}>{devSold ? "Dev sold 100%" : text}</span>}
+                  bands={bandsText(key, thresholds)}
+                />
+              )
             }
           >
             <span
+              role="img"
+              aria-label={aria}
               className={cn(
-                "inline-flex h-4 items-center gap-px rounded-sm border px-1 text-2xs font-medium",
-                colored ? TONE_CHIP[tone] : "border-line bg-elev text-muted",
+                "inline-flex h-4 items-center justify-between gap-0.5 rounded-xs border px-[3px]",
+                letters === "auto" ? "min-w-[30px] @min-[424px]:min-w-10" : "min-w-10",
+                colored ? TONE_CHIP[tone] : "border-transparent bg-surface-3 text-fg-2",
               )}
             >
-              <Icon className="icon-xs hidden @sm:block" strokeWidth={2.25} />
-              {devSold ? "DS" : `${chipValue(value)}%`}
+              <span className={cn("text-micro font-medium text-fg-3", letters === "auto" && "hidden @min-[424px]:inline")}>
+                {RISK_LETTER[key]}
+              </span>
+              <span className="zf-num ml-auto text-label font-medium">{text}</span>
             </span>
           </Tooltip>
         );
@@ -59,3 +86,12 @@ export const RiskChips = memo(function RiskChips({ risk, colored = true }: { ris
     </div>
   );
 });
+
+/** Legend row for narrow cards (DESIGN.md 4.3): "T Top 10 · D Dev · S Snipers · I Insiders · B Bundlers". */
+export function RiskLegend({ className }: { className?: string }) {
+  return (
+    <div className={cn("flex h-5 items-center gap-1 px-2 text-micro text-fg-3", className)}>
+      T Top 10 · D Dev · S Snipers · I Insiders · B Bundlers
+    </div>
+  );
+}

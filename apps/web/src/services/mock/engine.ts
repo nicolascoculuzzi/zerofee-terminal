@@ -7,6 +7,8 @@
  * metrics, candles, the user's own fills and armed orders, and a fake social feed. It
  * speaks the provisional protocol in `src/protocol.ts` through `subscribe()`.
  */
+
+import { FINAL_STRETCH_EXIT, FINAL_STRETCH_PROGRESS } from "../../config";
 import type {
   ActivityItem,
   Candle,
@@ -71,8 +73,8 @@ const PULSE_EMIT_MS = 250;
 const DETAIL_EMIT_MS = 500;
 const SLOW_EMIT_MS = 1000;
 const PRUNE_MS = 5000;
-const FINAL_ENTER = 0.6;
-const FINAL_EXIT = 0.55;
+const FINAL_ENTER = FINAL_STRETCH_PROGRESS;
+const FINAL_EXIT = FINAL_STRETCH_EXIT;
 const MAX_NEW = 80;
 const MAX_FINAL = 36;
 const MAX_MIGRATED = 60;

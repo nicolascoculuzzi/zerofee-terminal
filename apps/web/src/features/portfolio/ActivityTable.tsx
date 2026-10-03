@@ -10,8 +10,8 @@ import { useLongList } from "./helpers";
 const KIND: Record<ActivityItem["kind"], { label: string; className: string }> = {
   buy: { label: "Buy", className: "text-buy" },
   sell: { label: "Sell", className: "text-sell" },
-  deposit: { label: "Deposit", className: "text-fg" },
-  withdraw: { label: "Withdraw", className: "text-fg" },
+  deposit: { label: "Deposit", className: "text-fg-1" },
+  withdraw: { label: "Withdraw", className: "text-fg-1" },
 };
 
 const ActivityRow = memo(function ActivityRow({
@@ -26,23 +26,23 @@ const ActivityRow = memo(function ActivityRow({
   const kind = KIND[item.kind];
   const trade = item.kind === "buy" || item.kind === "sell";
   return (
-    <tr data-index={index} ref={measure} className="h-row border-b border-line last:border-b-0 hover:bg-panel-2">
+    <tr data-index={index} ref={measure} className="h-row border-b border-hairline last:border-b-0 hover:bg-surface-2">
       <td className={cn("px-2 font-medium", kind.className)}>{kind.label}</td>
       <td className="truncate px-2">
         {item.mint ? (
-          <Link to={`/t/${item.mint}`} className="font-medium text-fg hover:underline">
+          <Link to={`/t/${item.mint}`} className="font-medium text-fg-1 hover:underline">
             {item.symbol ?? "Token"}
           </Link>
         ) : (
-          <span className="text-muted">SOL</span>
+          <span className="text-fg-2">SOL</span>
         )}
       </td>
       <td className="px-2 text-right">
-        {trade && item.tokenAmount !== null && <span className="mr-1 text-dim">{fmtTokens(item.tokenAmount)}</span>}
+        {trade && item.tokenAmount !== null && <span className="mr-1 text-fg-3">{fmtTokens(item.tokenAmount)}</span>}
         {fmtSol(item.solAmount)} SOL
       </td>
-      <td className="px-2 text-right">{item.marketCapUsd === null ? <span className="text-dim">—</span> : fmtUsd(item.marketCapUsd)}</td>
-      <td className="px-2 text-right text-muted" title={new Date(item.ts).toLocaleString()}>
+      <td className="px-2 text-right">{item.marketCapUsd === null ? <span className="text-fg-3">—</span> : fmtUsd(item.marketCapUsd)}</td>
+      <td className="px-2 text-right text-fg-2" title={new Date(item.ts).toLocaleString()}>
         <Age ts={item.ts} />
       </td>
       <td className="px-2 text-right">
@@ -62,7 +62,7 @@ export function ActivityTable({ items }: { items: ActivityItem[] }) {
   if (items.length === 0) return <EmptyState title="No activity yet." />;
   return (
     <div ref={list.scrollRef} className={cn("overflow-x-auto", list.virtual && "max-h-120 overflow-y-auto")}>
-      <table className="w-full min-w-152 table-fixed border-collapse text-xs">
+      <table className="w-full min-w-152 table-fixed border-collapse text-label">
         <colgroup>
           <col className="w-20" />
           <col />
@@ -71,8 +71,8 @@ export function ActivityTable({ items }: { items: ActivityItem[] }) {
           <col className="w-16" />
           <col className="w-16" />
         </colgroup>
-        <thead className={cn("text-2xs uppercase tracking-wide text-dim", list.virtual && "sticky top-0 z-10 bg-panel")}>
-          <tr className="h-row border-b border-line">
+        <thead className={cn("text-micro text-fg-3", list.virtual && "sticky top-0 z-10 bg-surface-1")}>
+          <tr className="h-row border-b border-hairline">
             <th scope="col" className="px-2 text-left font-medium">
               Type
             </th>

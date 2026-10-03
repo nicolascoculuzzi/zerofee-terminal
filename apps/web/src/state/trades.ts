@@ -18,6 +18,14 @@ export interface ClientTrade {
   status: "pending" | "confirmed" | "failed";
   receipt: TradeReceipt | null;
   error: string | null;
+  /** ms since the click at which each stage completed (toast line 2). */
+  stageAt?: Partial<Record<TradeStage, number>>;
+  /** Landing preset label for the landed line ("Reduced"). */
+  landing?: string;
+  /** SOL this buy would spend, for "0.50 SOL not spent" on failure. */
+  amountSol?: number;
+  /** Re-run the same trade (failed toasts offer Retry). */
+  retry?: () => void;
 }
 
 /** Local calendar day: the daily cap resets at the trader's midnight. */
@@ -32,7 +40,7 @@ export interface TradesState {
   lastLatencyStatus: "confirmed" | "failed" | null;
   daily: { day: string; spentSol: number };
   begin(trade: ClientTrade): void;
-  progress(id: string, stage: TradeStage): void;
+  progress(id: string, stage: TradeStage, atMs?: number): void;
   finish(id: string, receipt: TradeReceipt): void;
   fail(id: string, error: string): void;
   addSpend(sol: number): void;
@@ -49,8 +57,14 @@ export const useTrades = create<TradesState>()(
       begin(trade) {
         set((s) => ({ items: [trade, ...s.items].slice(0, 60) }));
       },
-      progress(id, stage) {
-        set((s) => ({ items: s.items.map((t) => (t.id === id && t.status === "pending" ? { ...t, stage } : t)) }));
+      progress(id, stage, atMs) {
+        set((s) => ({
+          items: s.items.map((t) =>
+            t.id === id && t.status === "pending"
+              ? { ...t, stage, stageAt: atMs === undefined ? t.stageAt : { ...t.stageAt, [stage]: atMs } }
+              : t,
+          ),
+        }));
       },
       finish(id, receipt) {
         set((s) => ({

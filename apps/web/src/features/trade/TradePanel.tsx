@@ -4,7 +4,7 @@ import { Button } from "../../components/ui/Button";
 import { Checkbox, NumberInput, Segmented } from "../../components/ui/controls";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn, uid } from "../../lib/cn";
-import { fmtPct, fmtPnlPct, fmtSignedSol, fmtSmall, fmtSol, fmtSolShort, fmtTokens, fmtUsd } from "../../lib/format";
+import { fmtPct, fmtPnlPct, fmtPriceText, fmtSignedSol, fmtSol, fmtSolShort, fmtTokens, fmtUsd } from "../../lib/format";
 import { quoteBuy, quoteSell } from "../../lib/quote";
 import { armMigration, armTpSl, buy, placeLimit, sell } from "../../lib/tradeActions";
 import type { TokenDetail } from "../../protocol";
@@ -34,9 +34,9 @@ interface LadderRow extends TpSlLeg {
 
 function Row({ label, children, tone }: { label: ReactNode; children: ReactNode; tone?: string }) {
   return (
-    <div className="flex items-center justify-between gap-2 text-xs">
-      <span className="text-dim">{label}</span>
-      <span className={cn("text-right", tone ?? "text-fg")}>{children}</span>
+    <div className="flex items-center justify-between gap-2 text-label">
+      <span className="text-fg-3">{label}</span>
+      <span className={cn("text-right", tone ?? "text-fg-1")}>{children}</span>
     </div>
   );
 }
@@ -82,8 +82,8 @@ function AmountPresets({
               type="button"
               onClick={() => onPick(v)}
               className={cn(
-                "h-6 rounded-md border text-xs font-medium",
-                activeValue === v ? "border-line-strong bg-elev text-fg" : "border-line text-muted hover:text-fg",
+                "h-6 rounded-sm border text-label font-medium",
+                activeValue === v ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
               )}
             >
               {unit === "SOL" ? fmtSolShort(v) : `${v}%`}
@@ -96,7 +96,7 @@ function AmountPresets({
         aria-label={editing ? "Done editing presets" : "Edit amount presets"}
         title={editing ? "Done" : "Edit presets"}
         onClick={() => setEditing((e) => !e)}
-        className="flex size-6 items-center justify-center rounded-md text-dim hover:bg-hover hover:text-fg"
+        className="flex size-6 items-center justify-center rounded-sm text-fg-3 hover:bg-surface-3 hover:text-fg-1"
       >
         {editing ? <Check className="icon-sm" /> : <Pencil className="icon-sm" />}
       </button>
@@ -114,27 +114,27 @@ function PositionStrip({ detail }: { detail: TokenDetail }) {
   const holding = position?.valueSol ?? 0;
   const pnl = (position?.realizedPnlSol ?? 0) + (position?.unrealizedPnlSol ?? 0);
   return (
-    <div className="grid grid-cols-4 border-t border-line">
+    <div className="grid grid-cols-4 border-t border-hairline">
       {[
         { label: "Bought", value: v(bought), tone: "text-buy" },
         { label: "Sold", value: v(sold), tone: "text-sell" },
-        { label: "Holding", value: v(holding), tone: "text-fg" },
+        { label: "Holding", value: v(holding), tone: "text-fg-1" },
       ].map((c) => (
-        <div key={c.label} className="flex flex-col items-center justify-center gap-1 border-r border-line py-2">
+        <div key={c.label} className="flex flex-col items-center justify-center gap-1 border-r border-hairline py-2">
           <span className="zf-label">{c.label}</span>
-          <span className={cn("text-sm font-medium", c.tone)}>{c.value}</span>
+          <span className={cn("text-data font-medium", c.tone)}>{c.value}</span>
         </div>
       ))}
       <button
         type="button"
         onClick={() => setUsd((u) => !u)}
-        className="flex flex-col items-center justify-center gap-1 py-2 hover:bg-hover"
+        className="flex flex-col items-center justify-center gap-1 py-2 hover:bg-surface-3"
         title="Toggle SOL / USD"
       >
         <span className="zf-label">PnL {usd ? "USD" : "SOL"}</span>
-        <span className={cn("text-sm font-medium", pnl >= 0 ? "text-buy" : "text-sell")}>
+        <span className={cn("text-data font-medium", pnl >= 0 ? "text-buy" : "text-sell")}>
           {usd ? fmtUsd(pnl * solUsd) : fmtSignedSol(pnl)}
-          <span className="ml-1 text-2xs">{fmtPnlPct(pnl, bought)}</span>
+          <span className="ml-1 text-micro">{fmtPnlPct(pnl, bought)}</span>
         </span>
       </button>
     </div>
@@ -265,15 +265,15 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
           ]}
           label="Side"
         />
-        <div className="flex border-b border-line">
+        <div className="flex border-b border-hairline">
           {(["market", "limit", "advanced"] as const).map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => setTab(t)}
               className={cn(
-                "-mb-px border-b-2 px-2 pb-2 text-sm font-medium capitalize",
-                tab === t ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
+                "-mb-px border-b-2 px-2 pb-2 text-data font-medium capitalize",
+                tab === t ? "border-fg-1 text-fg-1" : "border-transparent text-fg-2 hover:text-fg-1",
               )}
             >
               {t}
@@ -299,7 +299,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
             <NumberInput
               value={Number(limitValue.toPrecision(5))}
               onChange={setLimitFromValue}
-              prefix={<span className="text-xs">{trigger === "mc" ? "Target MC $" : "Target price"}</span>}
+              prefix={<span className="text-label">{trigger === "mc" ? "Target MC $" : "Target price"}</span>}
               suffix={trigger === "price" ? "SOL" : undefined}
               alignRight
               ariaLabel="Limit target"
@@ -322,10 +322,10 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
 
         {side === "buy" ? (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between text-label">
               <span className="zf-label">Amount</span>
-              <span className="text-dim">
-                Available <span className="text-fg">{fmtSol(available)} SOL</span>
+              <span className="text-fg-3">
+                Available <span className="text-fg-1">{fmtSol(available)} SOL</span>
               </span>
             </div>
             <NumberInput
@@ -348,10 +348,10 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between text-label">
               <span className="zf-label">Amount</span>
-              <span className="text-dim">
-                Holding <span className="text-fg">{fmtTokens(holding)}</span>
+              <span className="text-fg-3">
+                Holding <span className="text-fg-1">{fmtTokens(holding)}</span>
                 {position && position.valueSol > 0 && <span> · {fmtSol(position.valueSol)} SOL</span>}
               </span>
             </div>
@@ -383,7 +383,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
               <button
                 type="button"
                 onClick={() => setLadder((l) => [...l, { id: uid("leg"), kind: "take_profit", triggerPct: 50, sellPct: 25 }])}
-                className="flex items-center gap-1 text-xs text-muted hover:text-fg"
+                className="flex items-center gap-1 text-label text-fg-2 hover:text-fg-1"
               >
                 <Plus className="icon-xs" /> Add level
               </button>
@@ -404,7 +404,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
                 <NumberInput
                   value={row.triggerPct}
                   onChange={(v) => setLadder((l) => l.map((x) => (x.id === row.id ? { ...x, triggerPct: v ?? 0 } : x)))}
-                  prefix={<span className="text-2xs">{row.kind === "take_profit" ? "+" : "−"}</span>}
+                  prefix={<span className="text-micro">{row.kind === "take_profit" ? "+" : "−"}</span>}
                   suffix="%"
                   min={0}
                   alignRight
@@ -414,7 +414,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
                 <NumberInput
                   value={row.sellPct}
                   onChange={(v) => setLadder((l) => l.map((x) => (x.id === row.id ? { ...x, sellPct: v ?? 0 } : x)))}
-                  prefix={<span className="text-2xs">sell</span>}
+                  prefix={<span className="text-micro">sell</span>}
                   suffix="%"
                   min={0}
                   max={100}
@@ -426,7 +426,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
                   type="button"
                   aria-label="Remove level"
                   onClick={() => setLadder((l) => l.filter((x) => x.id !== row.id))}
-                  className="flex size-6 items-center justify-center text-dim hover:text-sell"
+                  className="flex size-6 items-center justify-center text-fg-3 hover:text-sell"
                 >
                   <Trash2 className="icon-sm" />
                 </button>
@@ -453,11 +453,11 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
                 />
               </div>
             )}
-            <p className="text-2xs text-dim">Exits are pre-signed on durable nonces and run with this tab closed.</p>
+            <p className="text-micro text-fg-3">Exits are pre-signed on durable nonces and run with this tab closed.</p>
           </div>
         )}
 
-        <div className="space-y-1 rounded-md border border-line bg-panel-2 p-2">
+        <div className="space-y-1 rounded-sm border border-hairline bg-surface-2 p-2">
           {side === "buy" ? (
             <>
               <Row label="You receive">{buyQuote ? `≈ ${fmtTokens(buyQuote.tokens)} ${token.symbol}` : "–"}</Row>
@@ -482,7 +482,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
           <Row
             label={
               <Tooltip content="zerofee charges no platform fee. Venue fees go to the launchpad or AMM; tips and priority fees go to the network.">
-                <span className="cursor-help underline decoration-line-strong decoration-dotted underline-offset-2">Platform fee</span>
+                <span className="cursor-help underline decoration-hairline-strong decoration-dotted underline-offset-2">Platform fee</span>
               </Tooltip>
             }
             tone="text-buy"
@@ -512,7 +512,7 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
         {tab === "limit" && (
           <Button variant={ctaVariant} size="lg" className="w-full" disabled={!amountValid || busy} onClick={() => void submitLimit()}>
             {busy && <LoaderCircle className="icon-sm animate-spin" />}
-            {side === "buy" ? "Buy" : "Sell"} @ {trigger === "mc" ? `${fmtUsd(limitValue)} MC` : `${fmtSmall(limitValue)} SOL`}
+            {side === "buy" ? "Buy" : "Sell"} @ {trigger === "mc" ? `${fmtUsd(limitValue)} MC` : `${fmtPriceText(limitValue)} SOL`}
           </Button>
         )}
         {tab === "advanced" && (
@@ -534,13 +534,13 @@ export function TradePanel({ detail }: { detail: TokenDetail }) {
               </Button>
             )}
             {holding > 0 && legs.length > 0 && (
-              <Button variant="outline" size="md" className="w-full" disabled={busy} onClick={() => void armOnPosition()}>
-                Arm ladder on current position (entry {fmtSmall(position?.avgEntryPriceSol ?? 0)} SOL)
+              <Button variant="secondary" size="md" className="w-full" disabled={busy} onClick={() => void armOnPosition()}>
+                Arm ladder on current position (entry {fmtPriceText(position?.avgEntryPriceSol ?? 0)} SOL)
               </Button>
             )}
           </div>
         )}
-        <p className="text-2xs text-dim">
+        <p className="text-micro text-fg-3">
           {mode === "instant"
             ? "Instant mode: the trading wallet in this browser signs, no popup."
             : "Direct mode: approve each trade in your connected wallet."}

@@ -82,8 +82,8 @@ export function BackupStep({
         </StepFooter>
       }
     >
-      <div className="rounded-lg border border-line">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
+      <div className="rounded-md border border-hairline">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-3 py-2">
           <Chip tone="warn">MOCK backup: not a real key</Chip>
           <div className="flex items-center gap-1">
             <Button
@@ -108,12 +108,12 @@ export function BackupStep({
         </div>
         <ol aria-label={`Backup for ${wallet.label}`} className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3">
           {words.map((w) => (
-            <li key={w.n} className="flex h-7 items-center gap-2 rounded-md border border-line bg-bg px-2 text-sm">
-              <span className="w-5 text-right font-mono text-xs text-dim">{w.n}</span>
+            <li key={w.n} className="flex h-7 items-center gap-2 rounded-sm border border-hairline bg-bg px-2 text-data">
+              <span className="w-5 text-right font-mono text-label text-fg-3">{w.n}</span>
               {revealed ? (
-                <span className="font-mono text-fg">{w.word}</span>
+                <span className="font-mono text-fg-1">{w.word}</span>
               ) : (
-                <span className="font-mono text-dim">
+                <span className="font-mono text-fg-3">
                   <span aria-hidden="true">•••••</span>
                   <span className="sr-only">Hidden</span>
                 </span>
@@ -121,11 +121,11 @@ export function BackupStep({
             </li>
           ))}
         </ol>
-        {!revealed && <div className="px-3 pb-3 text-xs text-dim">Hidden. Check that nobody can see your screen, then reveal.</div>}
+        {!revealed && <div className="px-3 pb-3 text-label text-fg-3">Hidden. Check that nobody can see your screen, then reveal.</div>}
       </div>
 
       {backedUp ? (
-        <div className="flex items-center gap-2 text-sm text-fg">
+        <div className="flex items-center gap-2 text-data text-fg-1">
           <CircleCheck className="icon-sm text-buy" /> Backup confirmed.
         </div>
       ) : (
@@ -142,7 +142,7 @@ export function BackupStep({
               onChange={(e) => setAnswer(e.target.value)}
             />
             {answer.trim() !== "" && (
-              <div className={cn("mt-1 flex items-center gap-1 text-xs", correct ? "text-buy" : "text-dim")}>
+              <div className={cn("mt-1 flex items-center gap-1 text-label", correct ? "text-buy" : "text-fg-3")}>
                 {correct ? (
                   <>
                     <Check className="icon-xs" /> Correct

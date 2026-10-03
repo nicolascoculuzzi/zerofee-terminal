@@ -98,20 +98,20 @@ export function WithdrawalsTab() {
         </div>
         <div className="flex items-center gap-2 px-3 py-2">
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-fg">
+            <div className="flex flex-wrap items-center gap-2 text-data text-fg-1">
               Connected wallet
               <Chip>Default</Chip>
             </div>
             {connected ? (
-              <div className="flex items-center gap-1 font-mono text-xs text-muted">
+              <div className="flex items-center gap-1 font-mono text-label text-fg-2">
                 {PROVIDER_NAME[connected.provider]} {shortAddr(connected.address, 6, 6)}
                 <CopyButton text={connected.address} label="Copy connected wallet address" />
               </div>
             ) : (
-              <div className="text-xs text-dim">No wallet connected</div>
+              <div className="text-label text-fg-3">No wallet connected</div>
             )}
           </div>
-          <span className="w-32 text-right text-sm text-buy">{connected ? "Instant" : "—"}</span>
+          <span className="w-32 text-right text-data text-buy">{connected ? "Instant" : "—"}</span>
           <span className="w-6" />
         </div>
         {destinations.map((d) => {
@@ -119,24 +119,24 @@ export function WithdrawalsTab() {
           return (
             <div key={d.id} className="flex items-center gap-2 px-3 py-2">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-fg">{d.label}</div>
-                <div className="flex items-center gap-1 font-mono text-xs text-muted">
+                <div className="truncate text-data text-fg-1">{d.label}</div>
+                <div className="flex items-center gap-1 font-mono text-label text-fg-2">
                   {shortAddr(d.address, 6, 6)}
                   <CopyButton text={d.address} label={`Copy ${d.label} address`} />
-                  <span className="font-sans text-dim">· added {fmtDate(d.addedAt)}</span>
+                  <span className="font-sans text-fg-3">· added {fmtDate(d.addedAt)}</span>
                 </div>
               </div>
               {pending ? (
                 <span
                   title="Pending: usable after the 24 h delay"
-                  className="flex w-32 items-center justify-end gap-1 text-right text-sm text-warn"
+                  className="flex w-32 items-center justify-end gap-1 text-right text-data text-warn"
                 >
                   <Clock className="icon-sm" />
                   <span className="sr-only">Pending, usable</span>
                   in <span className="font-mono">{fmtCountdown(d.activeAt - now)}</span>
                 </span>
               ) : (
-                <span className="w-32 text-right text-sm text-buy">Active</span>
+                <span className="w-32 text-right text-data text-buy">Active</span>
               )}
               <IconButton label={`Remove ${d.label}`} onClick={() => remove(d.id, d.label)}>
                 <Trash2 className="icon-sm" />
@@ -144,7 +144,7 @@ export function WithdrawalsTab() {
             </div>
           );
         })}
-        {destinations.length === 0 && <div className="px-3 py-2 text-xs text-dim">No other destinations.</div>}
+        {destinations.length === 0 && <div className="px-3 py-2 text-label text-fg-3">No other destinations.</div>}
       </Group>
 
       <Group title="Add a destination" description="Needs a signature from your connected wallet, then a 24-hour delay.">
@@ -178,13 +178,13 @@ export function WithdrawalsTab() {
             </Field>
           </div>
           {addressError && (
-            <div id="zf-wd-address-error" className="text-xs text-sell">
+            <div id="zf-wd-address-error" className="text-label text-sell">
               {addressError}
             </div>
           )}
-          {error && <div className="text-xs text-sell">{error}</div>}
+          {error && <div className="text-label text-sell">{error}</div>}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs text-dim">
+            <span className="text-label text-fg-3">
               {connected ? "Your wallet will ask you to sign. It's not a transaction." : "Connect a wallet first."}
             </span>
             <Button type="submit" size="sm" variant="primary" disabled={!canSubmit}>

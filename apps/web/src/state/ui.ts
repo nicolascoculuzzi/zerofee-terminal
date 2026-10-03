@@ -12,6 +12,8 @@ export interface UiState {
   fundOpen: boolean;
   fundTab: FundTab;
   hotkeysHelpOpen: boolean;
+  /** Global Panic confirm (hold-to-confirm). */
+  panicOpen: boolean;
   unlock: { open: boolean; reason: string; onUnlocked: (() => void) | null };
   approval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
   /** Token under the cursor on Pulse (target for Space+1..4 buys). */
@@ -26,6 +28,8 @@ export interface UiState {
   openFund(tab?: FundTab): void;
   closeFund(): void;
   setHotkeysHelp(open: boolean): void;
+  openPanic(): void;
+  closePanic(): void;
   requestUnlock(reason: string, onUnlocked?: () => void): void;
   closeUnlock(): void;
   setApproval(approval: UiState["approval"]): void;
@@ -43,6 +47,7 @@ export const useUi = create<UiState>()((set, get) => ({
   fundOpen: false,
   fundTab: "fund",
   hotkeysHelpOpen: false,
+  panicOpen: false,
   unlock: { open: false, reason: "", onUnlocked: null },
   approval: null,
   hoverMint: null,
@@ -55,6 +60,8 @@ export const useUi = create<UiState>()((set, get) => ({
   openFund: (tab = "fund") => set({ fundOpen: true, fundTab: tab }),
   closeFund: () => set({ fundOpen: false }),
   setHotkeysHelp: (open) => set({ hotkeysHelpOpen: open }),
+  openPanic: () => set({ panicOpen: true }),
+  closePanic: () => set({ panicOpen: false }),
   requestUnlock: (reason, onUnlocked) => set({ unlock: { open: true, reason, onUnlocked: onUnlocked ?? null } }),
   closeUnlock: () => set({ unlock: { open: false, reason: "", onUnlocked: null } }),
   setApproval: (approval) => set({ approval }),

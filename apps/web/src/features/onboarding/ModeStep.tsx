@@ -44,14 +44,14 @@ export function ModeStep({
             checked={mode === m}
             onSelect={() => onMode(m)}
             title={MODE_INFO[m].label}
-            meta={<span className="text-xs text-dim">{MODE_META[m]}</span>}
+            meta={<span className="text-label text-fg-3">{MODE_META[m]}</span>}
           >
-            <span className="block text-fg">{MODE_INFO[m].summary}</span>
+            <span className="block text-fg-1">{MODE_INFO[m].summary}</span>
             <span className="block">{MODE_INFO[m].detail}</span>
           </RadioCard>
         ))}
       </fieldset>
-      <p className="text-xs text-dim">
+      <p className="text-label text-fg-3">
         {walletLabel} becomes your active trading wallet. Switch modes any time from the top bar or Settings, Trading.
       </p>
     </StepPanel>

@@ -114,7 +114,7 @@ function WalletSearch({ onSubmit }: { onSubmit: (address: string) => void }) {
   return (
     <form onSubmit={submit} className="flex min-w-0 flex-1 flex-col gap-1 sm:w-72 sm:flex-none">
       <div className="relative">
-        <Search className="icon-sm pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-dim" />
+        <Search className="icon-sm pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-fg-3" />
         <input
           type="text"
           enterKeyHint="search"
@@ -131,7 +131,7 @@ function WalletSearch({ onSubmit }: { onSubmit: (address: string) => void }) {
           className={cn("zf-input pl-8", invalid && "border-sell")}
         />
       </div>
-      {invalid && <p className="text-xs text-sell">Not a valid Solana address.</p>}
+      {invalid && <p className="text-label text-sell">Not a valid Solana address.</p>}
     </form>
   );
 }
@@ -144,12 +144,12 @@ function TabButton({ active, onClick, count, children }: { active: boolean; onCl
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "inline-flex h-6 items-center gap-1 rounded-md px-2 text-sm font-medium transition-colors",
-        active ? "bg-elev text-fg" : "text-muted hover:text-fg",
+        "inline-flex h-6 items-center gap-1 rounded-sm px-2 text-data font-medium transition-colors",
+        active ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:text-fg-1",
       )}
     >
       {children}
-      <span className="text-xs font-normal text-dim">{fmtCount(count)}</span>
+      <span className="text-label font-normal text-fg-3">{fmtCount(count)}</span>
     </button>
   );
 }
@@ -189,8 +189,8 @@ function PositionsSection({ positions, solUsd, own }: { positions: Position[]; s
   else empty = `Only dust positions under ${DUST_SOL} SOL. Turn on Show hidden to see them.`;
 
   return (
-    <section className="min-w-0 rounded-lg border border-line bg-panel">
-      <div className="flex min-h-8 flex-wrap items-center gap-2 border-b border-line px-3 py-1">
+    <section className="min-w-0 rounded-md border border-hairline bg-surface-1">
+      <div className="flex min-h-8 flex-wrap items-center gap-2 border-b border-hairline px-3 py-1">
         <div role="tablist" aria-label="Positions" className="flex items-center gap-1">
           <TabButton active={tab === "active"} onClick={() => setTab("active")} count={active.length}>
             Active Positions
@@ -207,13 +207,13 @@ function PositionsSection({ positions, solUsd, own }: { positions: Position[]; s
               onClick={() => setShowHidden((v) => !v)}
               title={`Positions worth less than ${DUST_SOL} SOL are hidden by default`}
               className={cn(
-                "inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs transition-colors",
-                showHidden ? "bg-elev text-fg" : "text-muted hover:text-fg",
+                "inline-flex h-6 items-center gap-1 rounded-sm px-2 text-label transition-colors",
+                showHidden ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:text-fg-1",
               )}
             >
               {showHidden ? <Eye className="icon-sm" /> : <EyeOff className="icon-sm" />}
               Show hidden
-              {hidden > 0 && <span className="text-dim">{fmtCount(hidden)}</span>}
+              {hidden > 0 && <span className="text-fg-3">{fmtCount(hidden)}</span>}
             </button>
           )}
           <Segmented<Currency>
@@ -270,7 +270,10 @@ function PortfolioBody({
         <PerformancePanel positions={status.positions} activity={activity} solUsd={solUsd} range={range} />
       </div>
       <PositionsSection positions={status.positions} solUsd={solUsd} own={own} />
-      <Panel title="Activity" extra={activity.length > 0 && <span className="text-xs text-dim">Latest {fmtCount(activity.length)}</span>}>
+      <Panel
+        title="Activity"
+        extra={activity.length > 0 && <span className="text-label text-fg-3">Latest {fmtCount(activity.length)}</span>}
+      >
         <ActivityTable items={activity} />
       </Panel>
     </>
@@ -278,7 +281,7 @@ function PortfolioBody({
 }
 
 function Notice({ children }: { children: ReactNode }) {
-  return <div className="rounded-lg border border-line bg-panel">{children}</div>;
+  return <div className="rounded-md border border-hairline bg-surface-1">{children}</div>;
 }
 
 export default function PortfolioPage() {
@@ -318,7 +321,7 @@ export default function PortfolioPage() {
           title="No trading wallet yet."
           body="Search any wallet above, or"
           action={
-            <Link to="/onboarding" className="text-fg underline underline-offset-2">
+            <Link to="/onboarding" className="text-fg-1 underline underline-offset-2">
               set one up
             </Link>
           }
@@ -342,21 +345,21 @@ export default function PortfolioPage() {
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="inline-flex h-6 items-center rounded-md bg-elev px-2 text-sm font-medium text-fg">Spot</span>
+            <span className="inline-flex h-6 items-center rounded-sm bg-surface-3 px-2 text-data font-medium text-fg-1">Spot</span>
             {viewing ? (
               <>
-                <h1 className="flex min-w-0 items-center gap-1 text-lg font-semibold">
+                <h1 className="flex min-w-0 items-center gap-1 text-title font-semibold">
                   Viewing
                   <span className="font-mono" title={param}>
                     {shortAddr(param, 4, 4)}
                   </span>
                   <CopyButton text={param} label="Copy wallet address" />
                 </h1>
-                {(ownViewed || trackedName) && <span className="truncate text-sm text-muted">{ownViewed?.label ?? trackedName}</span>}
+                {(ownViewed || trackedName) && <span className="truncate text-data text-fg-2">{ownViewed?.label ?? trackedName}</span>}
                 {ownViewed && (
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     onClick={() => {
                       setActive(ownViewed.address);
                       setParams({});
@@ -365,15 +368,15 @@ export default function PortfolioPage() {
                     Make active
                   </Button>
                 )}
-                <Link to="/portfolio" className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
+                <Link to="/portfolio" className="inline-flex items-center gap-1 text-data text-fg-2 hover:text-fg-1">
                   <ArrowLeft className="icon-sm" />
                   {activeAddress ? "Back to my wallet" : "Clear"}
                 </Link>
               </>
             ) : (
-              <h1 className="flex min-w-0 items-baseline gap-2 text-lg font-semibold">
+              <h1 className="flex min-w-0 items-baseline gap-2 text-title font-semibold">
                 Your holdings
-                {activeLabel && <span className="truncate text-sm font-normal text-muted">{activeLabel}</span>}
+                {activeLabel && <span className="truncate text-data font-normal text-fg-2">{activeLabel}</span>}
               </h1>
             )}
           </div>

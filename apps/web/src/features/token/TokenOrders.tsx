@@ -9,7 +9,7 @@ export function TokenOrders({ mint }: { mint: string }) {
   return (
     <div className="h-full overflow-auto">
       {orders.length === 0 ? (
-        <div className="px-3 py-4 text-sm text-dim">No orders on this token. Use the Limit or Advanced tab to arm one.</div>
+        <div className="px-3 py-4 text-data text-fg-3">No orders on this token. Use the Limit or Advanced tab to arm one.</div>
       ) : (
         <OrdersList orders={orders} compact />
       )}

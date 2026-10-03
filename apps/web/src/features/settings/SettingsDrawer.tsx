@@ -79,12 +79,12 @@ export default function SettingsDrawer() {
   };
 
   return (
-    <Drawer open={open} onClose={close} title="Settings" width={640}>
+    <Drawer open={open} onClose={close} title="Settings" width={720}>
       <div className="flex h-full min-h-0 flex-col sm:flex-row">
         <div
           role="tablist"
           aria-label="Settings sections"
-          className="flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 sm:w-36 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0"
+          className="flex shrink-0 gap-1 overflow-x-auto border-b border-hairline p-2 sm:w-36 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0"
         >
           {TABS.map((t, i) => {
             const active = t.id === tab;
@@ -104,8 +104,8 @@ export default function SettingsDrawer() {
                 onClick={() => openSettings(t.id)}
                 onKeyDown={(e) => onTabKeyDown(e, i)}
                 className={cn(
-                  "flex h-7 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-2 text-sm transition-colors",
-                  active ? "bg-elev text-fg" : "text-muted hover:bg-hover hover:text-fg",
+                  "flex h-7 shrink-0 items-center gap-2 whitespace-nowrap rounded-sm px-2 text-data transition-colors",
+                  active ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:bg-surface-3 hover:text-fg-1",
                 )}
               >
                 <Icon className="icon-md" />

@@ -41,24 +41,24 @@ const TradeRow = memo(function TradeRow({
   return (
     <div
       className={cn(
-        "grid h-row items-center gap-2 border-b border-line px-3 text-xs hover:bg-panel-2",
+        "grid h-row items-center gap-2 border-b border-hairline px-3 text-label hover:bg-surface-2",
         flash,
-        trade.tags.includes("you") && "bg-fg/5",
+        trade.tags.includes("you") && "bg-fg-1/5",
       )}
       style={{ gridTemplateColumns: template(COLS) }}
     >
-      <span className="text-muted" title={fmtClock(trade.ts)}>
+      <span className="text-fg-2" title={fmtClock(trade.ts)}>
         <Age ts={trade.ts} />
       </span>
       <span className={cn("font-medium", buy ? "text-buy" : "text-sell")}>{buy ? "Buy" : "Sell"}</span>
       <span className="text-right">{fmtUsd(trade.marketCapUsd)}</span>
-      <span className="text-right text-muted">{fmtTokens(trade.tokenAmount)}</span>
+      <span className="text-right text-fg-2">{fmtTokens(trade.tokenAmount)}</span>
       <span className={cn("text-right font-medium", buy ? "text-buy" : "text-sell")}>{fmtSol(trade.solAmount)}</span>
       <span className="flex min-w-0 items-center gap-1">
         <button
           type="button"
           onClick={() => onMaker(trade.maker)}
-          className="truncate font-mono text-muted hover:text-fg"
+          className="truncate font-mono text-fg-2 hover:text-fg-1"
           title="Filter trades by this maker"
         >
           {shortAddr(trade.maker, 4, 4)}
@@ -107,7 +107,7 @@ export function TradesTable() {
     [trades, minSol, maker, candle, kind, tracked],
   );
 
-  const rowH = cssPx("--zf-row-h", 28);
+  const rowH = cssPx("--zf-row", 28);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -118,7 +118,7 @@ export function TradesTable() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line px-3">
+      <div className="flex h-9 shrink-0 flex-wrap items-center gap-2 border-b border-hairline px-3">
         <Segmented<MakerKind>
           size="xs"
           value={kind}
@@ -138,7 +138,10 @@ export function TradesTable() {
               type="button"
               aria-pressed={minSol === v}
               onClick={() => setMinSol(minSol === v ? null : v)}
-              className={cn("h-5 rounded-sm px-2 text-2xs font-medium", minSol === v ? "bg-elev text-fg" : "text-muted hover:text-fg")}
+              className={cn(
+                "h-5 rounded-xs px-2 text-micro font-medium",
+                minSol === v ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:text-fg-1",
+              )}
             >
               ≥{v} SOL
             </button>
@@ -156,7 +159,7 @@ export function TradesTable() {
           <button
             type="button"
             onClick={() => setMaker(null)}
-            className="flex h-5 items-center gap-1 rounded-sm border border-line-strong px-2 text-2xs text-fg"
+            className="flex h-5 items-center gap-1 rounded-xs border border-hairline-strong px-2 text-micro text-fg-1"
           >
             Maker {shortAddr(maker, 4, 4)}
             <X className="icon-xs" />
@@ -166,19 +169,19 @@ export function TradesTable() {
           <button
             type="button"
             onClick={() => setCandle(null)}
-            className="flex h-5 items-center gap-1 rounded-sm border border-line-strong px-2 text-2xs text-fg"
+            className="flex h-5 items-center gap-1 rounded-xs border border-hairline-strong px-2 text-micro text-fg-1"
           >
             Candle {fmtClock(candle.from * 1000)}
             <X className="icon-xs" />
           </button>
         )}
-        <span className="ml-auto text-2xs text-dim">{rows.length} trades</span>
+        <span className="ml-auto text-micro text-fg-3">{rows.length} trades</span>
       </div>
       <section ref={scrollRef} className="min-h-0 flex-1 overflow-auto" aria-label="Trades">
         <div className="min-w-160">
           <TableHead cols={COLS} />
           {rows.length === 0 ? (
-            <div className="px-3 py-4 text-sm text-dim">No trades match these filters.</div>
+            <div className="px-3 py-4 text-data text-fg-3">No trades match these filters.</div>
           ) : (
             <div className="relative" style={{ height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((item) => {

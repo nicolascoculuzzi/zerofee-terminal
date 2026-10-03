@@ -15,7 +15,7 @@ function Item({ icon, children, onClick, danger }: { icon: ReactNode; children: 
         e.stopPropagation();
         onClick();
       }}
-      className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-hover ${danger ? "text-sell" : "text-fg"}`}
+      className={`flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-data hover:bg-surface-3 ${danger ? "text-sell" : "text-fg-1"}`}
     >
       {icon}
       {children}
@@ -48,7 +48,7 @@ export function TokenMenu({ token }: { token: TokenSummary }) {
           e.stopPropagation();
           setOpen((o) => !o);
         }}
-        className="flex size-4 items-center justify-center rounded-sm text-dim hover:text-fg"
+        className="flex size-4 items-center justify-center rounded-xs text-fg-3 hover:text-fg-1"
       >
         <MoreHorizontal className="icon-sm" />
       </button>
@@ -81,7 +81,7 @@ export function TokenMenu({ token }: { token: TokenSummary }) {
           >
             {watched ? "Remove from watchlist" : "Add to watchlist"}
           </Item>
-          <div className="my-1 h-px bg-line" />
+          <div className="my-1 h-px bg-hairline" />
           <Item danger icon={<Ban className="icon-sm" />} onClick={() => blacklist("tokens", token.mint, `$${token.symbol}`)}>
             Blacklist token
           </Item>

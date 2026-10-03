@@ -1,14 +1,14 @@
-import { Check, Copy } from "lucide-react";
+import { ArrowBigUp, Check, Command, Copy, Minus, Option } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { parseAmount } from "../../lib/format";
-import { bindingLabel } from "../../lib/hotkeys";
+import { bindingLabel, IS_MAC } from "../../lib/hotkeys";
 
 // ---------------------------------------------------------------------------
-// Segmented control
-// Anatomy: Coinbase Advanced order-type chips and Buy/Sell toggle; neutral active state,
-// green/red only for the Buy/Sell switch. https://mobbin.com/screens/ff785484-4dd2-4fc0-a5f4-658e033b3b08
+// Segmented control (DESIGN.md 4.8): transparent container with a hairline-strong border,
+// active segment on surface-3. Tones: neutral, or buy/sell for the side switch only.
+// Side-tinted Buy/Sell after Binance: https://mobbin.com/screens/14a47c59-4122-498b-ab2e-4ff6d611c85c
 // ---------------------------------------------------------------------------
 
 export interface SegmentedOption<T extends string> {
@@ -21,7 +21,8 @@ export interface SegmentedProps<T extends string> {
   value: T;
   onChange: (value: T) => void;
   options: SegmentedOption<T>[];
-  size?: "xs" | "sm";
+  /** xs: 20px (14px segments) · sm: 24px (18px segments) · side: 28px Buy | Sell. */
+  size?: "xs" | "sm" | "side";
   className?: string;
   /** Colour the active segment: only for buy/sell switches. */
   tone?: (value: T) => "buy" | "sell" | "neutral";
@@ -29,27 +30,56 @@ export interface SegmentedProps<T extends string> {
 }
 
 export function Segmented<T extends string>({ value, onChange, options, size = "sm", className, tone, label }: SegmentedProps<T>) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const move = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = options.findIndex((o) => o.value === value);
+    let next = -1;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (i + 1) % options.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (i - 1 + options.length) % options.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = options.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    const o = options[next];
+    if (o) {
+      onChange(o.value);
+      refs.current[next]?.focus();
+    }
+  };
   return (
-    <div role="radiogroup" aria-label={label} className={cn("inline-flex rounded-md border border-line bg-bg p-px", className)}>
-      {options.map((o) => {
+    <div
+      role="radiogroup"
+      aria-label={label}
+      onKeyDown={move}
+      className={cn(
+        "inline-flex items-center gap-px rounded-sm border border-hairline-strong p-0.5",
+        size === "xs" ? "h-5" : size === "side" ? "h-7" : "h-6",
+        className,
+      )}
+    >
+      {options.map((o, i) => {
         const active = o.value === value;
         const t = active ? (tone?.(o.value) ?? "neutral") : null;
         return (
           // biome-ignore lint/a11y/useSemanticElements: compact segmented radio built from buttons
           <button
             key={o.value}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
             type="button"
             role="radio"
             aria-checked={active}
+            tabIndex={active ? 0 : -1}
             title={o.title}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex-1 whitespace-nowrap rounded-sm font-medium transition-colors",
-              size === "xs" ? "h-5 px-2 text-2xs" : "h-6 px-2 text-xs",
-              !active && "text-muted hover:text-fg",
-              t === "neutral" && "bg-elev text-fg",
-              t === "buy" && "bg-buy/15 text-buy",
-              t === "sell" && "bg-sell/15 text-sell",
+              "focus-inset flex h-full flex-1 items-center justify-center rounded-xs px-2 font-medium whitespace-nowrap transition-colors",
+              size === "xs" ? "text-micro" : size === "side" ? "text-data" : "text-label",
+              !active && "text-fg-3 hover:text-fg-1",
+              t === "neutral" && "bg-surface-3 text-fg-1",
+              t === "buy" && "bg-buy-tint text-buy",
+              t === "sell" && "bg-sell-tint text-sell",
             )}
           >
             {o.label}
@@ -61,8 +91,9 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
 }
 
 // ---------------------------------------------------------------------------
-// Number input (keeps the raw string while typing). Label-left / value-right variant
-// follows Coinbase Advanced's order inputs ("LIMIT PRICE ... 70462.56 USDC").
+// Number input (DESIGN.md 4.23 and 4.7): surface-2, hairline-strong, 4px radius, numbers
+// right-aligned with a text-3 unit suffix, 2px focus ring outside. Keeps the raw string while
+// typing; accepts "1.5", "1,5" and "2k". Up/Down step (Shift x10) when `step` is set.
 // ---------------------------------------------------------------------------
 
 export interface NumberInputProps {
@@ -79,9 +110,14 @@ export interface NumberInputProps {
   ariaLabel?: string;
   autoFocus?: boolean;
   disabled?: boolean;
-  /** Right-align the value (order-form style). */
+  /** Right-align the value (default: numbers are right-aligned). */
   alignRight?: boolean;
   id?: string;
+  /** control: 24/28px · amount: 32/36px (44 on mobile) with a 14px value. */
+  size?: "control" | "amount";
+  invalid?: boolean;
+  /** Arrow-key step; a function lets the step depend on the value (0.01 below 1 SOL, 0.1 above). */
+  step?: number | ((value: number) => number);
 }
 
 function display(v: number | null): string {
@@ -103,42 +139,51 @@ export function NumberInput({
   ariaLabel,
   autoFocus,
   disabled,
-  alignRight,
+  alignRight = true,
   id,
+  size = "control",
+  invalid,
+  step,
 }: NumberInputProps) {
   const [text, setText] = useState(display(value));
   const focused = useRef(false);
   useEffect(() => {
     if (!focused.current) setText(display(value));
   }, [value]);
-  const commit = (raw: string) => {
-    const n = parseAmount(raw);
-    if (n === null) {
-      onChange(null);
-      return;
-    }
+  const clamp = (n: number) => {
     let v = n;
     if (min !== undefined) v = Math.max(min, v);
     if (max !== undefined) v = Math.min(max, v);
-    onChange(v);
+    return v;
+  };
+  const commit = (raw: string) => {
+    const n = parseAmount(raw);
+    onChange(n === null ? null : clamp(n));
   };
   return (
     <div
       className={cn(
-        "flex h-7 items-center gap-1 rounded-md border border-line-strong bg-bg px-2 text-sm focus-within:border-accent",
-        disabled && "opacity-50",
+        "flex items-center gap-1 rounded-sm border bg-surface-2 px-2 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus",
+        size === "amount" ? "h-8 text-amount font-medium in-data-[density=comfortable]:h-9 max-md:h-11" : "h-control text-data",
+        invalid ? "border-sell" : "border-hairline-strong",
+        disabled && "bg-surface-1 text-fg-4",
         className,
       )}
     >
-      {prefix && <span className="flex shrink-0 items-center text-dim">{prefix}</span>}
+      {prefix && <span className="flex shrink-0 items-center text-fg-3 [&_svg]:size-3">{prefix}</span>}
       <input
         id={id}
         inputMode="decimal"
         aria-label={ariaLabel}
+        aria-invalid={invalid || undefined}
         disabled={disabled}
         // biome-ignore lint/a11y/noAutofocus: used only inside freshly opened dialogs
         autoFocus={autoFocus}
-        className={cn("min-w-0 flex-1 bg-transparent outline-none placeholder:text-dim", alignRight && "text-right", inputClassName)}
+        className={cn(
+          "zf-num min-w-0 flex-1 bg-transparent placeholder:text-fg-4 focus-visible:outline-none",
+          alignRight && "text-right",
+          inputClassName,
+        )}
         value={text}
         placeholder={placeholder}
         onFocus={() => {
@@ -154,26 +199,39 @@ export function NumberInput({
         }}
         onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
           if (e.key === "Enter") onEnter?.();
+          else if (e.key === "Escape") e.currentTarget.blur();
+          else if (step !== undefined && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+            e.preventDefault();
+            const current = value ?? 0;
+            const base = typeof step === "function" ? step(current) : step;
+            const delta = (e.shiftKey ? base * 10 : base) * (e.key === "ArrowUp" ? 1 : -1);
+            const next = clamp(Number((current + delta).toPrecision(10)));
+            onChange(next);
+            setText(display(next));
+          }
         }}
       />
-      {suffix && <span className="flex shrink-0 items-center text-xs text-dim">{suffix}</span>}
+      {suffix && <span className="flex shrink-0 items-center text-label text-fg-3">{suffix}</span>}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Switch, checkbox, keycaps
+// Switch, checkbox, keycaps (DESIGN.md 4.23)
 // ---------------------------------------------------------------------------
 
+/** 28 × 16 track. Off: surface-3 with a text-3 knob. On: accent track with an ink knob. */
 export function Switch({
   checked,
   onChange,
   label,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   size?: "xs" | "sm";
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -182,46 +240,69 @@ export function Switch({
       aria-checked={checked}
       aria-label={label}
       title={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors",
-        checked ? "border-fg bg-fg" : "border-line-strong bg-elev",
+        "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors disabled:opacity-50",
+        checked ? "border-accent bg-accent" : "border-hairline-strong bg-surface-3",
       )}
     >
       <span
-        className={cn("inline-block size-3 rounded-full transition-transform", checked ? "translate-x-3 bg-bg" : "translate-x-px bg-dim")}
+        className={cn(
+          "inline-block size-3 rounded-full transition-transform duration-(--zf-dur-2)",
+          checked ? "translate-x-3 bg-ink" : "translate-x-px bg-fg-3",
+        )}
       />
     </button>
   );
 }
 
+/** 14 × 14 box, 2px radius. Checked: accent fill with an ink check. */
 export function Checkbox({
   checked,
   onChange,
   label,
   hint,
+  indeterminate,
+  disabled,
+  className,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
   hint?: ReactNode;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  className?: string;
 }) {
+  const on = checked || indeterminate;
   return (
-    <label className="flex cursor-pointer items-start gap-2 text-sm">
-      <input type="checkbox" className="mt-px size-3 accent-fg" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    <label className={cn("flex cursor-pointer items-start gap-2 text-data", disabled && "cursor-not-allowed text-fg-4", className)}>
+      <input type="checkbox" className="peer sr-only" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <span
+        aria-hidden="true"
+        className={cn(
+          "mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-xs border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus",
+          on ? "border-accent bg-accent text-ink" : "border-hairline-strong bg-surface-2",
+        )}
+      >
+        {indeterminate ? <Minus className="icon-xs" /> : checked ? <Check className="icon-xs" /> : null}
+      </span>
       <span>
-        <span className="text-fg">{label}</span>
-        {hint && <span className="block text-xs text-dim">{hint}</span>}
+        <span className="text-fg-1">{label}</span>
+        {hint && <span className="block text-label text-fg-3">{hint}</span>}
       </span>
     </label>
   );
 }
 
-export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+/** Keycap: 16px tall, Plex Mono 500 at 10px. */
+export function Kbd({ children, className, label }: { children: ReactNode; className?: string; label?: string }) {
   return (
     <kbd
+      aria-label={label}
       className={cn(
-        "inline-flex h-4 min-w-4 items-center justify-center rounded-sm border border-line-strong bg-elev px-1 font-mono text-2xs text-muted",
+        "inline-flex h-4 min-w-4 items-center justify-center rounded-xs border border-hairline-strong bg-surface-3 px-1 font-mono text-micro font-medium text-fg-2 [&_svg]:size-2.5",
         className,
       )}
     >
@@ -230,17 +311,29 @@ export function Kbd({ children, className }: { children: ReactNode; className?: 
   );
 }
 
-/** Renders a binding like "Space+Q" as keycaps. */
+const MAC_ICON: Record<string, ReactNode> = {
+  Cmd: <Command />,
+  Shift: <ArrowBigUp />,
+  Option: <Option />,
+};
+
+/** One key: macOS modifiers as lucide icons, words elsewhere ("Ctrl", "Shift", "Alt"). */
+export function KeyCap({ k }: { k: string }) {
+  if (IS_MAC && MAC_ICON[k]) return <Kbd label={k}>{MAC_ICON[k]}</Kbd>;
+  return <Kbd>{k}</Kbd>;
+}
+
+/** Renders a binding like "Space+Q" or "G P" ("G then P") as keycaps. */
 export function Hotkey({ binding, className }: { binding: string | undefined; className?: string }) {
   if (!binding) return null;
   const steps = bindingLabel(binding);
   return (
     <span className={cn("inline-flex items-center gap-1", className)}>
       {steps.map((keys, i) => (
-        <span key={keys.join("") + String(i)} className="inline-flex items-center gap-px">
-          {i > 0 && <span className="pr-1 text-2xs text-dim">then</span>}
+        <span key={keys.join("") + String(i)} className="inline-flex items-center gap-0.5">
+          {i > 0 && <span className="pr-1 text-micro text-fg-3">then</span>}
           {keys.map((k) => (
-            <Kbd key={k}>{k}</Kbd>
+            <KeyCap key={k} k={k} />
           ))}
         </span>
       ))}
@@ -249,7 +342,7 @@ export function Hotkey({ binding, className }: { binding: string | undefined; cl
 }
 
 // ---------------------------------------------------------------------------
-// Copy button
+// Copy control (DESIGN.md 4.23): Copy 12px text-3 swaps to Check text-1 for 1,200 ms. No toast.
 // ---------------------------------------------------------------------------
 
 export function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; size?: number; className?: string }) {
@@ -262,16 +355,20 @@ export function CopyButton({ text, label = "Copy", className }: { text: string; 
   return (
     <button
       type="button"
-      aria-label={label}
-      title={label}
+      aria-label={done ? "Copied" : label}
+      title={done ? "Copied" : label}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
         void copyText(text).then((ok) => setDone(ok));
       }}
-      className={cn("inline-flex shrink-0 items-center justify-center rounded-sm text-dim hover:text-fg", className)}
+      className={cn(
+        "inline-flex size-5 shrink-0 items-center justify-center rounded-xs transition-colors",
+        done ? "text-fg-1" : "text-fg-3 hover:text-fg-1",
+        className,
+      )}
     >
-      {done ? <Check className="icon-sm text-buy" /> : <Copy className="icon-sm" />}
+      {done ? <Check className="icon-xs" /> : <Copy className="icon-xs" />}
     </button>
   );
 }

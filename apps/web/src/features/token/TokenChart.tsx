@@ -20,7 +20,7 @@ import { IconButton } from "../../components/ui/Button";
 import { Segmented } from "../../components/ui/controls";
 import { baseChartOptions, chartColors, useChartThemeKey } from "../../lib/chartTheme";
 import { cn } from "../../lib/cn";
-import { fmtClock, fmtCompact, fmtPct, fmtSmall } from "../../lib/format";
+import { fmtClock, fmtCompact, fmtPct, fmtPriceText } from "../../lib/format";
 import { type Candle, TIMEFRAME_SECONDS, TIMEFRAMES, type Timeframe } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { subscribeSequenced } from "../../state/subscribe";
@@ -53,7 +53,7 @@ function withAlpha(hex: string, alpha: number): string {
 function formatter(mode: ChartMode, currency: ChartCurrency, supply: number) {
   const prefix = currency === "usd" ? "$" : "";
   const suffix = currency === "sol" ? " SOL" : "";
-  return (v: number) => (mode === "mc" ? `${prefix}${fmtCompact(v)}${suffix}` : `${prefix}${fmtSmall(v / supply, 4)}${suffix}`);
+  return (v: number) => (mode === "mc" ? `${prefix}${fmtCompact(v)}${suffix}` : `${prefix}${fmtPriceText(v / supply, true)}${suffix}`);
 }
 
 /** Short marker label so clustered tracked-wallet trades stay readable ("Sniper Sam" → "SS"). */
@@ -489,7 +489,7 @@ export function TokenChart({ mint, supply }: { mint: string; supply: number }) {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line px-2">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline px-2">
         <div className="flex items-center" role="radiogroup" aria-label="Timeframe">
           {TIMEFRAMES.map((t: Timeframe) => (
             // biome-ignore lint/a11y/useSemanticElements: compact timeframe radio
@@ -499,13 +499,16 @@ export function TokenChart({ mint, supply }: { mint: string; supply: number }) {
               role="radio"
               aria-checked={tf === t}
               onClick={() => setTf(t)}
-              className={cn("h-6 rounded-sm px-2 text-xs font-medium", tf === t ? "bg-elev text-fg" : "text-muted hover:text-fg")}
+              className={cn(
+                "h-6 rounded-xs px-2 text-label font-medium",
+                tf === t ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:text-fg-1",
+              )}
             >
               {t}
             </button>
           ))}
         </div>
-        <span className="h-4 w-px bg-line" />
+        <span className="h-4 w-px bg-hairline" />
         <Segmented<ChartMode>
           size="xs"
           value={mode}
@@ -530,7 +533,7 @@ export function TokenChart({ mint, supply }: { mint: string; supply: number }) {
           <button
             type="button"
             onClick={() => setCandle(null)}
-            className="flex h-6 items-center gap-1 rounded-sm border border-line-strong px-2 text-xs text-fg"
+            className="flex h-6 items-center gap-1 rounded-xs border border-hairline-strong px-2 text-label text-fg-1"
           >
             Trades in candle {fmtClock(candle.from * 1000)}
             <X className="icon-xs" />
@@ -543,28 +546,28 @@ export function TokenChart({ mint, supply }: { mint: string; supply: number }) {
         </div>
       </div>
       <div className="relative min-h-0 flex-1">
-        <div className="pointer-events-none absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-2 text-xs">
+        <div className="pointer-events-none absolute top-2 left-2 z-10 flex flex-wrap items-center gap-x-2 text-label">
           {shown && (
             <>
-              <span className="text-dim">
-                O <span className="text-fg">{fmt(shown.o)}</span>
+              <span className="text-fg-3">
+                O <span className="text-fg-1">{fmt(shown.o)}</span>
               </span>
-              <span className="text-dim">
-                H <span className="text-fg">{fmt(shown.h)}</span>
+              <span className="text-fg-3">
+                H <span className="text-fg-1">{fmt(shown.h)}</span>
               </span>
-              <span className="text-dim">
-                L <span className="text-fg">{fmt(shown.l)}</span>
+              <span className="text-fg-3">
+                L <span className="text-fg-1">{fmt(shown.l)}</span>
               </span>
-              <span className="text-dim">
-                C <span className="text-fg">{fmt(shown.c)}</span>
+              <span className="text-fg-3">
+                C <span className="text-fg-1">{fmt(shown.c)}</span>
               </span>
               <span className={shown.changePct >= 0 ? "text-buy" : "text-sell"}>{fmtPct(shown.changePct, { signed: true })}</span>
             </>
           )}
-          {limit.active && <span className="text-dim">Drag the target line to set the limit</span>}
+          {limit.active && <span className="text-fg-3">Drag the target line to set the limit</span>}
         </div>
         {status !== "ready" && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-dim">
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-data text-fg-3">
             {status === "loading" ? "Loading candles…" : "No trades in this timeframe yet"}
           </div>
         )}

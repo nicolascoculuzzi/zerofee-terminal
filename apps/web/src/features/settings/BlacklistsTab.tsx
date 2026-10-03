@@ -67,7 +67,7 @@ const IMPORT_MAX_ENTRIES = 5000;
 const IMPORT_MAX_BYTES = 1_000_000;
 
 const RESULT_TONE: Record<Tone, string> = {
-  neutral: "text-muted",
+  neutral: "text-fg-2",
   info: "text-info",
   warn: "text-warn",
   buy: "text-buy",
@@ -228,7 +228,7 @@ export function BlacklistsTab() {
           value: k.id,
           label: (
             <span>
-              {k.short} <span className="font-mono text-dim">{blacklists[k.id].length}</span>
+              {k.short} <span className="font-mono text-fg-3">{blacklists[k.id].length}</span>
             </span>
           ),
           title: k.title,
@@ -237,7 +237,7 @@ export function BlacklistsTab() {
         className="mb-4 w-full"
       />
 
-      <Group title={kind.title} description={kind.hint} extra={<span className="text-xs text-dim">{list.length} listed</span>}>
+      <Group title={kind.title} description={kind.hint} extra={<span className="text-label text-fg-3">{list.length} listed</span>}>
         <form className="space-y-2 p-3" onSubmit={add}>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
             <Field label={kind.field} htmlFor="zf-bl-value" className="flex-1">
@@ -265,28 +265,28 @@ export function BlacklistsTab() {
                 onChange={(e) => setNote(e.target.value)}
               />
             </Field>
-            <Button type="submit" size="md" variant="outline" disabled={!value.trim()}>
+            <Button type="submit" size="md" variant="secondary" disabled={!value.trim()}>
               Add
             </Button>
           </div>
-          {error && <div className="text-xs text-sell">{error}</div>}
+          {error && <div className="text-label text-sell">{error}</div>}
         </form>
         {list.length === 0 ? (
-          <div className="px-3 py-2 text-xs text-dim">Nothing on this list yet.</div>
+          <div className="px-3 py-2 text-label text-fg-3">Nothing on this list yet.</div>
         ) : (
-          <ul className="max-h-80 divide-y divide-line overflow-y-auto">
+          <ul className="max-h-80 divide-y divide-hairline overflow-y-auto">
             {list.map((entry) => {
               const shown = kind.handle ? `@${entry.value}` : shortAddr(entry.value, 6, 6);
               return (
                 <li key={entry.value} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1 text-sm text-fg">
+                    <div className="flex items-center gap-1 text-data text-fg-1">
                       <span className={cn("truncate", !kind.handle && "font-mono")}>{shown}</span>
                       <CopyButton text={entry.value} label={`Copy ${shown}`} />
                     </div>
-                    {entry.note && <div className="truncate text-xs text-muted">{entry.note}</div>}
+                    {entry.note && <div className="truncate text-label text-fg-2">{entry.note}</div>}
                   </div>
-                  <span className="shrink-0 text-right text-xs text-dim">{fmtDate(entry.addedAt)}</span>
+                  <span className="shrink-0 text-right text-label text-fg-3">{fmtDate(entry.addedAt)}</span>
                   <IconButton label={`Remove ${shown}`} onClick={() => removeBlacklist(kind.id, entry.value)}>
                     <Trash2 className="icon-sm" />
                   </IconButton>
@@ -302,10 +302,10 @@ export function BlacklistsTab() {
         description="One JSON file holds all four lists. Imports merge into what you have; duplicates are skipped."
       >
         <div className="flex flex-wrap items-center gap-2 p-3">
-          <Button size="sm" variant="outline" icon={<Download className="icon-sm" />} onClick={exportJson}>
+          <Button size="sm" variant="secondary" icon={<Download className="icon-sm" />} onClick={exportJson}>
             Export JSON
           </Button>
-          <Button size="sm" variant="outline" icon={<FileUp className="icon-sm" />} onClick={() => fileRef.current?.click()}>
+          <Button size="sm" variant="secondary" icon={<FileUp className="icon-sm" />} onClick={() => fileRef.current?.click()}>
             Import file
           </Button>
           <Button
@@ -347,7 +347,7 @@ export function BlacklistsTab() {
           </div>
         )}
         {result && (
-          <div aria-live="polite" className={cn("px-3 py-2 text-xs", RESULT_TONE[result.tone])}>
+          <div aria-live="polite" className={cn("px-3 py-2 text-label", RESULT_TONE[result.tone])}>
             {result.text}
           </div>
         )}

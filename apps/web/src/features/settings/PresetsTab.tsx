@@ -125,7 +125,7 @@ function SideEditor({ id, side, exec }: { id: PresetId; side: Side; exec: Execut
               onSelect={() => set({ landing: l })}
               title={info.label}
               meta={
-                <span className={cn("flex items-center gap-1 text-xs", low ? "text-buy" : "text-warn")}>
+                <span className={cn("flex items-center gap-1 text-label", low ? "text-buy" : "text-warn")}>
                   {low ? <ShieldCheck className="icon-sm" /> : <TriangleAlert className="icon-sm" />}
                   {info.riskLabel}
                 </span>
@@ -133,7 +133,7 @@ function SideEditor({ id, side, exec }: { id: PresetId; side: Side; exec: Execut
             >
               <span className="block">Route: {info.route}</span>
               <span className="block">Tip rule: {info.tip}</span>
-              <span className="block text-dim">{info.note}</span>
+              <span className="block text-fg-3">{info.note}</span>
             </RadioCard>
           );
         })}
@@ -160,9 +160,9 @@ function CostTable({ preset }: { preset: TradePreset }) {
   const buyTotal = perTradeCost(preset.buy);
   const sellTotal = perTradeCost(preset.sell);
   return (
-    <table className="w-full text-sm">
+    <table className="w-full text-data">
       <thead>
-        <tr className="border-b border-line">
+        <tr className="border-b border-hairline">
           <th scope="col" className="zf-label px-3 py-2 text-left font-normal">
             SOL per trade
           </th>
@@ -174,10 +174,10 @@ function CostTable({ preset }: { preset: TradePreset }) {
           </th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-line">
+      <tbody className="divide-y divide-hairline">
         {rows.map((r) => (
           <tr key={r.label}>
-            <th scope="row" className="px-3 py-1 text-left font-normal text-muted">
+            <th scope="row" className="px-3 py-1 text-left font-normal text-fg-2">
               {r.label}
             </th>
             <td className="px-3 py-1 text-right font-mono">{fmtFee(r.buy)}</td>
@@ -186,14 +186,14 @@ function CostTable({ preset }: { preset: TradePreset }) {
         ))}
       </tbody>
       <tfoot>
-        <tr className="border-t border-line">
+        <tr className="border-t border-hairline">
           <th scope="row" className="px-3 pt-2 text-left font-semibold">
             Estimated cost
           </th>
           <td className="px-3 pt-2 text-right font-mono font-semibold">{fmtFee(buyTotal)}</td>
           <td className="px-3 pt-2 text-right font-mono font-semibold">{fmtFee(sellTotal)}</td>
         </tr>
-        <tr className="text-xs text-dim">
+        <tr className="text-label text-fg-3">
           <th scope="row" className="px-3 pb-2 text-left font-normal">
             In USD
           </th>
@@ -219,8 +219,8 @@ function AmountsEditor({ id, preset }: { id: PresetId; preset: TradePreset }) {
     <>
       {AMOUNT_ROWS.map((r) => (
         <div key={r.key} className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
-          <div className="text-sm text-fg sm:w-40 sm:shrink-0">
-            {r.label} <span className="text-dim">({r.unit})</span>
+          <div className="text-data text-fg-1 sm:w-40 sm:shrink-0">
+            {r.label} <span className="text-fg-3">({r.unit})</span>
           </div>
           <div className="grid min-w-0 flex-1 grid-cols-4 gap-1">
             {SLOTS.map((slot) => (
@@ -303,7 +303,7 @@ export function PresetsTab() {
           {editing === activePreset ? (
             <Chip tone="info">Active preset</Chip>
           ) : (
-            <Button size="xs" variant="outline" onClick={() => setActivePreset(editing)}>
+            <Button size="xs" variant="secondary" onClick={() => setActivePreset(editing)}>
               Make active
             </Button>
           )}
@@ -349,7 +349,7 @@ export function PresetsTab() {
 
       <Group title="Cost per trade" description="What the chain charges on top of your trade size, before venue fees.">
         <CostTable preset={preset} />
-        <div className="px-3 py-2 text-xs text-muted">
+        <div className="px-3 py-2 text-label text-fg-2">
           Venue fees come on top: pump.fun takes 1.25% per side on the bonding curve, and no terminal can remove it. zerofee adds 0%.
         </div>
       </Group>

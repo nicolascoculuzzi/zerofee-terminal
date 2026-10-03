@@ -26,27 +26,27 @@ export function ApprovalModal() {
       {approval && (
         <div className="p-4">
           <div className="mb-3 flex items-center justify-between">
-            <span className="text-sm font-semibold capitalize">{provider}</span>
-            <span className="rounded-sm border border-warn/40 px-1 text-2xs font-semibold uppercase text-warn">Simulated popup</span>
+            <span className="text-data font-semibold capitalize">{provider}</span>
+            <span className="rounded-xs border border-warn-edge px-1 text-micro font-semibold text-warn">Simulated popup</span>
           </div>
-          <div className="mb-1 text-md font-semibold">{approval.request.title}</div>
-          <div className="mb-3 text-xs text-dim">
+          <div className="mb-1 text-heading font-semibold">{approval.request.title}</div>
+          <div className="mb-3 text-label text-fg-3">
             {window.location.host} · {connected ? shortAddr(connected.address, 4, 4) : "no wallet"}
           </div>
-          <div className="space-y-1 rounded-md border border-line bg-panel-2 p-3">
+          <div className="space-y-1 rounded-sm border border-hairline bg-surface-2 p-3">
             {approval.request.lines.map((l) => (
-              <div key={l.label} className="flex justify-between gap-3 text-sm">
-                <span className="text-muted">{l.label}</span>
+              <div key={l.label} className="flex justify-between gap-3 text-data">
+                <span className="text-fg-2">{l.label}</span>
                 <span className="text-right font-medium">{l.value}</span>
               </div>
             ))}
           </div>
-          <div className="mt-3 flex items-start gap-1 text-2xs text-dim">
+          <div className="mt-3 flex items-start gap-1 text-micro text-fg-3">
             <ShieldAlert className="icon-sm mt-px shrink-0" />
             Only approve requests you started on the canonical zerofee domain.
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2">
-            <Button size="md" variant="outline" onClick={() => approval.resolve(false)}>
+            <Button size="md" variant="secondary" onClick={() => approval.resolve(false)}>
               Reject
             </Button>
             <Button size="md" variant="primary" data-autofocus onClick={() => approval.resolve(true)}>

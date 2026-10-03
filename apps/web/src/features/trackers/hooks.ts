@@ -13,9 +13,9 @@ export function useMarkRead(kind: "trades" | "posts"): void {
   }, [unread, kind]);
 }
 
-/** Row height token (--zf-row-h), read once so virtualized lists match the `h-7` rows. */
+/** Row height token (--zf-row), read once so virtualized lists match the `h-7` rows. */
 export function useRowHeight(): number {
-  const [px] = useState(() => cssPx("--zf-row-h", 28));
+  const [px] = useState(() => cssPx("--zf-row", 28));
   return px;
 }
 

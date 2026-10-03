@@ -14,7 +14,7 @@ import { type ClientTrade, useTrades } from "../state/trades";
 import { useUi } from "../state/ui";
 import { useWallet } from "../state/wallet";
 import { uid } from "./cn";
-import { fmtSol } from "./format";
+import { fmtFee, fmtSol } from "./format";
 import { LANDING_INFO } from "./landing";
 import { navigateTo } from "./nav";
 import { playTone } from "./sound";
@@ -60,21 +60,37 @@ async function approveDirect(title: string, lines: { label: string; value: strin
 function costLines(settings: ExecutionSettings): { label: string; value: string }[] {
   return [
     { label: "Slippage", value: `${settings.slippagePct}%` },
-    { label: "Priority fee", value: `${fmtSol(settings.priorityFeeSol)} SOL` },
-    { label: "Tip", value: `${fmtSol(settings.tipSol)} SOL` },
+    { label: "Priority fee", value: `${fmtFee(settings.priorityFeeSol)} SOL` },
+    { label: "Tip", value: `${fmtFee(settings.tipSol)} SOL` },
     { label: "Landing", value: LANDING_INFO[settings.landing].label },
   ];
 }
 
 function startTrade(t: Omit<ClientTrade, "stage" | "status" | "receipt" | "error">): void {
-  useTrades.getState().begin({ ...t, stage: "clicked", status: "pending", receipt: null, error: null });
+  useTrades.getState().begin({ ...t, stage: "clicked", status: "pending", receipt: null, error: null, stageAt: {} });
   useToasts.getState().push({ kind: "info", title: "", tradeId: t.id, ttl: null });
 }
 
+/** Landed toasts dismiss after 4 s; failed ones stay until dismissed (DESIGN.md 4.13). */
 function settleToast(tradeId: string): void {
   const toasts = useToasts.getState();
   const toast = toasts.toasts.find((x) => x.tradeId === tradeId);
-  if (toast) toasts.update(toast.id, { ttl: 5000 });
+  const trade = useTrades.getState().items.find((x) => x.id === tradeId);
+  if (toast && trade?.status === "confirmed") toasts.update(toast.id, { ttl: 4000 });
+}
+
+/**
+ * Repeat guard (DESIGN.md 6.4): an identical trade (token, side, amount) fired within 600 ms by
+ * the mouse is dropped. Hotkeys need a fresh keydown after keyup instead (see Shell).
+ */
+const recent = new Map<string, number>();
+function repeated(key: string, source: TradeSource): boolean {
+  if (source === "hotkey") return false;
+  const now = Date.now();
+  const last = recent.get(key);
+  recent.set(key, now);
+  if (recent.size > 64) for (const [k, at] of recent) if (now - at > 600) recent.delete(k);
+  return last !== undefined && now - last < 600;
 }
 
 export interface BuyArgs {
@@ -86,6 +102,7 @@ export interface BuyArgs {
 }
 
 export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
+  if (repeated(`buy:${args.mint}:${args.sol}`, args.source)) return [];
   let clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].buy;
@@ -150,6 +167,9 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
         wallet: address,
         source: args.source,
         startedAt: clickedAt,
+        landing: LANDING_INFO[settings.landing].label,
+        amountSol: args.sol,
+        retry: () => void buy({ ...args, wallets: [address] }),
       });
       try {
         const receipt = await trade.buy(
@@ -164,7 +184,7 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
             expectedPriceSol: priceSol,
             solAmount: args.sol,
           },
-          (p) => useTrades.getState().progress(id, p.stage),
+          (p) => useTrades.getState().progress(id, p.stage, p.atMs),
         );
         useTrades.getState().finish(id, receipt);
         receipts.push(receipt);
@@ -194,6 +214,7 @@ export interface SellArgs {
 }
 
 export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
+  if (repeated(`sell:${args.mint}:${args.pct ?? args.solValue ?? args.tokenAmount ?? "all"}`, args.source)) return [];
   let clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].sell;
@@ -236,7 +257,18 @@ export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
   await Promise.all(
     plans.map(async (plan) => {
       const id = uid("trade");
-      startTrade({ id, mint: args.mint, symbol, side: "sell", label, wallet: plan.address, source: args.source, startedAt: clickedAt });
+      startTrade({
+        id,
+        mint: args.mint,
+        symbol,
+        side: "sell",
+        label,
+        wallet: plan.address,
+        source: args.source,
+        startedAt: clickedAt,
+        landing: LANDING_INFO[settings.landing].label,
+        retry: () => void sell({ ...args, wallets: [plan.address] }),
+      });
       try {
         const receipt = await trade.sell(
           {
@@ -251,7 +283,7 @@ export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
             pct: plan.pct,
             tokenAmount: plan.tokenAmount,
           },
-          (p) => useTrades.getState().progress(id, p.stage),
+          (p) => useTrades.getState().progress(id, p.stage, p.atMs),
         );
         useTrades.getState().finish(id, receipt);
         receipts.push(receipt);

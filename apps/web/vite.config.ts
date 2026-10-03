@@ -30,8 +30,34 @@ function contentSecurityPolicy(): Plugin {
   };
 }
 
+/**
+ * Preloads the Plex Sans latin face (DESIGN.md 9.3) so first paint uses the real font. Build
+ * only: it looks up the emitted woff2 in the bundle; the CSP already allows font-src 'self'.
+ */
+function preloadPrimaryFont(): Plugin {
+  let base = "/";
+  return {
+    name: "zerofee-font-preload",
+    apply: "build",
+    configResolved(config) {
+      base = config.base;
+    },
+    transformIndexHtml: {
+      order: "post",
+      handler(html, ctx) {
+        const file = Object.keys(ctx.bundle ?? {}).find((f) => /ibm-plex-sans-latin-standard-normal.*\.woff2$/.test(f));
+        if (!file) return html;
+        return html.replace(
+          "</head>",
+          `    <link rel="preload" as="font" type="font/woff2" href="${base}${file}" crossorigin />\n  </head>`,
+        );
+      },
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), contentSecurityPolicy()],
+  plugins: [react(), tailwindcss(), contentSecurityPolicy(), preloadPrimaryFont()],
   server: { port: 5173, strictPort: false },
   preview: { port: 4173 },
   build: {

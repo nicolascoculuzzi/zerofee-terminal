@@ -72,7 +72,7 @@ function SortHeader({
       <button
         type="button"
         onClick={() => onSort(sortKey)}
-        className={cn("inline-flex items-center gap-1 uppercase tracking-wide hover:text-fg", active && "text-fg")}
+        className={cn("inline-flex items-center gap-1 hover:text-fg-1", active && "text-fg-1")}
       >
         {align === "right" && arrow}
         {label}
@@ -116,16 +116,16 @@ const PositionRow = memo(function PositionRow({
       data-index={index}
       ref={measure}
       className={cn(
-        "border-b border-line last:border-b-0",
+        "border-b border-hairline last:border-b-0",
         compact ? "h-row-dense" : "h-row",
-        highlighted ? "bg-elev" : "hover:bg-panel-2",
+        highlighted ? "bg-surface-3" : "hover:bg-surface-2",
       )}
     >
       <td className="px-2">
         <Link to={`/t/${p.mint}`} className="group flex min-w-0 items-center gap-2" title={`${p.name} (${p.symbol})`}>
           <TokenAvatar mint={p.mint} symbol={p.symbol} imageUri={p.imageUri} size="xs" />
-          <span className="truncate font-medium text-fg group-hover:underline">{p.symbol}</span>
-          {!compact && <span className="hidden truncate text-dim sm:inline">{p.name}</span>}
+          <span className="truncate font-medium text-fg-1 group-hover:underline">{p.symbol}</span>
+          {!compact && <span className="hidden truncate text-fg-3 sm:inline">{p.name}</span>}
         </Link>
       </td>
       <td className="px-2 text-right" title={`${fmtTokens(p.boughtTokens)} tokens, avg entry ${fmtSolPrice(p.avgEntryPriceSol)} SOL`}>
@@ -139,7 +139,7 @@ const PositionRow = memo(function PositionRow({
             : `${fmtTokens(p.soldTokens)} tokens, avg exit ${fmtSolPrice(p.avgExitPriceSol)} SOL`
         }
       >
-        {p.soldSol > 0 ? money(p.soldSol, currency, solUsd) : <span className="text-dim">—</span>}
+        {p.soldSol > 0 ? money(p.soldSol, currency, solUsd) : <span className="text-fg-3">—</span>}
       </td>
       <td
         className="px-2 text-right"
@@ -147,15 +147,15 @@ const PositionRow = memo(function PositionRow({
       >
         {holding ? (
           <>
-            {!compact && <span className="mr-1 text-dim">{fmtTokens(p.holdingTokens)}</span>}
+            {!compact && <span className="mr-1 text-fg-3">{fmtTokens(p.holdingTokens)}</span>}
             {money(p.valueSol, currency, solUsd)}
           </>
         ) : (
-          <span className="text-dim">—</span>
+          <span className="text-fg-3">—</span>
         )}
       </td>
       <td className={cn("px-2 text-right", tone)}>
-        {signedMoney(pnl, currency, solUsd)} <span className="text-2xs">({fmtPnlPct(pnl, p.boughtSol)})</span>
+        {signedMoney(pnl, currency, solUsd)} <span className="text-micro">({fmtPnlPct(pnl, p.boughtSol)})</span>
       </td>
       {ownWallet && (
         <td className="px-2">
@@ -169,7 +169,7 @@ const PositionRow = memo(function PositionRow({
               to={`/t/${p.mint}`}
               aria-label={`Open ${p.symbol}`}
               title={`Open ${p.symbol}`}
-              className="inline-flex size-5 items-center justify-center rounded-sm text-muted hover:bg-hover hover:text-fg"
+              className="inline-flex size-5 items-center justify-center rounded-xs text-fg-2 hover:bg-surface-3 hover:text-fg-1"
             >
               <ChartCandlestick className="icon-sm" />
             </Link>
@@ -226,7 +226,7 @@ export function PositionsTable({ positions, solUsd, currency, highlightMint, com
 
   return (
     <div ref={list.scrollRef} className={cn("overflow-x-auto", list.virtual && "max-h-120 overflow-y-auto")}>
-      <table className={cn("w-full table-fixed border-collapse text-xs", compact ? "min-w-148" : "min-w-176")}>
+      <table className={cn("w-full table-fixed border-collapse text-label", compact ? "min-w-148" : "min-w-176")}>
         <colgroup>
           <col />
           <col className={compact ? "w-20" : "w-24"} />
@@ -235,15 +235,15 @@ export function PositionsTable({ positions, solUsd, currency, highlightMint, com
           <col className={compact ? "w-32" : "w-36"} />
           {ownWallet && <col className="w-28" />}
         </colgroup>
-        <thead className={cn("text-2xs text-dim", list.virtual && "sticky top-0 z-10 bg-panel")}>
-          <tr className="h-row border-b border-line">
+        <thead className={cn("text-micro text-fg-3", list.virtual && "sticky top-0 z-10 bg-surface-1")}>
+          <tr className="h-row border-b border-hairline">
             {header("Token", "token", "left")}
             {header(`Bought (${unit})`, "bought")}
             {header(`Sold (${unit})`, "sold")}
             {header(`Remaining (${unit})`, "remaining")}
             {header(`PnL (${unit})`, "pnl")}
             {ownWallet && (
-              <th scope="col" className="px-2 text-right font-medium uppercase tracking-wide">
+              <th scope="col" className="px-2 text-right font-medium">
                 Actions
               </th>
             )}

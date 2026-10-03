@@ -29,7 +29,7 @@ function HotkeyHint({ action }: { action: HotkeyAction }) {
   const binding = useSettings((s) => s.hotkeys[action]?.[0]);
   const on = useSettings((s) => s.tradeHotkeys);
   if (!on || !binding) return null;
-  return <span className="font-mono text-2xs opacity-60">{compactLabel(binding)}</span>;
+  return <span className="font-mono text-micro opacity-60">{compactLabel(binding)}</span>;
 }
 
 function WalletPicker() {
@@ -54,7 +54,7 @@ function WalletPicker() {
         ref={anchor}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-6 items-center gap-1 rounded-md border border-line px-2 text-xs text-muted hover:text-fg"
+        className="flex h-6 items-center gap-1 rounded-sm border border-hairline px-2 text-label text-fg-2 hover:text-fg-1"
         title="Wallets used by this window"
       >
         <Wallet className="icon-xs" />
@@ -74,13 +74,13 @@ function WalletPicker() {
                 label={
                   <span className="flex w-40 justify-between gap-2">
                     <span>{w.label}</span>
-                    <span className="text-muted">{fmtSol(status[w.address]?.solBalance ?? 0)} SOL</span>
+                    <span className="text-fg-2">{fmtSol(status[w.address]?.solBalance ?? 0)} SOL</span>
                   </span>
                 }
               />
             );
           })}
-          <p className="text-2xs text-dim">With several wallets selected, each one places the full amount.</p>
+          <p className="text-micro text-fg-3">With several wallets selected, each one places the full amount.</p>
         </div>
       </Popover>
     </>
@@ -162,23 +162,26 @@ export function InstantTradeWindow() {
       ref={panelRef}
       role="dialog"
       aria-label="Instant Trade"
-      className="fixed z-window w-72 rounded-lg border border-line-strong bg-panel"
+      className="fixed z-dock w-72 rounded-md border border-hairline-strong bg-surface-1"
       style={{ left: pos?.x ?? -9999, top: pos?.y ?? -9999 }}
     >
       <div
-        className="flex h-8 cursor-grab items-center gap-1 border-b border-line px-2 active:cursor-grabbing"
+        className="flex h-8 cursor-grab items-center gap-1 border-b border-hairline px-2 active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
-        <GripHorizontal className="icon-sm text-dim" />
+        <GripHorizontal className="icon-sm text-fg-3" />
         <button
           type="button"
           aria-pressed={tradeHotkeys}
           onClick={() => setTradeHotkeys(!tradeHotkeys)}
           title={tradeHotkeys ? "Hotkeys on (hold Space + key)" : "Hotkeys off"}
-          className={cn("flex size-6 items-center justify-center rounded-md", tradeHotkeys ? "bg-elev text-fg" : "text-dim hover:text-fg")}
+          className={cn(
+            "flex size-6 items-center justify-center rounded-sm",
+            tradeHotkeys ? "bg-surface-3 text-fg-1" : "text-fg-3 hover:text-fg-1",
+          )}
         >
           <Keyboard className="icon-sm" />
         </button>
@@ -188,7 +191,7 @@ export function InstantTradeWindow() {
           aria-label="Edit presets"
           title="Edit presets"
           onClick={() => openSettings("presets")}
-          className="flex size-6 items-center justify-center text-dim hover:text-fg"
+          className="flex size-6 items-center justify-center text-fg-3 hover:text-fg-1"
         >
           <Pencil className="icon-xs" />
         </button>
@@ -198,7 +201,7 @@ export function InstantTradeWindow() {
             type="button"
             aria-label="Close Instant Trade"
             onClick={() => setInstant({ open: false })}
-            className="flex size-6 items-center justify-center text-dim hover:text-fg"
+            className="flex size-6 items-center justify-center text-fg-3 hover:text-fg-1"
           >
             <X className="icon-sm" />
           </button>
@@ -206,13 +209,13 @@ export function InstantTradeWindow() {
       </div>
 
       {!token ? (
-        <div className="px-3 py-4 text-sm text-dim">Open a token to trade it from here.</div>
+        <div className="px-3 py-4 text-data text-fg-3">Open a token to trade it from here.</div>
       ) : (
         <div className="space-y-3 p-3">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-sm font-semibold">{token.symbol}</span>
-            <span className="text-dim">
-              {wallets.length > 1 ? `${wallets.length} wallets` : "Balance"} <span className="text-fg">{fmtSol(balance)} SOL</span>
+          <div className="flex items-center justify-between text-label">
+            <span className="text-data font-semibold">{token.symbol}</span>
+            <span className="text-fg-3">
+              {wallets.length > 1 ? `${wallets.length} wallets` : "Balance"} <span className="text-fg-1">{fmtSol(balance)} SOL</span>
             </span>
           </div>
 
@@ -225,7 +228,7 @@ export function InstantTradeWindow() {
                   key={i}
                   type="button"
                   onClick={() => run(() => void buy({ mint: token.mint, sol, source: "instant", wallets }))}
-                  className="flex h-9 flex-col items-center justify-center rounded-md border border-buy/30 text-sm font-semibold text-buy hover:bg-buy/10"
+                  className="flex h-9 flex-col items-center justify-center rounded-sm border border-buy-edge text-data font-semibold text-buy hover:bg-buy-tint"
                 >
                   {fmtSolShort(sol)}
                   <HotkeyHint action={`buy.${i + 1}` as HotkeyAction} />
@@ -238,7 +241,7 @@ export function InstantTradeWindow() {
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="zf-label">Sell</span>
-              <span className="text-2xs text-dim">
+              <span className="text-micro text-fg-3">
                 {position && position.holdingTokens > 0
                   ? `${fmtTokens(position.holdingTokens)} · ${fmtSol(position.valueSol)} SOL`
                   : "No position"}
@@ -270,7 +273,7 @@ export function InstantTradeWindow() {
                         ),
                     )
                   }
-                  className="flex h-9 flex-col items-center justify-center rounded-md border border-sell/30 text-sm font-semibold text-sell hover:bg-sell/10"
+                  className="flex h-9 flex-col items-center justify-center rounded-sm border border-sell-edge text-data font-semibold text-sell hover:bg-sell-tint"
                 >
                   {sellMode === "pct" ? `${v}%` : fmtSolShort(v)}
                   <HotkeyHint action={`sell.${i + 1}` as HotkeyAction} />
@@ -281,7 +284,7 @@ export function InstantTradeWindow() {
             <button
               type="button"
               onClick={() => run(() => void sellInitials(token.mint, "instant"))}
-              className="flex h-7 w-full items-center justify-center gap-2 rounded-md border border-line text-xs font-medium text-fg hover:bg-hover"
+              className="flex h-7 w-full items-center justify-center gap-2 rounded-sm border border-hairline text-label font-medium text-fg-1 hover:bg-surface-3"
               title="Sell the amount whose current value equals the SOL you still have in (bought minus sold)"
             >
               Sell Init.

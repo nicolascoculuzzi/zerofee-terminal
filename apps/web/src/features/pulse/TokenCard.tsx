@@ -42,8 +42,8 @@ function QuickBuyPill({ token, sol, preset, large }: { token: TokenSummary; sol:
       }}
       aria-label={`Quick buy ${fmtSolShort(sol)} SOL of ${token.symbol}`}
       className={cn(
-        "flex shrink-0 items-center justify-center gap-1 rounded-full bg-buy/10 font-semibold text-buy hover:bg-buy/20",
-        large ? "h-6 min-w-20 px-3 text-sm" : "h-5 min-w-16 px-2 text-xs",
+        "flex shrink-0 items-center justify-center gap-1 rounded-full bg-buy-tint font-semibold text-buy hover:bg-buy-tint-hover",
+        large ? "h-6 min-w-20 px-3 text-data" : "h-5 min-w-16 px-2 text-label",
       )}
     >
       {pending ? <LoaderCircle className="icon-xs animate-spin" /> : <Zap className="icon-xs" />}
@@ -96,8 +96,8 @@ export const TokenCard = memo(function TokenCard({
         if (useUi.getState().hoverMint === t.mint) setHoverMint(null);
       }}
       className={cn(
-        "group relative flex cursor-pointer items-center gap-3 border-b border-line px-3 hover:bg-panel-2 focus-visible:bg-panel-2",
-        compact ? "h-card-compact" : "h-card",
+        "group relative flex cursor-pointer items-center gap-3 border-b border-hairline px-3 hover:bg-surface-2 focus-visible:bg-surface-2",
+        compact ? "h-card" : "h-card",
         fresh && "zf-enter",
       )}
     >
@@ -114,17 +114,17 @@ export const TokenCard = memo(function TokenCard({
       <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1">
         {/* Row 1: identity | market cap */}
         <div className="flex min-w-0 items-center gap-1">
-          <span className="shrink-0 text-base font-semibold">{t.symbol}</span>
-          <span className="min-w-0 truncate text-sm text-muted">{t.name}</span>
+          <span className="shrink-0 text-body font-semibold">{t.symbol}</span>
+          <span className="min-w-0 truncate text-data text-fg-2">{t.name}</span>
           <CopyButton text={t.mint} label="Copy contract address" />
           <span className="opacity-0 group-hover:opacity-100 focus-within:opacity-100">
             <TokenMenu token={t} />
           </span>
         </div>
         <Tooltip wrapperClassName="justify-end" content={`${METRICS.marketCap.definition} 5m: ${fmtPct(t.change5mPct, { signed: true })}`}>
-          <span className="text-right text-2xs text-dim">
+          <span className="text-right text-micro text-fg-3">
             MC{" "}
-            <span className={cn("text-sm font-semibold", !metricColors ? "text-fg" : up ? "text-buy" : "text-sell")}>
+            <span className={cn("text-data font-semibold", !metricColors ? "text-fg-1" : up ? "text-buy" : "text-sell")}>
               {fmtUsd(t.marketCapUsd)}
             </span>
           </span>
@@ -133,20 +133,20 @@ export const TokenCard = memo(function TokenCard({
         {/* Row 2: age, socials, holder stats | volume and txns (compact: buy action).
             Items never shrink (a squeezed tooltip wrapper lets digits overlap); the row clips
             at its end, and pro traders drop out below a 384px column. */}
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-muted">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden text-label text-fg-2">
           <Tooltip wrapperClassName="shrink-0" content={METRICS.age.definition}>
-            <Age ts={t.createdAt} className="font-medium text-fg" />
+            <Age ts={t.createdAt} className="font-medium text-fg-1" />
           </Tooltip>
           {column === "final" && (
             <Tooltip wrapperClassName="shrink-0" content={METRICS.progress.definition}>
-              <span className="text-fg">{fmtPct(t.bondingProgress * 100)}</span>
+              <span className="text-fg-1">{fmtPct(t.bondingProgress * 100)}</span>
             </Tooltip>
           )}
           {danger.length > 0 && (
             <Tooltip wrapperClassName="shrink-0" content={`Token-2022 danger: ${danger.join(", ")}. ${METRICS.token2022.definition}`}>
               <span className="flex items-center gap-px text-sell">
                 <TriangleAlert className="icon-xs" />
-                <span className="text-2xs font-semibold">T22</span>
+                <span className="text-micro font-semibold">T22</span>
               </span>
             </Tooltip>
           )}
@@ -167,21 +167,21 @@ export const TokenCard = memo(function TokenCard({
           </span>
           {t.dexPaid && (
             <Tooltip wrapperClassName="shrink-0" content={METRICS.dexPaid.definition}>
-              <span className="rounded-sm border border-line-strong px-1 text-2xs font-semibold text-fg">DEX</span>
+              <span className="rounded-xs border border-hairline-strong px-1 text-micro font-semibold text-fg-1">DEX</span>
             </Tooltip>
           )}
         </div>
         {compact ? (
           pill
         ) : (
-          <div className="flex items-center justify-end gap-2 text-xs text-dim">
+          <div className="flex items-center justify-end gap-2 text-label text-fg-3">
             <span>
-              V <span className="text-fg">{fmtUsd(t.volumeUsd)}</span>
+              V <span className="text-fg-1">{fmtUsd(t.volumeUsd)}</span>
             </span>
             <Tooltip content={`${t.buys} buys / ${t.sells} sells. ${METRICS.txns.definition}`}>
               <span className="flex flex-col items-end">
                 <span>
-                  TX <span className="text-fg">{fmtCount(t.txns)}</span>
+                  TX <span className="text-fg-1">{fmtCount(t.txns)}</span>
                 </span>
                 <span className="flex h-0.5 w-full overflow-hidden rounded-full bg-sell/70">
                   <span className="h-full bg-buy" style={{ width: `${buyShare * 100}%` }} />
@@ -202,7 +202,7 @@ export const TokenCard = memo(function TokenCard({
 
       {onCurve && (
         <span className="pointer-events-none absolute right-0 bottom-0 left-0 h-0.5" aria-hidden="true">
-          <span className="block h-full bg-muted/60" style={{ width: `${t.bondingProgress * 100}%` }} />
+          <span className="block h-full bg-fg-2/60" style={{ width: `${t.bondingProgress * 100}%` }} />
         </span>
       )}
     </div>

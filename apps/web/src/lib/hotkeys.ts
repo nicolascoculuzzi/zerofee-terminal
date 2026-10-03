@@ -25,12 +25,59 @@ export type HotkeyAction =
   | "nav.pulse"
   | "nav.trackers"
   | "nav.portfolio"
-  | "nav.orders";
+  | "nav.orders"
+  | "nav.settings"
+  | "buy.quick"
+  | "quote.toggle"
+  | "density.toggle"
+  | "wallet.lock"
+  | "panic"
+  | "pulse.col1"
+  | "pulse.col2"
+  | "pulse.col3"
+  | "pulse.prevCol"
+  | "pulse.nextCol"
+  | "pulse.down"
+  | "pulse.up"
+  | "pulse.first"
+  | "pulse.last"
+  | "pulse.open"
+  | "pulse.openNew"
+  | "pulse.copy"
+  | "pulse.hide"
+  | "pulse.blacklistDev"
+  | "pulse.filters"
+  | "pulse.pause"
+  | "pulse.pauseAll"
+  | "token.sideBuy"
+  | "token.sideSell"
+  | "token.market"
+  | "token.limit"
+  | "token.advanced"
+  | "token.prevTf"
+  | "token.nextTf"
+  | "token.toggleMc"
+  | "token.alert"
+  | "token.tab1"
+  | "token.tab2"
+  | "token.tab3"
+  | "token.tab4"
+  | "token.tab5"
+  | "token.tab6"
+  | "token.unlock"
+  | "orders.cancel"
+  | "orders.rearm";
+
+export type HotkeyGroup = "General" | "Trading" | "Pulse" | "Token page" | "Navigation";
+
+/** Where a binding is live: the same key may mean different things on different pages. */
+export type HotkeyScope = "global" | "pulse" | "token" | "orders";
 
 export interface HotkeyActionInfo {
   id: HotkeyAction;
   label: string;
-  group: "General" | "Trading" | "Navigation";
+  group: HotkeyGroup;
+  scope?: HotkeyScope;
 }
 
 export const HOTKEY_ACTIONS: HotkeyActionInfo[] = [
@@ -56,6 +103,47 @@ export const HOTKEY_ACTIONS: HotkeyActionInfo[] = [
   { id: "nav.trackers", label: "Go to Trackers", group: "Navigation" },
   { id: "nav.portfolio", label: "Go to Portfolio", group: "Navigation" },
   { id: "nav.orders", label: "Go to Armed orders", group: "Navigation" },
+  { id: "nav.settings", label: "Go to Settings", group: "Navigation" },
+  { id: "buy.quick", label: "Quick-buy the cursor, hovered or open token", group: "Trading" },
+  { id: "quote.toggle", label: "Toggle USD / SOL", group: "General" },
+  { id: "density.toggle", label: "Toggle density", group: "General" },
+  { id: "wallet.lock", label: "Lock keystore", group: "General" },
+  { id: "panic", label: "Panic (cancel all orders and lock)", group: "General" },
+  { id: "pulse.col1", label: "Focus New Pairs", group: "Pulse", scope: "pulse" },
+  { id: "pulse.col2", label: "Focus Final Stretch", group: "Pulse", scope: "pulse" },
+  { id: "pulse.col3", label: "Focus Migrated", group: "Pulse", scope: "pulse" },
+  { id: "pulse.prevCol", label: "Previous column", group: "Pulse", scope: "pulse" },
+  { id: "pulse.nextCol", label: "Next column", group: "Pulse", scope: "pulse" },
+  { id: "pulse.down", label: "Next card", group: "Pulse", scope: "pulse" },
+  { id: "pulse.up", label: "Previous card", group: "Pulse", scope: "pulse" },
+  { id: "pulse.first", label: "First card", group: "Pulse", scope: "pulse" },
+  { id: "pulse.last", label: "Last card", group: "Pulse", scope: "pulse" },
+  { id: "pulse.open", label: "Open token", group: "Pulse", scope: "pulse" },
+  { id: "pulse.openNew", label: "Open token in a new tab", group: "Pulse", scope: "pulse" },
+  { id: "pulse.copy", label: "Copy contract address", group: "Pulse", scope: "pulse" },
+  { id: "pulse.hide", label: "Hide token (blacklist)", group: "Pulse", scope: "pulse" },
+  { id: "pulse.blacklistDev", label: "Blacklist dev", group: "Pulse", scope: "pulse" },
+  { id: "pulse.filters", label: "Filters for the focused column", group: "Pulse", scope: "pulse" },
+  { id: "pulse.pause", label: "Pause or resume column", group: "Pulse", scope: "pulse" },
+  { id: "pulse.pauseAll", label: "Pause or resume all columns", group: "Pulse", scope: "pulse" },
+  { id: "token.sideBuy", label: "Trade side: Buy", group: "Token page", scope: "token" },
+  { id: "token.sideSell", label: "Trade side: Sell", group: "Token page", scope: "token" },
+  { id: "token.market", label: "Order type: Market", group: "Token page", scope: "token" },
+  { id: "token.limit", label: "Order type: Limit", group: "Token page", scope: "token" },
+  { id: "token.advanced", label: "Order type: Advanced", group: "Token page", scope: "token" },
+  { id: "token.prevTf", label: "Previous timeframe", group: "Token page", scope: "token" },
+  { id: "token.nextTf", label: "Next timeframe", group: "Token page", scope: "token" },
+  { id: "token.toggleMc", label: "Toggle MC / Price", group: "Token page", scope: "token" },
+  { id: "token.alert", label: "New alert at the crosshair", group: "Token page", scope: "token" },
+  { id: "token.tab1", label: "Bottom tab 1", group: "Token page", scope: "token" },
+  { id: "token.tab2", label: "Bottom tab 2", group: "Token page", scope: "token" },
+  { id: "token.tab3", label: "Bottom tab 3", group: "Token page", scope: "token" },
+  { id: "token.tab4", label: "Bottom tab 4", group: "Token page", scope: "token" },
+  { id: "token.tab5", label: "Bottom tab 5", group: "Token page", scope: "token" },
+  { id: "token.tab6", label: "Bottom tab 6", group: "Token page", scope: "token" },
+  { id: "token.unlock", label: "Unlock to trade", group: "Token page", scope: "token" },
+  { id: "orders.cancel", label: "Cancel the selected order", group: "Navigation", scope: "orders" },
+  { id: "orders.rearm", label: "Re-arm the selected order", group: "Navigation", scope: "orders" },
 ];
 
 export const DEFAULT_HOTKEYS: Record<HotkeyAction, string[]> = {
@@ -81,6 +169,47 @@ export const DEFAULT_HOTKEYS: Record<HotkeyAction, string[]> = {
   "nav.trackers": ["G T"],
   "nav.portfolio": ["G W"],
   "nav.orders": ["G O"],
+  "nav.settings": ["G S"],
+  "buy.quick": ["Space+B"],
+  "quote.toggle": ["T C"],
+  "density.toggle": ["T D"],
+  "wallet.lock": ["Mod+Shift+L"],
+  panic: ["Mod+Shift+Backspace"],
+  "pulse.col1": ["1"],
+  "pulse.col2": ["2"],
+  "pulse.col3": ["3"],
+  "pulse.prevCol": ["H", "ArrowLeft"],
+  "pulse.nextCol": ["L", "ArrowRight"],
+  "pulse.down": ["J", "ArrowDown"],
+  "pulse.up": ["K", "ArrowUp"],
+  "pulse.first": ["Home"],
+  "pulse.last": ["End"],
+  "pulse.open": ["Enter"],
+  "pulse.openNew": ["Mod+Enter"],
+  "pulse.copy": ["C"],
+  "pulse.hide": ["X"],
+  "pulse.blacklistDev": ["Shift+X"],
+  "pulse.filters": ["F"],
+  "pulse.pause": ["P"],
+  "pulse.pauseAll": ["Shift+P"],
+  "token.sideBuy": ["B"],
+  "token.sideSell": ["S"],
+  "token.market": ["M"],
+  "token.limit": ["L"],
+  "token.advanced": ["A"],
+  "token.prevTf": ["["],
+  "token.nextTf": ["]"],
+  "token.toggleMc": ["Shift+M"],
+  "token.alert": ["Alt+A"],
+  "token.tab1": ["Shift+1"],
+  "token.tab2": ["Shift+2"],
+  "token.tab3": ["Shift+3"],
+  "token.tab4": ["Shift+4"],
+  "token.tab5": ["Shift+5"],
+  "token.tab6": ["Shift+6"],
+  "token.unlock": ["U"],
+  "orders.cancel": ["Delete"],
+  "orders.rearm": ["R"],
 };
 
 export const TRADE_ACTIONS: ReadonlySet<HotkeyAction> = new Set<HotkeyAction>([
@@ -93,6 +222,7 @@ export const TRADE_ACTIONS: ReadonlySet<HotkeyAction> = new Set<HotkeyAction>([
   "sell.3",
   "sell.4",
   "sell.initials",
+  "buy.quick",
 ]);
 
 export interface Chord {
@@ -207,12 +337,14 @@ export function bindingLabel(text: string): string[][] {
   if (!binding) return [[text]];
   return binding.map((c) => {
     const keys: string[] = [];
-    if (c.space) keys.push("␣");
-    if (c.mod) keys.push(IS_MAC ? "⌘" : "Ctrl");
+    // Words, never ⌘ ⇧ ⌥ glyphs (missing from our fonts, DESIGN.md 2.2). <Hotkey> draws the
+    // macOS modifiers as icons.
+    if (c.space) keys.push("Space");
+    if (c.mod) keys.push(IS_MAC ? "Cmd" : "Ctrl");
     if (c.ctrl) keys.push("Ctrl");
-    if (c.meta) keys.push(IS_MAC ? "⌘" : "Win");
-    if (c.alt) keys.push(IS_MAC ? "⌥" : "Alt");
-    if (c.shift) keys.push(c.key === "/" ? "" : "⇧");
+    if (c.meta) keys.push(IS_MAC ? "Cmd" : "Win");
+    if (c.alt) keys.push(IS_MAC ? "Option" : "Alt");
+    if (c.shift) keys.push(c.key === "/" ? "" : "Shift");
     keys.push(c.shift && c.key === "/" ? "?" : c.key === "Escape" ? "Esc" : c.key);
     return keys.filter(Boolean);
   });
@@ -221,8 +353,8 @@ export function bindingLabel(text: string): string[][] {
 export function compactLabel(text: string | undefined): string {
   if (!text) return "";
   return bindingLabel(text)
-    .map((k) => k.join(""))
-    .join(" ");
+    .map((k) => k.join("+"))
+    .join(" then ");
 }
 
 // ---------------------------------------------------------------------------

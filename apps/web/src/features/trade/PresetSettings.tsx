@@ -43,7 +43,10 @@ export function PresetSettingsRow({ side, className }: { side: "buy" | "sell"; c
         ref={anchor}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className={cn("flex h-6 w-full items-center gap-3 rounded-md px-1 text-xs text-muted hover:bg-hover hover:text-fg", className)}
+        className={cn(
+          "flex h-6 w-full items-center gap-3 rounded-sm px-1 text-label text-fg-2 hover:bg-surface-3 hover:text-fg-1",
+          className,
+        )}
         title={`Edit ${presetId} ${side} settings`}
       >
         <span className="flex items-center gap-1" title="Max slippage">
@@ -65,11 +68,11 @@ export function PresetSettingsRow({ side, className }: { side: "buy" | "sell"; c
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} width={288}>
         <div className="space-y-2 p-1">
-          <div className="text-sm font-semibold">
+          <div className="text-data font-semibold">
             {presetId} · {side === "buy" ? "Buy" : "Sell"} settings
           </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-sm">
-            <span className="text-muted">Max slippage</span>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-data">
+            <span className="text-fg-2">Max slippage</span>
             <NumberInput
               value={settings.slippagePct}
               onChange={(v) => setPresetSide(presetId, side, { slippagePct: v ?? 0 })}
@@ -81,8 +84,8 @@ export function PresetSettingsRow({ side, className }: { side: "buy" | "sell"; c
               ariaLabel="Max slippage"
             />
           </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-sm">
-            <span className="text-muted">Priority fee</span>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-data">
+            <span className="text-fg-2">Priority fee</span>
             <NumberInput
               value={settings.priorityFeeSol}
               onChange={(v) => setPresetSide(presetId, side, { priorityFeeSol: v ?? 0 })}
@@ -93,8 +96,8 @@ export function PresetSettingsRow({ side, className }: { side: "buy" | "sell"; c
               ariaLabel="Priority fee in SOL"
             />
           </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-sm">
-            <span className="text-muted">Tip</span>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-data">
+            <span className="text-fg-2">Tip</span>
             <NumberInput
               value={settings.tipSol}
               onChange={(v) => setPresetSide(presetId, side, { tipSol: v ?? 0 })}
@@ -118,7 +121,7 @@ export function PresetSettingsRow({ side, className }: { side: "buy" | "sell"; c
               }))}
               label="Landing preset"
             />
-            <p className={cn("text-xs", landing.risky ? "text-warn" : "text-dim")}>{landing.note}</p>
+            <p className={cn("text-label", landing.risky ? "text-warn" : "text-fg-3")}>{landing.note}</p>
           </div>
         </div>
       </Popover>

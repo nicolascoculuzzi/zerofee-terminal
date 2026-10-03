@@ -28,7 +28,7 @@ export const useToasts = create<ToastsState>()((set) => ({
   toasts: [],
   push(toast) {
     const id = `t${++seq}`;
-    const full: Toast = { ttl: 4500, ...toast, id, createdAt: Date.now() };
+    const full: Toast = { ttl: 4000, ...toast, id, createdAt: Date.now() };
     set((s) => ({ toasts: [...s.toasts, full].slice(-6) }));
     return id;
   },

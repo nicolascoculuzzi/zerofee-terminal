@@ -35,7 +35,7 @@ export function SocialFeed() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
         <Segmented<FeedScope>
           value={scope}
           onChange={setScope}
@@ -46,7 +46,7 @@ export function SocialFeed() {
           label="Feed scope"
         />
         {simulated && (
-          <span className="text-xs text-warn" title="Posts come from the in-browser simulation, not X.">
+          <span className="text-label text-warn" title="Posts come from the in-browser simulation, not X.">
             Simulated feed (mock source)
           </span>
         )}
@@ -56,7 +56,7 @@ export function SocialFeed() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto" {...bind}>
         {shown.length === 0 ? (
-          <p className="px-3 py-4 text-sm text-dim">{empty}</p>
+          <p className="px-3 py-4 text-data text-fg-3">{empty}</p>
         ) : (
           shown.map((post) => (
             <PostItem

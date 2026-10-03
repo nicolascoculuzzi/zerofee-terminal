@@ -14,9 +14,9 @@ function PanelShell({ label, header, children, className }: { label: string; hea
   return (
     <section
       aria-label={label}
-      className={cn("@container flex min-h-0 min-w-0 flex-col rounded-lg border border-line bg-panel", className)}
+      className={cn("@container flex min-h-0 min-w-0 flex-col rounded-md border border-hairline bg-surface-1", className)}
     >
-      <header className="flex h-10 shrink-0 items-center gap-3 border-b border-line px-3">{header}</header>
+      <header className="flex h-10 shrink-0 items-center gap-3 border-b border-hairline px-3">{header}</header>
       {children}
     </section>
   );
@@ -33,7 +33,7 @@ export function WalletTracker({ className }: { className?: string }) {
       className={className}
       header={
         <>
-          <h2 className="hidden text-md font-semibold whitespace-nowrap @2xl:block">Wallet tracker</h2>
+          <h2 className="hidden text-heading font-semibold whitespace-nowrap @2xl:block">Wallet tracker</h2>
           <TabBar<WalletTab>
             label="Wallet tracker views"
             value={tab}
@@ -65,7 +65,7 @@ export function XTracker({ className }: { className?: string }) {
       className={className}
       header={
         <>
-          <h2 className="hidden items-center gap-1 text-md font-semibold whitespace-nowrap @lg:flex">
+          <h2 className="hidden items-center gap-1 text-heading font-semibold whitespace-nowrap @lg:flex">
             <XGlyph /> tracker
           </h2>
           <TabBar<XTab>

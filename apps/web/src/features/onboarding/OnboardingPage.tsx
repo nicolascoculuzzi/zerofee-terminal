@@ -188,19 +188,19 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="flex h-dvh flex-col bg-bg text-fg">
-      <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-panel px-4">
+    <div className="flex h-dvh flex-col bg-bg text-fg-1">
+      <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-hairline bg-surface-1 px-4">
         <Link to="/pulse" aria-label="zerofee home" className="shrink-0">
           <Logo />
         </Link>
-        <span className="hidden text-sm text-muted sm:inline">Account setup</span>
+        <span className="hidden text-data text-fg-2 sm:inline">Account setup</span>
         <div className="ml-auto flex items-center gap-3">
           {simulated && (
             <span className="hidden sm:inline-flex">
               <Chip tone="warn">Simulated</Chip>
             </span>
           )}
-          <Link to="/pulse" className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
+          <Link to="/pulse" className="inline-flex items-center gap-1 text-data text-fg-2 hover:text-fg-1">
             Skip, explore the demo <ArrowRight className="icon-sm" />
           </Link>
         </div>
@@ -209,8 +209,8 @@ export default function OnboardingPage() {
       <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex max-w-5xl flex-col gap-6 px-4 py-6 sm:px-8 md:flex-row md:gap-8">
           <aside className="md:w-64 md:shrink-0">
-            <h1 className="text-lg font-semibold text-fg">Set up zerofee</h1>
-            <p className="mt-1 mb-4 text-sm text-muted">
+            <h1 className="text-title font-semibold text-fg-1">Set up zerofee</h1>
+            <p className="mt-1 mb-4 text-data text-fg-2">
               Connect your wallet, sign in, and create a trading wallet that stays encrypted in this browser.
               {simulated && " Everything here is simulated: no real wallet, keys or funds."}
             </p>

@@ -4,7 +4,7 @@ import { Button } from "../../components/ui/Button";
 import { CopyButton, NumberInput, Segmented } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
 import { cn } from "../../lib/cn";
-import { fmtSolBalance, fmtSolShort, shortAddr } from "../../lib/format";
+import { fmtSol, fmtSolShort, shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import { useSettings } from "../../state/settings";
 import { useToasts } from "../../state/toasts";
@@ -40,30 +40,30 @@ function FundFromConnected({ address }: { address: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between rounded-md bg-panel-2 px-3 py-2 text-sm">
-        <span className="flex items-center gap-1 text-muted">
+      <div className="flex items-center justify-between rounded-sm bg-surface-2 px-3 py-2 text-data">
+        <span className="flex items-center gap-1 text-fg-2">
           <Wallet className="icon-md" /> <span className="capitalize">{connected?.provider ?? "Wallet"}</span>{" "}
           <span className="font-mono">{connected ? shortAddr(connected.address) : ""}</span>
         </span>
-        <span className="font-semibold">{connectedSol === null ? "…" : `${fmtSolBalance(connectedSol)} SOL`}</span>
+        <span className="font-semibold">{connectedSol === null ? "…" : `${fmtSol(connectedSol)} SOL`}</span>
       </div>
       <NumberInput value={amount} onChange={setAmount} suffix="SOL" min={0} className="h-9" ariaLabel="Amount to fund" />
       <div className="flex gap-1">
         {[0.5, 1, 2, 5].map((v) => (
-          <Button key={v} size="xs" variant="subtle" className="flex-1" onClick={() => setAmount(v)}>
+          <Button key={v} size="xs" variant="secondary" className="flex-1" onClick={() => setAmount(v)}>
             {v} SOL
           </Button>
         ))}
         <Button
           size="xs"
-          variant="subtle"
+          variant="secondary"
           className="flex-1"
           onClick={() => connectedSol !== null && setAmount(Math.max(0, Math.floor((connectedSol - 0.01) * 1000) / 1000))}
         >
           Max
         </Button>
       </div>
-      <p className="text-xs text-dim">
+      <p className="text-label text-fg-3">
         One approval in your connected wallet moves SOL into the trading wallet. Keep only what you're willing to lose in it.
       </p>
       <Button variant="primary" size="lg" className="w-full" disabled={busy || !amount} onClick={() => void submit()}>
@@ -77,7 +77,7 @@ function Deposit({ address }: { address: string }) {
   return (
     <div className="space-y-3">
       <div className="flex gap-3">
-        <div className="flex h-28 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-line-strong text-center text-2xs text-dim">
+        <div className="flex h-28 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-hairline-strong text-center text-micro text-fg-3">
           <QrCode className="icon-lg" />
           QR code
           <br />
@@ -85,13 +85,13 @@ function Deposit({ address }: { address: string }) {
         </div>
         <div className="min-w-0 space-y-2">
           <div className="zf-label">Trading wallet address</div>
-          <div className="flex items-start gap-1 break-all rounded-md bg-panel-2 p-2 font-mono text-xs">
+          <div className="flex items-start gap-1 break-all rounded-sm bg-surface-2 p-2 font-mono text-label">
             {address}
             <CopyButton text={address} label="Copy address" />
           </div>
         </div>
       </div>
-      <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
+      <ul className="list-disc space-y-1 pl-4 text-label text-fg-2">
         <li>Send only SOL on Solana mainnet to this address (for example from an exchange withdrawal).</li>
         <li>The balance updates when the transfer lands; no memo is needed.</li>
       </ul>
@@ -140,18 +140,17 @@ function Withdraw({ address }: { address: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between text-sm text-muted">
+      <div className="flex justify-between text-data text-fg-2">
         <span>Available</span>
-        <span className="text-fg">
-          {fmtSolBalance(available)} SOL{" "}
-          {reserved > 0 && <span className="text-dim">({fmtSolBalance(reserved)} reserved by armed orders)</span>}
+        <span className="text-fg-1">
+          {fmtSol(available)} SOL {reserved > 0 && <span className="text-fg-3">({fmtSol(reserved)} reserved by armed orders)</span>}
         </span>
       </div>
       <NumberInput
         value={amount}
         onChange={setAmount}
         suffix={
-          <button type="button" className="font-semibold text-fg" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
+          <button type="button" className="font-semibold text-fg-1" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
             Max
           </button>
         }
@@ -166,12 +165,12 @@ function Withdraw({ address }: { address: string }) {
           type="button"
           onClick={() => setDest("connected")}
           className={cn(
-            "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm",
-            dest === "connected" ? "border-fg/40 bg-hover" : "border-line hover:bg-hover",
+            "flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left text-data",
+            dest === "connected" ? "border-fg-1/40 bg-surface-3" : "border-hairline hover:bg-surface-3",
           )}
         >
           <span>
-            Connected wallet <span className="font-mono text-dim">{connected ? shortAddr(connected.address) : "—"}</span>
+            Connected wallet <span className="font-mono text-fg-3">{connected ? shortAddr(connected.address) : "—"}</span>
           </span>
           <span className="text-buy">Instant</span>
         </button>
@@ -184,26 +183,26 @@ function Withdraw({ address }: { address: string }) {
               disabled={pending}
               onClick={() => setDest(d.id)}
               className={cn(
-                "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm disabled:opacity-60",
-                dest === d.id ? "border-fg/40 bg-hover" : "border-line hover:bg-hover",
+                "flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left text-data disabled:opacity-60",
+                dest === d.id ? "border-fg-1/40 bg-surface-3" : "border-hairline hover:bg-surface-3",
               )}
             >
               <span>
-                {d.label} <span className="font-mono text-dim">{shortAddr(d.address)}</span>
+                {d.label} <span className="font-mono text-fg-3">{shortAddr(d.address)}</span>
               </span>
               {pending ? (
                 <span className="flex items-center gap-1 text-warn">
                   <Clock className="icon-sm" /> active in {Math.ceil((d.activeAt - Date.now()) / 3_600_000)} h
                 </span>
               ) : (
-                <span className="text-muted">Verified</span>
+                <span className="text-fg-2">Verified</span>
               )}
             </button>
           );
         })}
         <button
           type="button"
-          className="text-xs text-muted underline decoration-line-strong underline-offset-2 hover:text-fg"
+          className="text-label text-fg-2 underline decoration-hairline-strong underline-offset-2 hover:text-fg-1"
           onClick={() => openSettings("withdrawals")}
         >
           Manage destinations (new ones need a wallet signature + 24 h delay)
@@ -226,7 +225,7 @@ export function FundModal() {
   return (
     <Modal open={open} onClose={close} title={`Trading wallet${label ? ` · ${label}` : ""}`} width={440}>
       {!address ? (
-        <div className="text-sm text-muted">Create a trading wallet first.</div>
+        <div className="text-data text-fg-2">Create a trading wallet first.</div>
       ) : (
         <div className="space-y-4">
           <Segmented<FundTab>

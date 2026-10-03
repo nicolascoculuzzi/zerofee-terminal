@@ -21,9 +21,9 @@ export function Panel({
   bodyClassName?: string;
 }) {
   return (
-    <section className={cn("flex min-w-0 flex-col rounded-lg border border-line bg-panel", className)}>
-      <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
-        <h2 className="truncate text-sm font-semibold text-fg">{title}</h2>
+    <section className={cn("flex min-w-0 flex-col rounded-md border border-hairline bg-surface-1", className)}>
+      <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-hairline px-3">
+        <h2 className="truncate text-data font-semibold text-fg-1">{title}</h2>
         {extra && <div className="flex shrink-0 items-center gap-2">{extra}</div>}
       </header>
       <div className={cn("flex-1", bodyClassName)}>{children}</div>
@@ -35,7 +35,7 @@ export function Panel({
 export function StatRow({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
     <div className="flex h-6 items-center justify-between gap-2">
-      <dt className="truncate text-muted">{label}</dt>
+      <dt className="truncate text-fg-2">{label}</dt>
       <dd className="flex shrink-0 items-baseline gap-1 text-right">{children}</dd>
     </div>
   );

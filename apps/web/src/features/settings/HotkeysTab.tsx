@@ -159,7 +159,7 @@ export function HotkeysTab() {
         title="Hotkeys"
         description="Click Record, then press the keys. Hold Space first to record a Space combo; Esc cancels."
         actions={
-          <Button size="xs" variant="outline" icon={<RotateCcw className="icon-sm" />} onClick={resetAll}>
+          <Button size="xs" variant="secondary" icon={<RotateCcw className="icon-sm" />} onClick={resetAll}>
             Reset to defaults
           </Button>
         }
@@ -195,12 +195,12 @@ export function HotkeysTab() {
                   tabIndex={-1}
                   className="flex flex-wrap items-center gap-2 px-3 py-2"
                 >
-                  <div className={cn("min-w-0 flex-1 text-sm", tradeOff ? "text-dim" : "text-fg")}>
+                  <div className={cn("min-w-0 flex-1 text-data", tradeOff ? "text-fg-3" : "text-fg-1")}>
                     {a.label}
                     {tradeOff && <Chip className="ml-2">Off</Chip>}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-1">
-                    {bindings.length === 0 && !isRecording && <span className="text-xs text-dim">Not set</span>}
+                    {bindings.length === 0 && !isRecording && <span className="text-label text-fg-3">Not set</span>}
                     {bindings.map((b) => {
                       const dup = duplicates.has(canonical(b));
                       return (
@@ -208,8 +208,8 @@ export function HotkeysTab() {
                           key={b}
                           title={dup ? "Also bound to another action" : undefined}
                           className={cn(
-                            "inline-flex h-6 items-center gap-1 rounded-md border px-1",
-                            dup ? "border-warn/60" : "border-line",
+                            "inline-flex h-6 items-center gap-1 rounded-sm border px-1",
+                            dup ? "border-warn-edge" : "border-hairline",
                           )}
                         >
                           <Hotkey binding={b} />
@@ -217,7 +217,7 @@ export function HotkeysTab() {
                             type="button"
                             aria-label={`Remove ${compactLabel(b)} from ${a.label}`}
                             onClick={() => remove(a.id, b)}
-                            className="flex size-4 items-center justify-center rounded-sm text-dim hover:bg-hover hover:text-fg"
+                            className="flex size-4 items-center justify-center rounded-xs text-fg-3 hover:bg-surface-3 hover:text-fg-1"
                           >
                             <X className="icon-xs" />
                           </button>
@@ -229,7 +229,7 @@ export function HotkeysTab() {
                         ref={captureRef}
                         tabIndex={-1}
                         aria-live="polite"
-                        className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-line-strong px-2 text-xs text-fg"
+                        className="inline-flex h-6 items-center gap-1 rounded-sm border border-dashed border-hairline-strong px-2 text-label text-fg-1"
                       >
                         {spaceHeld ? (
                           <>
@@ -244,7 +244,7 @@ export function HotkeysTab() {
                             setRecording(null);
                             setSpaceHeld(false);
                           }}
-                          className="ml-1 text-dim hover:text-fg"
+                          className="ml-1 text-fg-3 hover:text-fg-1"
                         >
                           Cancel
                         </button>
@@ -262,7 +262,7 @@ export function HotkeysTab() {
                     )}
                   </div>
                 </div>
-                {notice?.action === a.id && <div className="px-3 pb-2 text-xs text-dim">{notice.text}</div>}
+                {notice?.action === a.id && <div className="px-3 pb-2 text-label text-fg-3">{notice.text}</div>}
                 {conflict?.action === a.id && (
                   <div className="px-3 pb-2">
                     <Note tone="warn">
@@ -272,7 +272,7 @@ export function HotkeysTab() {
                           Replace moves it here.
                         </span>
                         <span className="flex gap-1">
-                          <Button size="xs" variant="outline" onClick={replace}>
+                          <Button size="xs" variant="secondary" onClick={replace}>
                             Replace
                           </Button>
                           <Button size="xs" variant="ghost" onClick={() => setConflict(null)}>

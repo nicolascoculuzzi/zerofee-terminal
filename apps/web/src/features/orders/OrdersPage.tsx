@@ -43,10 +43,10 @@ const BROWSER_OPEN = [
 
 function Stat({ label, value, sub }: { label: string; value: ReactNode; sub: ReactNode }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1 bg-panel p-3">
+    <div className="flex min-w-0 flex-col gap-1 bg-surface-1 p-3">
       <span className="zf-label">{label}</span>
-      <span className="truncate text-xl font-semibold">{value}</span>
-      <div className="min-h-4 text-xs text-muted">{sub}</div>
+      <span className="truncate text-display-2 font-semibold">{value}</span>
+      <div className="min-h-4 text-label text-fg-2">{sub}</div>
     </div>
   );
 }
@@ -54,14 +54,14 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub: Rea
 function NoteColumn({ icon: Icon, title, items, tone }: { icon: LucideIcon; title: string; items: string[]; tone: "buy" | "warn" }) {
   return (
     <div className="min-w-0">
-      <h3 className={cn("flex items-center gap-1 text-sm font-medium", tone === "buy" ? "text-buy" : "text-warn")}>
+      <h3 className={cn("flex items-center gap-1 text-data font-medium", tone === "buy" ? "text-buy" : "text-warn")}>
         <Icon className="icon-sm" />
         {title}
       </h3>
-      <ul className="mt-2 grid gap-x-4 gap-y-1 text-xs text-muted sm:grid-cols-2">
+      <ul className="mt-2 grid gap-x-4 gap-y-1 text-label text-fg-2 sm:grid-cols-2">
         {items.map((item) => (
           <li key={item} className="flex gap-2">
-            <span className="mt-2 size-1 shrink-0 rounded-full bg-dim" />
+            <span className="mt-2 size-1 shrink-0 rounded-full bg-fg-3" />
             {item}
           </li>
         ))}
@@ -95,15 +95,15 @@ function TabClosedNote() {
           // Storage unavailable (private mode): the note just reopens next time.
         }
       }}
-      className="group rounded-lg border border-line bg-panel"
+      className="group rounded-md border border-hairline bg-surface-1"
     >
-      <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
-        <Info className="icon-sm text-dim" />
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-3 text-data font-semibold [&::-webkit-details-marker]:hidden">
+        <Info className="icon-sm text-fg-3" />
         What keeps running when you close this tab
-        <ChevronDown className="icon-sm ml-auto text-dim transition-transform group-open:rotate-180" />
+        <ChevronDown className="icon-sm ml-auto text-fg-3 transition-transform group-open:rotate-180" />
       </summary>
-      <div className="flex flex-col gap-3 border-t border-line p-3">
-        <p className="text-sm text-muted">
+      <div className="flex flex-col gap-3 border-t border-hairline p-3">
+        <p className="text-data text-fg-2">
           Your browser pre-signs each order against a durable nonce, so it never expires. The server holds the signed transactions and
           submits one only when its trigger fires; it can't change the size, minimum output, fees or destination. Every order also stores a
           pre-signed cancel. Orders whose token isn't known in advance have to be built and signed live, so they need this browser open.
@@ -159,8 +159,8 @@ function PanicDialog({
         </div>
       }
     >
-      <p className="text-base text-fg">Panic cancels every armed order and locks the keystore.</p>
-      <ul className="mt-3 flex flex-col gap-1 text-sm text-muted">
+      <p className="text-body text-fg-1">Panic cancels every armed order and locks the keystore.</p>
+      <ul className="mt-3 flex flex-col gap-1 text-data text-fg-2">
         <li>
           Fires the stored pre-signed cancel for {fmtCount(openCount)} open order{openCount === 1 ? "" : "s"}; their nonces advance, so the
           signed transactions can never land.
@@ -198,11 +198,11 @@ export default function OrdersPage() {
     <div className="h-full overflow-y-auto">
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
         <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-lg font-semibold">Armed orders</h1>
-          <p className="text-sm text-muted">Pre-signed on durable nonces. The server can submit them, never change them.</p>
+          <h1 className="text-title font-semibold">Armed orders</h1>
+          <p className="text-data text-fg-2">Pre-signed on durable nonces. The server can submit them, never change them.</p>
         </header>
 
-        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-hairline bg-hairline lg:grid-cols-4">
           <Stat
             label="Open orders"
             value={fmtCount(openCount)}
@@ -231,17 +231,17 @@ export default function OrdersPage() {
               )
             }
           />
-          <div className="flex min-w-0 flex-col justify-center gap-1 bg-panel p-3">
+          <div className="flex min-w-0 flex-col justify-center gap-1 bg-surface-1 p-3">
             <Button variant="danger" size="md" icon={<OctagonX className="icon-sm" />} onClick={() => setPanicOpen(true)}>
               Panic
             </Button>
-            <span className="text-center text-2xs text-dim">Cancel all orders, lock keystore</span>
+            <span className="text-center text-micro text-fg-3">Cancel all orders, lock keystore</span>
           </div>
         </div>
 
         <TabClosedNote />
 
-        <section className="min-w-0 rounded-lg border border-line bg-panel">
+        <section className="min-w-0 rounded-md border border-hairline bg-surface-1">
           {loaded ? <OrdersList orders={orders} /> : <EmptyState title="Loading orders…" />}
         </section>
       </div>

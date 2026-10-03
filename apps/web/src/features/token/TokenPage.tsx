@@ -70,16 +70,16 @@ export default function TokenPage() {
 
   if (!mint || status === "missing") {
     return (
-      <div className="p-4 text-sm text-muted">
+      <div className="p-4 text-data text-fg-2">
         This token isn't in the live set (unknown mint or pruned by the feed).{" "}
-        <Link to="/pulse" className="text-fg underline decoration-line-strong underline-offset-2">
+        <Link to="/pulse" className="text-fg-1 underline decoration-hairline-strong underline-offset-2">
           Back to Pulse
         </Link>
       </div>
     );
   }
   if (!detail || detail.summary.mint !== mint) {
-    return <div className="p-4 text-sm text-dim">Loading token…</div>;
+    return <div className="p-4 text-data text-fg-3">Loading token…</div>;
   }
 
   if (!wide) {
@@ -87,7 +87,7 @@ export default function TokenPage() {
       <div className="flex h-full flex-col">
         <TokenHeader token={detail.summary} />
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="flex h-80 flex-col border-b border-line">
+          <div className="flex h-80 flex-col border-b border-hairline">
             <TokenChart key={mint} mint={mint} supply={detail.summary.supply} />
           </div>
           <div className="h-120">
@@ -105,11 +105,11 @@ export default function TokenPage() {
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <TokenChart key={mint} mint={mint} supply={detail.summary.supply} />
-          <div className="h-72 shrink-0 border-t border-line xl:h-80">
+          <div className="h-72 shrink-0 border-t border-hairline xl:h-80">
             <BottomTabs detail={detail} />
           </div>
         </div>
-        <aside className="w-80 shrink-0 overflow-y-auto border-l border-line bg-panel" aria-label="Trade">
+        <aside className="w-80 shrink-0 overflow-y-auto border-l border-hairline bg-surface-1" aria-label="Trade">
           <TradePanel key={mint} detail={detail} />
           <TokenInfo detail={detail} />
         </aside>

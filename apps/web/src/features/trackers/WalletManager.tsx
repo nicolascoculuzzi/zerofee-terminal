@@ -53,15 +53,15 @@ const WalletRow = memo(function WalletRow({
   onConfirm: (address: string | null) => void;
 }) {
   return (
-    <div className="flex h-7 items-center gap-2 px-3 text-xs hover:bg-hover">
-      <Age ts={wallet.createdAt} className="w-16 shrink-0 text-dim" />
+    <div className="flex h-7 items-center gap-2 px-3 text-label hover:bg-surface-3">
+      <Age ts={wallet.createdAt} className="w-16 shrink-0 text-fg-3" />
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <WalletGlyph emoji={wallet.emoji} name={wallet.name} />
-        <span className="truncate font-medium text-fg">{wallet.name}</span>
+        <span className="truncate font-medium text-fg-1">{wallet.name}</span>
         <Link
           to={`/portfolio?wallet=${encodeURIComponent(wallet.address)}`}
           title={`Open ${wallet.address}`}
-          className="hidden shrink-0 font-mono text-dim hover:text-fg @sm:inline"
+          className="hidden shrink-0 font-mono text-fg-3 hover:text-fg-1 @sm:inline"
         >
           {shortAddr(wallet.address, 4, 4)}
         </Link>
@@ -88,7 +88,7 @@ const WalletRow = memo(function WalletRow({
                 onConfirm(null);
                 removeWithUndo(wallet);
               }}
-              className="flex size-5 items-center justify-center rounded-md text-sell transition-colors hover:bg-sell/10"
+              className="flex size-5 items-center justify-center rounded-sm text-sell transition-colors hover:bg-sell-tint"
             >
               <Check className="icon-sm" />
             </button>
@@ -130,7 +130,7 @@ function SortHeader({
       type="button"
       onClick={onClick}
       title={active ? `Sorted ${dir === "asc" ? "ascending" : "descending"}; click to reverse` : "Sort"}
-      className={cn("flex items-center gap-1 uppercase hover:text-fg", active && "text-muted", className)}
+      className={cn("flex items-center gap-1 hover:text-fg-1", active && "text-fg-2", className)}
     >
       {children}
       {active && <Arrow className="icon-xs" />}
@@ -185,7 +185,7 @@ export function WalletManager() {
 
   return (
     <div className="@container flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
         <SearchField
           className="flex-1 basis-40"
           value={query}
@@ -193,13 +193,13 @@ export function WalletManager() {
           placeholder="Search by name or address"
           label="Search wallets by name or address"
         />
-        <span className={cn("text-xs whitespace-nowrap", full ? "text-warn" : "text-dim")} title="Tracked wallets / limit">
+        <span className={cn("text-label whitespace-nowrap", full ? "text-warn" : "text-fg-3")} title="Tracked wallets / limit">
           {wallets.length.toLocaleString("en-US")} / {MAX_TRACKED_WALLETS.toLocaleString("en-US")}
         </span>
         <div className="flex items-center gap-2">
           <Button
             size="md"
-            variant="subtle"
+            variant="secondary"
             title="Import"
             icon={<Upload className="icon-sm" />}
             onClick={() => setModal({ kind: "import" })}
@@ -220,7 +220,7 @@ export function WalletManager() {
         </div>
       </div>
 
-      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-line px-3">
+      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-hairline px-3">
         <SortHeader className="w-16 shrink-0" active={sort.key === "created"} dir={sort.dir} onClick={() => toggleSort("created")}>
           Created
         </SortHeader>
@@ -232,9 +232,9 @@ export function WalletManager() {
       </div>
 
       {wallets.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-dim">No wallets yet. Add one, or import a list from GMGN or BullX.</p>
+        <p className="px-3 py-4 text-data text-fg-3">No wallets yet. Add one, or import a list from GMGN or BullX.</p>
       ) : rows.length === 0 ? (
-        <p className="px-3 py-4 text-sm text-dim">No wallets match “{deferredQuery.trim()}”.</p>
+        <p className="px-3 py-4 text-data text-fg-3">No wallets match “{deferredQuery.trim()}”.</p>
       ) : (
         <VirtualList
           label="Tracked wallets"

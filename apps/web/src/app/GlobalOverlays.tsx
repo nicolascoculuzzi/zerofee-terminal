@@ -7,6 +7,7 @@ import { InstantTradeWindow } from "../features/trade/InstantTradeWindow";
 import { UnlockModal } from "../features/trade/UnlockModal";
 import { useUi } from "../state/ui";
 import { HotkeysHelp } from "./HotkeysHelp";
+import { PanicDialog } from "./PanicDialog";
 import { Toasts } from "./Toasts";
 
 const SettingsDrawer = lazy(() => import("../features/settings/SettingsDrawer"));
@@ -25,6 +26,7 @@ export function GlobalOverlays() {
       <UnlockModal />
       <ApprovalModal />
       <HotkeysHelp />
+      <PanicDialog />
       <InstantTradeWindow />
       <TrackerDock />
       <Toasts />

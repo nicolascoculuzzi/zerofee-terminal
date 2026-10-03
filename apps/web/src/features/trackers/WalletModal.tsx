@@ -67,7 +67,7 @@ function WalletForm({ editing, onClose }: { editing: TrackedWallet | null; onClo
           onChange={(e) => setEmoji(Array.from(e.target.value.trim()).slice(0, TAG_MAX).join(""))}
           aria-describedby="wallet-tag-hint"
         />
-        <span id="wallet-tag-hint" className="text-xs text-dim">
+        <span id="wallet-tag-hint" className="text-label text-fg-3">
           Up to {TAG_MAX} characters shown before the name. Defaults to its first letter.
         </span>
       </label>
@@ -99,18 +99,18 @@ function WalletForm({ editing, onClose }: { editing: TrackedWallet | null; onClo
         />
       </label>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm">
-          <span className="block text-fg">Alerts</span>
-          <span className="block text-xs text-dim">Toast and sound when this wallet trades.</span>
+        <span className="text-data">
+          <span className="block text-fg-1">Alerts</span>
+          <span className="block text-label text-fg-3">Toast and sound when this wallet trades.</span>
         </span>
         <Switch checked={alerts} onChange={setAlerts} label="Alerts for this wallet" />
       </div>
       {error && (
-        <p role="alert" className="text-xs text-sell">
+        <p role="alert" className="text-label text-sell">
           {error}
         </p>
       )}
-      <div className="flex justify-end gap-2 border-t border-line pt-3">
+      <div className="flex justify-end gap-2 border-t border-hairline pt-3">
         <Button variant="ghost" size="md" onClick={onClose}>
           Cancel
         </Button>

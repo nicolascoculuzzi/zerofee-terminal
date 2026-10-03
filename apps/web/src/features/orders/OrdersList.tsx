@@ -37,16 +37,16 @@ export interface OrdersListProps {
   compact?: boolean;
 }
 
-const BADGE = "inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border px-1 text-2xs font-medium";
-const BADGE_NEUTRAL = "border-line text-dim";
+const BADGE = "inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-xs border px-1 text-micro font-medium";
+const BADGE_NEUTRAL = "border-hairline text-fg-3";
 
 /** State colours only: info = armed/pending, warn = needs attention, sell = failed. */
 const STATUS_STYLE: Record<OrderStatus, string> = {
-  armed: "border-info/30 bg-info/10 text-info",
-  submitted: "border-info/30 bg-info/10 text-info",
-  filled: "border-line-strong bg-elev text-fg",
-  stale: "border-warn/30 bg-warn/10 text-warn",
-  failed: "border-sell/30 bg-sell/10 text-sell",
+  armed: "border-info/30 bg-info-tint text-info",
+  submitted: "border-info/30 bg-info-tint text-info",
+  filled: "border-hairline-strong bg-surface-3 text-fg-1",
+  stale: "border-warn-edge bg-warn-tint text-warn",
+  failed: "border-sell-edge bg-sell-tint text-sell",
   cancelled: BADGE_NEUTRAL,
 };
 
@@ -64,7 +64,7 @@ function StatusBadge({ status }: { status: OrderStatus }) {
 function SafetyBadge({ order, muted }: { order: Order; muted: boolean }) {
   if (order.runsWithTabClosed) {
     return (
-      <span className={cn(BADGE, muted ? BADGE_NEUTRAL : "border-buy/30 bg-buy/10 text-buy")}>
+      <span className={cn(BADGE, muted ? BADGE_NEUTRAL : "border-buy-edge bg-buy-tint text-buy")}>
         <ShieldCheck className="icon-xs" />
         Safe to close tab
       </span>
@@ -72,7 +72,7 @@ function SafetyBadge({ order, muted }: { order: Order; muted: boolean }) {
   }
   return (
     <Tooltip content={order.needsBrowserReason ?? "This browser builds and signs the transaction when the order fires."}>
-      <button type="button" className={cn(BADGE, "cursor-help", muted ? BADGE_NEUTRAL : "border-warn/30 bg-warn/10 text-warn")}>
+      <button type="button" className={cn(BADGE, "cursor-help", muted ? BADGE_NEUTRAL : "border-warn-edge bg-warn-tint text-warn")}>
         <Monitor className="icon-xs" />
         Needs browser open
       </button>
@@ -113,19 +113,19 @@ const OrderRow = memo(function OrderRow({ order, compact }: { order: Order; comp
     <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2">
       <div className={cn("flex min-w-0 flex-col", compact ? "w-28" : "w-32 xl:w-36")}>
         {order.mint ? (
-          <Link to={`/t/${order.mint}`} className="truncate text-sm font-medium text-fg hover:underline">
+          <Link to={`/t/${order.mint}`} className="truncate text-data font-medium text-fg-1 hover:underline">
             {order.symbol}
           </Link>
         ) : (
-          <span className="truncate text-sm font-medium text-fg">{order.symbol}</span>
+          <span className="truncate text-data font-medium text-fg-1">{order.symbol}</span>
         )}
-        <span className={cn("text-xs", order.side === "buy" ? "text-buy" : "text-sell")}>{KIND_LABEL[order.kind]}</span>
+        <span className={cn("text-label", order.side === "buy" ? "text-buy" : "text-sell")}>{KIND_LABEL[order.kind]}</span>
       </div>
 
       <div className={cn("flex min-w-0 flex-col", compact ? "w-40" : "w-44")}>
-        <span className="truncate text-sm">{triggerText(order.trigger)}</span>
+        <span className="truncate text-data">{triggerText(order.trigger)}</span>
         {current !== null && (
-          <span className="truncate text-xs text-dim" title={distance ? `Now ${currentText(order, current)}, ${distance}` : undefined}>
+          <span className="truncate text-label text-fg-3" title={distance ? `Now ${currentText(order, current)}, ${distance}` : undefined}>
             {currentText(order, current)}
             {distance && ` · ${distance}`}
           </span>
@@ -133,8 +133,10 @@ const OrderRow = memo(function OrderRow({ order, compact }: { order: Order; comp
       </div>
 
       <div className="flex w-16 flex-col xl:items-end">
-        <span className="text-sm">{sizeText(order.size)}</span>
-        <span className="text-xs text-dim">{order.size.kind === "pct" ? "of holding" : order.side === "buy" ? "to spend" : "to sell"}</span>
+        <span className="text-data">{sizeText(order.size)}</span>
+        <span className="text-label text-fg-3">
+          {order.size.kind === "pct" ? "of holding" : order.side === "buy" ? "to spend" : "to sell"}
+        </span>
       </div>
 
       <div className="flex min-w-48 flex-1 flex-col items-start gap-1">
@@ -143,15 +145,15 @@ const OrderRow = memo(function OrderRow({ order, compact }: { order: Order; comp
           {compact && <SafetyBadge order={order} muted={!open} />}
         </div>
         {order.statusReason && (
-          <p className={cn("text-xs text-muted", compact && "max-w-full truncate")} title={order.statusReason}>
+          <p className={cn("text-label text-fg-2", compact && "max-w-full truncate")} title={order.statusReason}>
             {order.statusReason}
           </p>
         )}
         {fill && (
-          <p className="flex flex-wrap items-center gap-1 text-xs">
+          <p className="flex flex-wrap items-center gap-1 text-label">
             <span>{fill}</span>
             {order.filledAt !== null && (
-              <span className="text-dim">
+              <span className="text-fg-3">
                 <Age ts={order.filledAt} /> ago
               </span>
             )}
@@ -164,18 +166,18 @@ const OrderRow = memo(function OrderRow({ order, compact }: { order: Order; comp
         <>
           <div className="flex w-44 flex-col items-start gap-1">
             <SafetyBadge order={order} muted={!open} />
-            <span className="text-xs text-dim">
+            <span className="text-label text-fg-3">
               <span className={order.landing === "fast" ? "text-warn" : undefined}>{LANDING_LABEL[order.landing]}</span> ·{" "}
               {variantsText(order)}
             </span>
           </div>
           <div className="flex w-28 flex-col xl:items-end">
-            <span className={cn("text-sm", !open && "text-dim")} title={open ? "Held back from your available balance" : undefined}>
+            <span className={cn("text-data", !open && "text-fg-3")} title={open ? "Held back from your available balance" : undefined}>
               {open ? `${fmtSol(order.reservedSol)} SOL` : "released"}
             </span>
-            <span className="text-xs text-dim">{nonceText(order)}</span>
+            <span className="text-label text-fg-3">{nonceText(order)}</span>
           </div>
-          <div className="flex w-20 flex-col text-xs text-dim xl:items-end">
+          <div className="flex w-20 flex-col text-label text-fg-3 xl:items-end">
             <span title={`Created ${new Date(order.createdAt).toLocaleString()}`}>
               created <Age ts={order.createdAt} />
             </span>
@@ -190,7 +192,13 @@ const OrderRow = memo(function OrderRow({ order, compact }: { order: Order; comp
 
       <div className={cn("ml-auto flex items-center justify-end gap-1", !compact && "w-36")}>
         {canRearm && (
-          <Button size="sm" variant="outline" icon={<RotateCw className="icon-sm" />} disabled={busy !== null} onClick={() => run("rearm")}>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<RotateCw className="icon-sm" />}
+            disabled={busy !== null}
+            onClick={() => run("rearm")}
+          >
             {busy === "rearm" ? "Re-arming…" : "Re-arm"}
           </Button>
         )}
@@ -219,7 +227,7 @@ const ListRow = memo(function ListRow({
 }) {
   if (item.kind === "section") {
     return (
-      <div data-index={index} ref={measure} className="zf-label flex h-row items-center gap-2 border-b border-line bg-panel-2 px-3">
+      <div data-index={index} ref={measure} className="zf-label flex h-row items-center gap-2 border-b border-hairline bg-surface-2 px-3">
         {item.label}
         <span>{fmtCount(item.count)}</span>
       </div>
@@ -229,19 +237,19 @@ const ListRow = memo(function ListRow({
   if (!group.oco) {
     const order = group.orders[0];
     return (
-      <div data-index={index} ref={measure} className="border-b border-line last:border-b-0">
+      <div data-index={index} ref={measure} className="border-b border-hairline last:border-b-0">
         {order && <OrderRow order={order} compact={compact} />}
       </div>
     );
   }
   return (
-    <div data-index={index} ref={measure} className="border-b border-line bg-panel-2 last:border-b-0">
-      <div className="flex h-6 items-center gap-2 px-3 text-2xs text-dim">
+    <div data-index={index} ref={measure} className="border-b border-hairline bg-surface-2 last:border-b-0">
+      <div className="flex h-6 items-center gap-2 px-3 text-micro text-fg-3">
         <Link2 className="icon-xs" />
-        <span className="font-medium uppercase tracking-wide text-muted">OCO pair</span>
+        <span className="font-medium text-fg-2">OCO pair</span>
         <span className="truncate">one shared durable nonce: once either leg lands, the other can't</span>
       </div>
-      <div className="divide-y divide-line">
+      <div className="divide-y divide-hairline">
         {group.orders.map((o) => (
           <OrderRow key={o.id} order={o} compact={compact} />
         ))}
@@ -280,10 +288,7 @@ function buildItems(orders: Order[], filter: OrderFilter): ListItem[] {
 /** Column labels for the one-line row layout at xl widths (rows wrap into cards below that). */
 function ColumnHeader() {
   return (
-    <div
-      aria-hidden="true"
-      className="hidden h-row items-center gap-x-3 border-b border-line px-3 text-2xs uppercase tracking-wide text-dim xl:flex"
-    >
+    <div aria-hidden="true" className="hidden h-row items-center gap-x-3 border-b border-hairline px-3 text-micro text-fg-3 xl:flex">
       <span className="w-36">Order</span>
       <span className="w-44">Trigger</span>
       <span className="w-16 text-right">Size</span>
@@ -323,7 +328,7 @@ export function OrdersList({ orders, compact = false }: OrdersListProps) {
 
   return (
     <div className="min-w-0">
-      <div className="flex min-h-8 flex-wrap items-center gap-2 border-b border-line px-3 py-1">
+      <div className="flex min-h-8 flex-wrap items-center gap-2 border-b border-hairline px-3 py-1">
         <Segmented<OrderFilter>
           value={filter}
           onChange={setFilter}
@@ -333,7 +338,7 @@ export function OrdersList({ orders, compact = false }: OrdersListProps) {
             value: f.value,
             label: (
               <span className={cn(f.value === "rearm" && counts.rearm > 0 && filter !== "rearm" && "text-warn")}>
-                {f.label} <span className="text-dim">{fmtCount(counts[f.value])}</span>
+                {f.label} <span className="text-fg-3">{fmtCount(counts[f.value])}</span>
               </span>
             ),
           }))}

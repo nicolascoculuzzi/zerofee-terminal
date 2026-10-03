@@ -32,7 +32,7 @@ export function TradingTab() {
   };
 
   const usage = caps.dailySol > 0 ? spent / caps.dailySol : 1;
-  const meterColor = usage >= 1 ? "bg-sell" : usage >= 0.8 ? "bg-warn" : "bg-muted";
+  const meterColor = usage >= 1 ? "bg-sell" : usage >= 0.8 ? "bg-warn" : "bg-fg-2";
 
   const overCap: string[] = [];
   for (const id of PRESET_IDS) {
@@ -50,7 +50,7 @@ export function TradingTab() {
         <div className="space-y-2 p-3">
           {MODES.map((m) => (
             <RadioCard key={m} name="zf-default-mode" checked={defaultMode === m} onSelect={() => chooseMode(m)} title={MODE_INFO[m].label}>
-              <span className="block text-fg">{MODE_INFO[m].summary}</span>
+              <span className="block text-fg-1">{MODE_INFO[m].summary}</span>
               <span className="block">{MODE_INFO[m].detail}</span>
             </RadioCard>
           ))}
@@ -87,12 +87,12 @@ export function TradingTab() {
         <div className="space-y-2 px-3 py-2">
           <div className="flex items-baseline justify-between gap-2">
             <span className="zf-label">Spent today</span>
-            <span className="font-mono text-sm text-fg">
-              {fmtSol(spent)} <span className="text-dim">/ {fmtSol(caps.dailySol)} SOL</span>
+            <span className="font-mono text-data text-fg-1">
+              {fmtSol(spent)} <span className="text-fg-3">/ {fmtSol(caps.dailySol)} SOL</span>
             </span>
           </div>
           <ProgressBar value={usage} color={meterColor} />
-          <div className="text-xs text-dim">
+          <div className="text-label text-fg-3">
             {usage >= 1
               ? "Daily cap reached: new buys are refused until local midnight."
               : `${fmtSol(Math.max(0, caps.dailySol - spent))} SOL left today.`}

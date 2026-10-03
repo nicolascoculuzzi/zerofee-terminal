@@ -40,7 +40,7 @@ function richText(text: string): ReactNode[] {
       );
     } else {
       out.push(
-        <span key={at} className="font-mono text-muted" title={s}>
+        <span key={at} className="font-mono text-fg-2" title={s}>
           {shortAddr(s, 4, 4)}
         </span>,
       );
@@ -57,17 +57,17 @@ const MentionChip = memo(function MentionChip({ token }: { token: TokenRef }) {
   const mc = liveMc ?? token.marketCapUsd;
   const change = liveMc !== undefined && token.marketCapUsd > 0 ? ((liveMc - token.marketCapUsd) / token.marketCapUsd) * 100 : null;
   return (
-    <span className="relative inline-flex h-6 items-center gap-1 rounded-md border border-line bg-panel-2 pr-px pl-1 text-xs hover:bg-hover">
+    <span className="relative inline-flex h-6 items-center gap-1 rounded-sm border border-hairline bg-surface-2 pr-px pl-1 text-label hover:bg-surface-3">
       <Link
         to={`/t/${token.mint}`}
-        className="absolute inset-0 rounded-md"
+        className="absolute inset-0 rounded-sm"
         title={`MC at post ${fmtUsd(token.marketCapUsd)}${liveMc === undefined ? "" : ` · now ${fmtUsd(liveMc)}`}`}
       >
         <span className="sr-only">Open {token.symbol}</span>
       </Link>
       <TokenAvatar mint={token.mint} symbol={token.symbol} imageUri={token.imageUri} size="xs" />
-      <span className="font-semibold text-fg">{token.symbol}</span>
-      <span className="text-muted">{fmtUsd(mc)}</span>
+      <span className="font-semibold text-fg-1">{token.symbol}</span>
+      <span className="text-fg-2">{fmtUsd(mc)}</span>
       {change !== null && Math.abs(change) >= 0.1 && (
         <span className={change >= 0 ? "text-buy" : "text-sell"}>{fmtPct(change, { signed: true })}</span>
       )}
@@ -101,19 +101,19 @@ export const PostItem = memo(function PostItem({
   const kind = KIND[post.kind];
   const name = post.displayName || post.handle;
   return (
-    <article className={cn("flex gap-2 border-b border-line px-3 py-2", fresh && "zf-enter")}>
+    <article className={cn("flex gap-2 border-b border-hairline px-3 py-2", fresh && "zf-enter")}>
       <span
         aria-hidden="true"
-        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-elev text-xs font-semibold text-muted"
+        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-surface-3 text-label font-semibold text-fg-2"
       >
         {firstGlyph(name)}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex h-5 items-center gap-1 text-sm">
-          <span className="truncate font-semibold text-fg">{name}</span>
+        <div className="flex h-5 items-center gap-1 text-data">
+          <span className="truncate font-semibold text-fg-1">{name}</span>
           {post.verified && <BadgeCheck className="icon-sm text-info" aria-label="Verified" />}
-          <span className="min-w-0 truncate text-dim">@{post.handle}</span>
-          <span className="ml-auto flex shrink-0 items-center gap-1 pl-1 text-xs text-dim">
+          <span className="min-w-0 truncate text-fg-3">@{post.handle}</span>
+          <span className="ml-auto flex shrink-0 items-center gap-1 pl-1 text-label text-fg-3">
             <Age ts={post.ts} />
             {!compact && (
               <>
@@ -143,7 +143,7 @@ export const PostItem = memo(function PostItem({
             {kind.label}
           </div>
         )}
-        <p className="mt-1 break-words text-sm whitespace-pre-wrap text-fg">{richText(post.text)}</p>
+        <p className="mt-1 break-words text-data whitespace-pre-wrap text-fg-1">{richText(post.text)}</p>
         {post.mentions.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
             {post.mentions.map((m) => (

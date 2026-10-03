@@ -42,7 +42,7 @@ function RangeRow({ label, unit, value, onChange }: { label: string; unit: strin
   const suffix = unit === "%" ? "%" : unit === "min" ? "min" : undefined;
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-      <span className="truncate text-sm text-muted">{label}</span>
+      <span className="truncate text-data text-fg-2">{label}</span>
       <NumberInput
         value={value.min}
         onChange={(min) => onChange({ ...value, min })}
@@ -74,12 +74,15 @@ function Toggle({ on, onClick, children }: { on: boolean; onClick: () => void; c
       aria-pressed={on}
       onClick={onClick}
       className={cn(
-        "flex h-7 items-center gap-2 rounded-md border px-2 text-left text-sm",
-        on ? "border-line-strong bg-elev text-fg" : "border-line text-muted hover:text-fg",
+        "flex h-7 items-center gap-2 rounded-sm border px-2 text-left text-data",
+        on ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
       )}
     >
       <span
-        className={cn("flex size-3 items-center justify-center rounded-sm border", on ? "border-fg bg-fg text-bg" : "border-line-strong")}
+        className={cn(
+          "flex size-3 items-center justify-center rounded-xs border",
+          on ? "border-fg-1 bg-accent text-bg" : "border-hairline-strong",
+        )}
       >
         {on && <Check className="icon-xs" strokeWidth={3} />}
       </span>
@@ -201,9 +204,9 @@ export function FilterModal({ open, column: initialColumn, onClose }: { open: bo
       width={680}
       footer={
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted">
-            <span className="font-semibold text-fg">{matches.n}</span> of {matches.total} in {COLUMN_LABEL[column]} match now
-            {activeFilterCount(draft) > 0 && <span className="text-dim"> · {activeFilterCount(draft)} conditions</span>}
+          <span className="text-data text-fg-2">
+            <span className="font-semibold text-fg-1">{matches.n}</span> of {matches.total} in {COLUMN_LABEL[column]} match now
+            {activeFilterCount(draft) > 0 && <span className="text-fg-3"> · {activeFilterCount(draft)} conditions</span>}
           </span>
           <div className="ml-auto flex items-center gap-2">
             <Button size="md" variant="ghost" onClick={() => setDraft(emptyFilter())}>
@@ -211,7 +214,7 @@ export function FilterModal({ open, column: initialColumn, onClose }: { open: bo
             </Button>
             <Button
               size="md"
-              variant="outline"
+              variant="secondary"
               onClick={() => {
                 applyFilterToAll(draft);
                 setColumn(column, { activeFilter: preset });
@@ -282,10 +285,10 @@ export function FilterModal({ open, column: initialColumn, onClose }: { open: bo
         </div>
 
         {importText !== null && (
-          <div className="space-y-2 rounded-lg border border-line bg-panel-2 p-3">
-            <div className="text-sm text-muted">Paste a filter or preset export (zerofee JSON; Axiom-style field names are accepted).</div>
+          <div className="space-y-2 rounded-md border border-hairline bg-surface-2 p-3">
+            <div className="text-data text-fg-2">Paste a filter or preset export (zerofee JSON; Axiom-style field names are accepted).</div>
             <textarea
-              className="h-24 w-full rounded-md border border-line-strong bg-bg p-2 font-mono text-xs outline-none focus:border-accent"
+              className="h-24 w-full rounded-sm border border-hairline-strong bg-bg p-2 font-mono text-label outline-none focus:border-accent"
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
               placeholder='{"app":"zerofee","kind":"pulse-filters","v":1,"filters":{…}}'
@@ -294,7 +297,7 @@ export function FilterModal({ open, column: initialColumn, onClose }: { open: bo
               <Button size="sm" variant="primary" disabled={!importText.trim()} onClick={() => runImport(importText)}>
                 Import
               </Button>
-              <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
+              <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
                 Load file
               </Button>
               <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={onFile} />
@@ -323,15 +326,15 @@ export function FilterModal({ open, column: initialColumn, onClose }: { open: bo
           </label>
         </div>
 
-        <div className="flex border-b border-line">
+        <div className="flex border-b border-hairline">
           {tabs.map((t) => (
             <button
               key={t.value}
               type="button"
               onClick={() => setTab(t.value)}
               className={cn(
-                "-mb-px border-b-2 px-3 pb-2 text-sm font-medium",
-                tab === t.value ? "border-fg text-fg" : "border-transparent text-muted hover:text-fg",
+                "-mb-px border-b-2 px-3 pb-2 text-data font-medium",
+                tab === t.value ? "border-fg-1 text-fg-1" : "border-transparent text-fg-2 hover:text-fg-1",
               )}
             >
               {t.label}
@@ -341,11 +344,11 @@ export function FilterModal({ open, column: initialColumn, onClose }: { open: bo
 
         {tab === "protocols" && (
           <div className="space-y-2">
-            <div className="flex gap-3 text-xs">
-              <button type="button" className="text-muted hover:text-fg" onClick={() => patch({ protocols: LAUNCHPADS.map((l) => l.id) })}>
+            <div className="flex gap-3 text-label">
+              <button type="button" className="text-fg-2 hover:text-fg-1" onClick={() => patch({ protocols: LAUNCHPADS.map((l) => l.id) })}>
                 Select all
               </button>
-              <button type="button" className="text-muted hover:text-fg" onClick={() => patch({ protocols: [] })}>
+              <button type="button" className="text-fg-2 hover:text-fg-1" onClick={() => patch({ protocols: [] })}>
                 Unselect all
               </button>
               {draft.protocols.length === 0 && <span className="text-warn">No protocols selected: nothing will match.</span>}

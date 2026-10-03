@@ -78,12 +78,12 @@ function DisplayMenu() {
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} align="end" width={248}>
         <div className="space-y-2">
           {rows.map((r) => (
-            <div key={r.key} className="flex items-center justify-between gap-2 px-1 text-sm">
-              <span className="text-muted">{r.label}</span>
+            <div key={r.key} className="flex items-center justify-between gap-2 px-1 text-data">
+              <span className="text-fg-2">{r.label}</span>
               <Switch checked={display[r.key]} onChange={(v) => setDisplay({ [r.key]: v })} label={r.label} />
             </div>
           ))}
-          <div className="border-t border-line px-1 pt-2">
+          <div className="border-t border-hairline px-1 pt-2">
             <div className="zf-label mb-1">List refresh rate</div>
             <Segmented<string>
               size="xs"
@@ -116,8 +116,8 @@ export default function PulsePage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-panel px-3">
-        <h1 className="text-lg font-semibold">Pulse</h1>
+      <div className="flex h-10 shrink-0 items-center gap-3 border-b border-hairline bg-surface-1 px-3">
+        <h1 className="text-title font-semibold">Pulse</h1>
         <div className="xl:hidden">
           <QuickBuyControl />
         </div>
@@ -132,14 +132,14 @@ export default function PulsePage() {
       </div>
 
       {wide ? (
-        <div className="flex min-h-0 flex-1 divide-x divide-line">
+        <div className="flex min-h-0 flex-1 divide-x divide-hairline">
           {COLUMNS.map((c) => (
             <PulseColumn key={c} column={c} onOpenFilters={setFilterColumn} />
           ))}
         </div>
       ) : (
         <>
-          <div className="shrink-0 border-b border-line p-2">
+          <div className="shrink-0 border-b border-hairline p-2">
             <Segmented<PulseColumnId>
               className="w-full"
               value={mobileColumn}

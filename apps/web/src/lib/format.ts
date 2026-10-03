@@ -1,129 +1,283 @@
-const SUBSCRIPT_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
+/**
+ * The one formatter module (docs/design/DESIGN.md section 3). Components never call toFixed or
+ * toLocaleString directly. Locale is fixed to en-US. Negatives use U+2212; unknown values are
+ * an en dash. Tiny prices come back as parts and render through <Num> (no Unicode subscripts:
+ * our fonts don't have them).
+ */
 
-function subscript(n: number): string {
-  return String(n)
-    .split("")
-    .map((d) => SUBSCRIPT_DIGITS[Number(d)] ?? d)
-    .join("");
+/** U+2212 minus. */
+export const MINUS = "−";
+/** Unknown or missing value (render it in text-4). */
+export const DASH = "–";
+
+const finite = (n: number | null | undefined): n is number => typeof n === "number" && Number.isFinite(n);
+
+function group(n: number, decimals: number): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
+
+/** Trims trailing zeros but keeps at least `min` decimals: trim("1.2500", 2) → "1.25". */
+function trimTo(s: string, min: number): string {
+  if (!s.includes(".")) return min > 0 ? `${s}.${"0".repeat(min)}` : s;
+  const [int, dec = ""] = s.split(".");
+  let d = dec.replace(/0+$/, "");
+  if (d.length < min) d = d.padEnd(min, "0");
+  return d ? `${int}.${d}` : (int ?? s);
+}
+
+const UNITS: [number, string][] = [
+  [1e12, "T"],
+  [1e9, "B"],
+  [1e6, "M"],
+  [1e3, "K"],
+];
 
 /**
- * Tiny numbers with subscript-zero notation, e.g. 0.00000002796 → "0.0₇2796".
- * Numbers ≥ 0.001 use ordinary significant digits.
+ * Compact form: 3 significant digits with a K/M/B/T suffix, trailing zeros kept ("4.20K").
+ * The suffix is chosen from the rounded value, so 999,950 reads "1.00M", never "1000K".
+ * Values below 1,000 go through `small`.
  */
-export function fmtSmall(n: number, sig = 4): string {
-  if (!Number.isFinite(n)) return "—";
-  if (n === 0) return "0";
-  const sign = n < 0 ? "-" : "";
-  // Branch on the rounded value so 0.00099996 prints as "0.001", not "0.0₂1".
-  const abs = Number(Math.abs(n).toPrecision(sig));
-  if (abs >= 1) return sign + trimZeros(abs.toFixed(abs >= 100 ? 2 : abs >= 10 ? 3 : 4));
-  if (abs >= 0.001) return sign + trimZeros(abs.toPrecision(sig));
-  // "0.0₅1234" = 0.000001234: the subscript counts the zeros after the decimal point.
-  const [mantissa = "0", exponent = "0"] = abs.toExponential(sig - 1).split("e");
-  const zeros = -Number(exponent) - 1;
-  const digits = mantissa.replace(".", "").replace(/0+$/, "") || "0";
-  return `${sign}0.0${subscript(zeros)}${digits}`;
-}
-
-function trimZeros(s: string): string {
-  return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
-}
-
-/**
- * Compact numbers with 3 significant digits and trailing zeros kept, so columns line up:
- * 1234 → "1.23K", 4200 → "4.20K", 12_345_678 → "12.3M".
- */
-export function fmtCompact(n: number, digits = 3): string {
-  if (!Number.isFinite(n)) return "—";
+export function fmtCompact(n: number, small: (abs: number) => string = (a) => trimTo(a.toPrecision(3), 0)): string {
+  if (!finite(n)) return DASH;
   const abs = Math.abs(n);
-  const sign = n < 0 ? "-" : "";
-  const units: [number, string][] = [
-    [1e12, "T"],
-    [1e9, "B"],
-    [1e6, "M"],
-    [1e3, "K"],
-  ];
-  for (const [value, suffix] of units) {
-    if (abs >= value * 0.9995) return sign + (abs / value).toPrecision(digits) + suffix;
+  const sign = n < 0 ? MINUS : "";
+  for (const [value, suffix] of UNITS) {
+    const scaled = Number((abs / value).toPrecision(3));
+    if (scaled >= 1) return `${sign}${scaled.toPrecision(3)}${suffix}`;
   }
-  if (abs >= 100) return sign + abs.toFixed(0);
-  if (abs >= 1) return sign + abs.toFixed(2);
-  return sign + fmtSmall(abs, 3);
+  return sign + small(abs);
 }
 
-export function fmtUsd(n: number, digits = 3): string {
-  if (!Number.isFinite(n)) return "—";
-  if (n < 0) return `-$${fmtCompact(-n, digits)}`;
-  return `$${fmtCompact(n, digits)}`;
-}
+// ---------------------------------------------------------------------------
+// USD (3.2)
+// ---------------------------------------------------------------------------
 
-/** USD price per token, subscript zeros for memecoin prices. */
-export function fmtUsdPrice(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return `$${fmtSmall(n, 4)}`;
-}
-
-export function fmtSolPrice(n: number): string {
-  return fmtSmall(n, 4);
-}
-
-/** SOL amounts with fixed decimals per magnitude: 0.012 → "0.012", 1.25 → "1.250", 12.3 → "12.30", 1234 → "1.23K". */
-export function fmtSol(n: number): string {
-  if (!Number.isFinite(n)) return "—";
+/** Compact USD for market cap, liquidity, volume, fees: "$12.3K", "$842", "$8.42", "<$0.01". */
+export function fmtUsd(n: number): string {
+  if (!finite(n)) return DASH;
+  if (n === 0) return "$0";
   const abs = Math.abs(n);
-  if (abs >= 1000) return fmtCompact(n, 3);
-  if (abs >= 100) return n.toFixed(1);
-  if (abs >= 10) return n.toFixed(2);
-  if (abs >= 0.001 || abs === 0) return n.toFixed(3);
-  return fmtSmall(n, 3);
+  const sign = n < 0 ? MINUS : "";
+  if (abs < 0.01) return `${sign}<$0.01`;
+  if (abs < 999.5) {
+    // 3 significant digits with at most 2 decimals.
+    const p = Number(abs.toPrecision(3));
+    const decimals = p >= 100 ? 0 : p >= 10 ? 1 : 2;
+    return `${sign}$${p.toFixed(decimals)}`;
+  }
+  return `${sign}$${fmtCompact(abs)}`;
 }
+
+/** Exact USD for balances, PnL and totals: 2 decimals with separators, compact from $100K. */
+export function fmtUsdExact(n: number): string {
+  if (!finite(n)) return DASH;
+  const abs = Math.abs(n);
+  const sign = n < 0 && abs >= 0.005 ? MINUS : "";
+  if (abs >= 100_000) return `${sign}$${fmtCompact(abs)}`;
+  return `${sign}$${group(abs, 2)}`;
+}
+
+/** Signed exact USD for changes and PnL: "+$12.08", "−$3.10", "$0.00". */
+export function fmtSignedUsd(n: number): string {
+  if (!finite(n)) return DASH;
+  if (Math.abs(n) < 0.005) return "$0.00";
+  return `${n > 0 ? "+" : MINUS}${fmtUsdExact(Math.abs(n))}`;
+}
+
+// ---------------------------------------------------------------------------
+// Prices per token (3.3)
+// ---------------------------------------------------------------------------
+
+export type PriceParts =
+  | { kind: "plain"; sign: string; text: string }
+  /** "0.0" + zeros (rendered as a .zf-zc span) + digits, e.g. 0.000004123 → 0.0₅4123. */
+  | { kind: "sub"; sign: string; zeros: number; digits: string };
+
+/** Price parts: subscript-zero notation from 4 zeros after the decimal point (p < 0.0001). */
+export function priceParts(n: number): PriceParts {
+  if (!finite(n)) return { kind: "plain", sign: "", text: DASH };
+  if (n === 0) return { kind: "plain", sign: "", text: "0" };
+  const sign = n < 0 ? MINUS : "";
+  const raw = Math.abs(n);
+  if (raw >= 999.995) return { kind: "plain", sign, text: group(raw, 2) };
+  // Branch on the rounded value (4 significant digits), so 0.000099996 prints as 0.0001000.
+  const abs = Number(raw.toPrecision(4));
+  if (abs >= 1) {
+    const s = abs.toPrecision(4);
+    const decimals = s.includes(".") ? (s.split(".")[1]?.length ?? 0) : 0;
+    return { kind: "plain", sign, text: decimals >= 2 ? s : abs.toFixed(2) };
+  }
+  if (abs >= 0.0001) return { kind: "plain", sign, text: abs.toPrecision(4) };
+  const [mantissa = "0", exponent = "0"] = abs.toExponential(3).split("e");
+  return { kind: "sub", sign, zeros: -Number(exponent) - 1, digits: mantissa.replace(".", "") };
+}
+
+/** Full-precision decimal for aria-label, title and the clipboard: no suffix, no subscript. */
+export function plainDecimal(n: number): string {
+  if (!finite(n)) return DASH;
+  if (n === 0) return "0";
+  const abs = Math.abs(n);
+  // About 10 significant digits, as a plain decimal (never exponent notation).
+  const s = abs.toFixed(Math.min(20, Math.max(0, 9 - Math.floor(Math.log10(abs)))));
+  return (n < 0 ? "-" : "") + (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
+}
+
+const CANVAS_SUB = "₀₁₂₃₄₅₆₇₈₉";
 
 /**
- * Wallet balances: always 4 decimals so balances shown side by side line up
- * (60.9800 next to 1.0000), grouped above 1,000.
+ * Text form of a price for places that can't render spans. Canvas axis labels in price mode
+ * may use Unicode subscript digits (DESIGN.md 4.10 exception); everything else passes
+ * `canvas = false` and gets the full decimal.
  */
-export function fmtSolBalance(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+export function fmtPriceText(n: number, canvas = false): string {
+  const p = priceParts(n);
+  if (p.kind === "plain") return p.sign + p.text;
+  if (!canvas) return p.sign + plainDecimal(Math.abs(n));
+  const sub = String(p.zeros)
+    .split("")
+    .map((d) => CANVAS_SUB[Number(d)] ?? d)
+    .join("");
+  return `${p.sign}0.0${sub}${p.digits}`;
 }
 
-/** User-entered amounts (preset buttons, inputs): shortest form, "0.5", "1", "0.25". */
+/** USD price as plain text (titles, aria). Visible prices render with <Num kind="price">. */
+export function fmtUsdPrice(n: number): string {
+  if (!finite(n)) return DASH;
+  return `$${fmtPriceText(n)}`;
+}
+
+/** SOL price as plain text (titles, aria). */
+export function fmtSolPrice(n: number): string {
+  return fmtPriceText(n);
+}
+
+// ---------------------------------------------------------------------------
+// SOL amounts (3.4)
+// ---------------------------------------------------------------------------
+
+/** SOL amount by magnitude: 12.3K · 1,234.5 · 123.45 · 12.346 · 0.50 · 0.000312 · <0.0001. */
+export function fmtSol(n: number): string {
+  if (!finite(n)) return DASH;
+  if (n === 0) return "0";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? MINUS : "";
+  if (abs >= 9999.95) return sign + fmtCompact(abs);
+  if (abs >= 999.995) return sign + group(abs, 1);
+  if (abs >= 99.9995) return sign + abs.toFixed(2);
+  if (abs >= 0.99995) return sign + trimTo(abs.toFixed(3), 2);
+  if (abs >= 0.0099995) return sign + trimTo(abs.toFixed(4), 2);
+  if (abs >= 0.0001) return sign + trimTo(abs.toFixed(6), 0);
+  return `${sign}<0.0001`;
+}
+
+/** Signed SOL change or PnL: "+0.12", "−1.25". */
+export function fmtSignedSol(n: number): string {
+  if (!finite(n)) return DASH;
+  if (n === 0) return "0";
+  return `${n > 0 ? "+" : MINUS}${fmtSol(Math.abs(n))}`;
+}
+
+/** Tape cells: exactly 3 decimals, trailing zeros split off for text-3 ("0.5" + "00"). */
+export function solTapeParts(n: number): { main: string; dim: string } {
+  if (!finite(n)) return { main: DASH, dim: "" };
+  const abs = Math.abs(n);
+  if (abs > 0 && abs < 0.0005) return { main: "<0.001", dim: "" };
+  const s = abs >= 9999.95 ? fmtCompact(abs) : abs.toFixed(3);
+  if (!s.includes(".") || /[KMBT]$/.test(s)) return { main: s, dim: "" };
+  const m = /^(.*?)(\.?0*)$/.exec(s);
+  const main = m?.[1] ?? s;
+  return { main: main || "0", dim: m?.[2] ?? "" };
+}
+
+/** Fees, tips and rent: up to 9 decimals, trimmed, never compact: "0.000005", "0.00106". */
+export function fmtFee(n: number): string {
+  if (!finite(n)) return DASH;
+  if (n === 0) return "0";
+  return trimTo(Math.abs(n).toFixed(9), 0);
+}
+
+/** Lamports for fee tooltips: "5,000 lamports". */
+export function fmtLamports(sol: number): string {
+  if (!finite(sol)) return DASH;
+  return `${Math.round(sol * 1e9).toLocaleString("en-US")} lamports`;
+}
+
+/** User-entered amounts (presets, quick-buy): exactly as entered, normalised ("0.25", "1"). */
 export function fmtSolShort(n: number): string {
-  if (!Number.isFinite(n)) return "—";
+  if (!finite(n)) return DASH;
   return String(Number(n.toPrecision(6)));
 }
 
-export function fmtSignedSol(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  return `${n >= 0 ? "+" : "-"}${fmtSol(Math.abs(n))}`;
+// ---------------------------------------------------------------------------
+// Percentages (3.5), counts (3.6)
+// ---------------------------------------------------------------------------
+
+function pctBody(abs: number): string {
+  const r2 = Number(abs.toFixed(2));
+  if (r2 < 1) return `${r2.toFixed(2)}%`;
+  const r1 = Number(abs.toFixed(1));
+  if (r1 < 100) return `${r1.toFixed(1)}%`;
+  if (abs < 9999.5) return `${group(Math.round(abs), 0)}%`;
+  return `${fmtCompact(abs)}%`;
 }
 
-export function fmtPct(n: number, opts: { signed?: boolean; digits?: number } = {}): string {
-  if (!Number.isFinite(n)) return "—";
-  const digits = opts.digits ?? (Math.abs(n) >= 100 ? 0 : 1);
-  const body = Math.abs(n) >= 10_000 ? `${fmtCompact(Math.abs(n), 3)}%` : `${Math.abs(n).toFixed(digits)}%`;
-  if (opts.signed) return `${n >= 0 ? "+" : "-"}${body}`;
-  return n < 0 ? `-${body}` : body;
+/** Percent: 0.42% · 12.3% · 248% · 1,234% · 12.3K%. Signed for changes and PnL; zero is "0.00%". */
+export function fmtPct(n: number, opts: { signed?: boolean } = {}): string {
+  if (!finite(n)) return DASH;
+  const abs = Math.abs(n);
+  if (abs < 0.005) return "0.00%";
+  const body = pctBody(abs);
+  if (opts.signed) return `${n > 0 ? "+" : MINUS}${body}`;
+  return n < 0 ? `${MINUS}${body}` : body;
 }
 
-/** PnL % that never shows "+Infinity%" (zero cost basis, e.g. airdrops). */
+/** Risk chip values: integers from 10, 1 decimal below, "<0.1%" for tiny, "0%" for zero. */
+export function fmtRiskPct(n: number): string {
+  if (!finite(n)) return DASH;
+  const abs = Math.abs(n);
+  if (abs === 0) return "0%";
+  if (abs < 0.05) return "<0.1%";
+  if (abs >= 9.95) return `${Math.round(abs)}%`;
+  return `${abs.toFixed(1)}%`;
+}
+
+/** Bonding progress (0..1): an integer percent; "Migrating" at 100% until the pool exists. */
+export function fmtProgress(p: number): string {
+  if (!finite(p)) return DASH;
+  if (p >= 1) return "Migrating";
+  return `${Math.min(99, Math.floor(p * 100))}%`;
+}
+
+/** PnL % that never shows "+Infinity%" (zero or unknown cost basis, e.g. airdrops). */
 export function fmtPnlPct(pnl: number, cost: number): string {
-  if (!(cost > 0) || !Number.isFinite(pnl)) return "—";
+  if (!(cost > 0) || !finite(pnl)) return DASH;
   return fmtPct((pnl / cost) * 100, { signed: true });
 }
 
+/** Counts: "1,234", then "12.3K" from 10,000. */
 export function fmtCount(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  if (Math.abs(n) >= 10_000) return fmtCompact(n, 3);
-  return Math.round(n).toLocaleString("en-US");
+  if (!finite(n)) return DASH;
+  if (Math.abs(n) >= 10_000) return fmtCompact(n);
+  return group(Math.round(n), 0);
 }
 
+/** Integers with separators, never compact (slots, lamports): "312,456,789". */
+export function fmtInt(n: number | null | undefined): string {
+  if (!finite(n)) return DASH;
+  return group(Math.round(n), 0);
+}
+
+/** Token amounts: compact with 3 significant digits ("1.24M", "620K", "842"). */
 export function fmtTokens(n: number): string {
-  return fmtCompact(n, 3);
+  if (!finite(n)) return DASH;
+  return fmtCompact(n, (a) => (a >= 1 ? group(Math.round(a), 0) : trimTo(a.toPrecision(3), 0)));
 }
 
-/** Relative age: "25s", "4m", "3h", "2d", "11mo", "1y". */
+// ---------------------------------------------------------------------------
+// Ages and times (3.7), addresses (3.8)
+// ---------------------------------------------------------------------------
+
+/** Relative age: "12s", "4m", "3h", "2d", "5mo", "1y". */
 export function fmtAge(fromMs: number, nowMs = Date.now()): string {
   const s = Math.max(0, Math.floor((nowMs - fromMs) / 1000));
   if (s < 60) return `${s}s`;
@@ -133,27 +287,38 @@ export function fmtAge(fromMs: number, nowMs = Date.now()): string {
   if (h < 24) return `${h}h`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d}d`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}mo`;
+  if (d < 365) return `${Math.floor(d / 30)}mo`;
   return `${Math.floor(d / 365)}y`;
 }
 
+/** 24-hour clock for tooltips and expanded rows: "14:32:05". */
 export function fmtClock(ms: number, seconds = true): string {
   const d = new Date(ms);
   const pad = (v: number) => String(v).padStart(2, "0");
   return seconds ? `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** "Oct 3", or "Oct 3, 2025" outside the current year. */
 export function fmtDate(ms: number): string {
-  return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const d = new Date(ms);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString("en-US", sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** Latency: "412 ms", "1.24 s". */
 export function fmtMs(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  if (!finite(ms)) return DASH;
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${Math.round(ms)} ms`;
 }
 
+/**
+ * Short address: head 4 … tail 4 ("7xKX…sAsU"). Pump vanity mints show head 6 and the literal
+ * tail ("9Hd4cZ…pump"), because "pump" identifies nothing.
+ */
 export function shortAddr(address: string, head = 4, tail = 4): string {
+  if (head === 4 && tail === 4 && address.length > 12 && address.endsWith("pump")) {
+    return `${address.slice(0, 6)}…pump`;
+  }
   if (address.length <= head + tail + 1) return address;
   return `${address.slice(0, head)}…${address.slice(-tail)}`;
 }
@@ -165,4 +330,18 @@ export function parseAmount(raw: string): number | null {
   const mult = s.endsWith("k") ? 1e3 : s.endsWith("m") ? 1e6 : s.endsWith("b") ? 1e9 : 1;
   const n = Number.parseFloat(mult === 1 ? s : s.slice(0, -1));
   return Number.isFinite(n) ? n * mult : null;
+}
+
+/** Sign tone for changes and PnL (3.10): positive buy, negative sell, zero text-3. */
+export function signTone(n: number | null | undefined): "buy" | "sell" | "zero" | "unknown" {
+  if (!finite(n)) return "unknown";
+  if (n > 0) return "buy";
+  if (n < 0) return "sell";
+  return "zero";
+}
+
+/** Tailwind text class for a signed value. */
+export function signClass(n: number | null | undefined): string {
+  const t = signTone(n);
+  return t === "buy" ? "text-buy" : t === "sell" ? "text-sell" : t === "zero" ? "text-fg-3" : "text-fg-4";
 }

@@ -2,7 +2,7 @@ import { ArrowRight, CircleCheck } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { NumberInput } from "../../components/ui/controls";
-import { fmtSolBalance, fmtSolShort, shortAddr } from "../../lib/format";
+import { fmtSol, fmtSolShort, shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { ConnectedWallet, TradingWallet } from "../../services/walletService";
 import { useWallet } from "../../state/wallet";
@@ -93,27 +93,27 @@ export function FundStep({
       }
     >
       <div className="grid gap-2 sm:grid-cols-2">
-        <div className="rounded-lg border border-line px-3 py-2">
+        <div className="rounded-md border border-hairline px-3 py-2">
           <div className="zf-label">From · {PROVIDER_NAME[connected.provider]}</div>
           <div className="mt-1 flex items-baseline justify-between gap-2">
-            <span className="font-mono text-xs text-muted">{shortAddr(connected.address, 4, 4)}</span>
-            <span className="font-mono text-base text-fg">{connectedSol === null ? "…" : `${fmtSolBalance(connectedSol)} SOL`}</span>
+            <span className="font-mono text-label text-fg-2">{shortAddr(connected.address, 4, 4)}</span>
+            <span className="font-mono text-body text-fg-1">{connectedSol === null ? "…" : `${fmtSol(connectedSol)} SOL`}</span>
           </div>
         </div>
-        <div className="rounded-lg border border-line px-3 py-2">
+        <div className="rounded-md border border-hairline px-3 py-2">
           <div className="zf-label">To · {wallet.label} (trading wallet)</div>
           <div className="mt-1 flex items-baseline justify-between gap-2">
-            <span className="font-mono text-xs text-muted">{shortAddr(wallet.address, 4, 4)}</span>
-            <span className="font-mono text-base text-fg">{tradingSol === null ? "…" : `${fmtSolBalance(tradingSol)} SOL`}</span>
+            <span className="font-mono text-label text-fg-2">{shortAddr(wallet.address, 4, 4)}</span>
+            <span className="font-mono text-body text-fg-1">{tradingSol === null ? "…" : `${fmtSol(tradingSol)} SOL`}</span>
           </div>
         </div>
       </div>
 
       {funded ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-buy/30 bg-buy/5 px-3 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-buy-edge bg-buy-tint px-3 py-2 text-data">
           <CircleCheck className="icon-sm text-buy" />
-          <span className="text-fg">Funded {fmtSolShort(funded.sol)} SOL</span>
-          <span className="font-mono text-xs text-dim">signature {shortAddr(funded.signature, 6, 6)}</span>
+          <span className="text-fg-1">Funded {fmtSolShort(funded.sol)} SOL</span>
+          <span className="font-mono text-label text-fg-3">signature {shortAddr(funded.signature, 6, 6)}</span>
         </div>
       ) : (
         <Field label="Amount">
@@ -133,7 +133,7 @@ export function FundStep({
                 <Button
                   key={v}
                   size="md"
-                  variant={amount === v ? "subtle" : "outline"}
+                  variant={amount === v ? "secondary" : "secondary"}
                   aria-pressed={amount === v}
                   onClick={() => setAmount(v)}
                 >
