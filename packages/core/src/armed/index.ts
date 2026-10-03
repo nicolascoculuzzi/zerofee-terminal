@@ -4,6 +4,11 @@
  */
 export * from "./alt";
 export * from "./armedTx";
+export * from "./builders";
+export * from "./interfaceVersion";
+export * from "./json";
 export * from "./migration";
+export * from "./model";
 export * from "./nonce";
 export * from "./staticAccounts";
+export * from "./validate";
