@@ -1,0 +1,16 @@
+{
+  "name": "@zerofee/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "WebSocket + REST contract shared by apps/server and apps/web. Types plus a few pure topic helpers; no dependencies.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc -p . --noEmit"
+  }
+}

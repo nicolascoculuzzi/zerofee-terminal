@@ -237,7 +237,10 @@ async function main() {
 
 /** Compares the event emitted by the simulated execution with our local quote. */
 function printSimulatedFill(q: Awaited<ReturnType<typeof buildTrade>>["quote"], events: DecodedEvent[]) {
-  const ev = events[0];
+  const ev = events.find(
+    (e): e is Extract<DecodedEvent, { kind: "pumpTrade" | "ammBuy" | "ammSell" }> =>
+      e.kind === "pumpTrade" || e.kind === "ammBuy" || e.kind === "ammSell",
+  );
   if (!ev) return console.log("simulated fill: no trade event in logs");
   if (ev.kind === "pumpTrade") {
     const got = q.side === "buy" ? ev.tokenAmount : ev.quoteAmount - ev.fee - ev.creatorFee;

@@ -11,7 +11,7 @@ An Axiom-style Solana memecoin trading terminal with **zero platform fees**. You
 
 ## Status
 
-Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve and PumpSwap buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. The wallet layer, web UI and live data feed are next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
+Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve and PumpSwap buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. Phase 2, the market data feed, decodes every pump.fun and PumpSwap launch, trade and migration, derives token metrics, and streams them over a WebSocket gateway. The wallet layer and web UI are next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
 
 ## Quick start (developers)
 
@@ -40,6 +40,20 @@ SIMULATE_AS=<address-holding-the-token> bun run trade sell <mint> 50
 ```
 
 **Sending real trades:** put a throwaway dev wallet's key in `.env` (`WALLET_PRIVATE_KEY`), keep only what you'd lose on it, and set `DRY_RUN=false`. `MAX_BUY_SOL` and `MAX_DAILY_SPEND_SOL` are hard caps. Latency measurements go in [NOTES.md](NOTES.md).
+
+Run the market data server (Phase 2). By default it reads the public RPC's `logsSubscribe` stream, binds to 127.0.0.1 and keeps `POST /api/tx` in simulate-only mode (`DRY_RUN=true`):
+
+```bash
+bun apps/server/src/main.ts
+```
+
+Then open http://127.0.0.1:8787/debug for live launches and trades with detection latency, or connect to `ws://127.0.0.1:8787/ws` (protocol in [packages/protocol](packages/protocol/src/messages.ts)). To watch the feed alone, printing launches and per-minute counts:
+
+```bash
+bun run --cwd apps/server feed
+```
+
+For production set `INGEST_SOURCE=yellowstone` with `YELLOWSTONE_ENDPOINT` and `YELLOWSTONE_X_TOKEN`. All server settings are in [.env.example](.env.example).
 
 ## Docs
 

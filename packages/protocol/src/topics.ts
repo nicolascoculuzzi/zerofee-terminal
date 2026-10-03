@@ -1,0 +1,105 @@
+/**
+ * WebSocket topics. One topic per view; the client subscribes as views mount and unsubscribes as they
+ * unmount. Topic strings are the wire format.
+ *
+ *   pulse:new | pulse:final | pulse:migrated   Pulse columns (coalesced to 4-10 Hz)
+ *   token:<mint>                                one token's summary (header stats)
+ *   trades:<mint>                               trade tape (flushed every 50-100 ms)
+ *   candles:<mint>:<tf>                         OHLCV, tf in TIMEFRAMES
+ *   tradectx:<mint>                             inputs for building a trade locally with @zerofee/core
+ *   chain                                       blockhash, slot, priority fees, Jito tip floor, SOL/USD
+ *   wallet:<address>                            balances and fills of one wallet (shape only for now)
+ *   orders                                      the session user's orders (shape only for now)
+ *
+ * The few runtime helpers below are pure and dependency-free so the server and the web app parse topics
+ * identically.
+ */
+
+export const TIMEFRAMES = ["1s", "15s", "1m", "5m", "15m", "1h"] as const;
+export type Timeframe = (typeof TIMEFRAMES)[number];
+
+/** Bucket length of each timeframe in milliseconds. */
+export const TIMEFRAME_MS: Readonly<Record<Timeframe, number>> = {
+  "1s": 1_000,
+  "15s": 15_000,
+  "1m": 60_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "1h": 3_600_000,
+};
+
+export const PULSE_COLUMNS = ["new", "final", "migrated"] as const;
+export type PulseColumn = (typeof PULSE_COLUMNS)[number];
+
+export type PulseTopic = `pulse:${PulseColumn}`;
+export type TokenTopic = `token:${string}`;
+export type TradesTopic = `trades:${string}`;
+export type CandlesTopic = `candles:${string}:${Timeframe}`;
+export type TradeContextTopic = `tradectx:${string}`;
+export type ChainTopic = "chain";
+export type WalletTopic = `wallet:${string}`;
+export type OrdersTopic = "orders";
+
+export type Topic = PulseTopic | TokenTopic | TradesTopic | CandlesTopic | TradeContextTopic | ChainTopic | WalletTopic | OrdersTopic;
+
+export type ParsedTopic =
+  | { kind: "pulse"; column: PulseColumn }
+  | { kind: "token"; mint: string }
+  | { kind: "trades"; mint: string }
+  | { kind: "candles"; mint: string; tf: Timeframe }
+  | { kind: "tradectx"; mint: string }
+  | { kind: "chain" }
+  | { kind: "wallet"; address: string }
+  | { kind: "orders" };
+
+/** Base58 address check (32-44 chars of the bitcoin alphabet). Cheap shape check, not a curve check. */
+const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+export function isAddressLike(s: string): boolean {
+  return ADDRESS_RE.test(s);
+}
+
+export function isTimeframe(s: string): s is Timeframe {
+  return (TIMEFRAMES as readonly string[]).includes(s);
+}
+
+/** Parses a topic string; null if it is not a valid topic. */
+export function parseTopic(topic: string): ParsedTopic | null {
+  if (topic === "chain") return { kind: "chain" };
+  if (topic === "orders") return { kind: "orders" };
+  const i = topic.indexOf(":");
+  if (i <= 0) return null;
+  const head = topic.slice(0, i);
+  const rest = topic.slice(i + 1);
+  switch (head) {
+    case "pulse":
+      return (PULSE_COLUMNS as readonly string[]).includes(rest) ? { kind: "pulse", column: rest as PulseColumn } : null;
+    case "token":
+    case "trades":
+    case "tradectx":
+      return isAddressLike(rest) ? { kind: head, mint: rest } : null;
+    case "wallet":
+      return isAddressLike(rest) ? { kind: "wallet", address: rest } : null;
+    case "candles": {
+      const j = rest.lastIndexOf(":");
+      if (j <= 0) return null;
+      const mint = rest.slice(0, j);
+      const tf = rest.slice(j + 1);
+      return isAddressLike(mint) && isTimeframe(tf) ? { kind: "candles", mint, tf } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Topic string builders. */
+export const topics = {
+  pulse: (column: PulseColumn): PulseTopic => `pulse:${column}`,
+  token: (mint: string): TokenTopic => `token:${mint}`,
+  trades: (mint: string): TradesTopic => `trades:${mint}`,
+  candles: (mint: string, tf: Timeframe): CandlesTopic => `candles:${mint}:${tf}`,
+  tradectx: (mint: string): TradeContextTopic => `tradectx:${mint}`,
+  chain: "chain" as ChainTopic,
+  wallet: (address: string): WalletTopic => `wallet:${address}`,
+  orders: "orders" as OrdersTopic,
+} as const;
