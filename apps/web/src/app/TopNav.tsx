@@ -8,6 +8,7 @@ import { MenuItem, MenuSeparator, Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
 import { cn } from "../lib/cn";
 import { fmtSol, fmtSolShort, shortAddr } from "../lib/format";
+import { compactLabel } from "../lib/hotkeys";
 import { LANDING_INFO } from "../lib/landing";
 import { getServices } from "../services";
 import { isOpenOrder, useOrders } from "../state/orders";
@@ -69,6 +70,7 @@ export function LandingIndicator() {
 export function PresetSwitchTop() {
   const active = useSettings((s) => s.activePreset);
   const setActive = useSettings((s) => s.setActivePreset);
+  const hotkeys = useSettings((s) => s.hotkeys);
   const [flash, setFlash] = useState(0);
   const first = useRef(true);
   useEffect(() => {
@@ -83,7 +85,10 @@ export function PresetSwitchTop() {
       <Segmented<PresetId>
         value={active}
         onChange={setActive}
-        options={PRESET_IDS.map((p, i) => ({ value: p, label: p, title: `Preset ${p} (Alt+${i + 1})` }))}
+        options={PRESET_IDS.map((p, i) => {
+          const key = compactLabel(hotkeys[`preset.${i + 1}` as "preset.1"]?.[0]);
+          return { value: p, label: p, title: key ? `Preset ${p} (${key})` : `Preset ${p}` };
+        })}
         label="Active preset"
       />
       {flash > 0 && <span key={flash} aria-hidden="true" className="zf-enter pointer-events-none absolute inset-0 rounded-sm" />}
@@ -182,10 +187,8 @@ function WalletMenu({ compact }: { compact?: boolean }) {
       >
         {locked ? <Lock className="icon-xs text-fg-3" /> : <LockOpen className="icon-xs text-fg-2" />}
         <span className="hidden max-w-24 truncate text-fg-3 2xl:inline">{active?.label ?? "Wallet"}</span>
-        <span className="zf-num font-semibold text-fg-1">
-          {fmtSol(balance)}
-          <span className="zf-unit font-normal">{" "}SOL</span>
-        </span>
+        <span className="zf-num min-w-[7ch] text-right font-semibold text-fg-1">{fmtSol(balance)}</span>
+        <span className="zf-unit -ml-1.5">{" "}SOL</span>
         <ChevronDown className="icon-xs text-fg-3" />
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} align="end" width={300}>
@@ -314,11 +317,13 @@ function MobileHeader() {
       <button
         type="button"
         onClick={() => openSettings("presets")}
-        className="flex h-7 items-center gap-1 rounded-full border border-hairline-strong bg-surface-3 px-2 text-data font-semibold text-fg-1"
+        className="flex h-11 items-center px-1"
         aria-label={`Quick-buy amount ${fmtSolShort(quickBuy)} SOL`}
       >
-        <Zap className="icon-xs text-fg-3" />
-        <span className="zf-num">{fmtSolShort(quickBuy)}</span>
+        <span className="flex h-7 items-center gap-1 rounded-xs border border-hairline-strong bg-surface-3 px-2 text-data font-semibold text-fg-1">
+          <Zap className="icon-xs text-fg-3" />
+          <span className="zf-num">{fmtSolShort(quickBuy)}</span>
+        </span>
       </button>
       <div className="ml-auto flex items-center">
         <WalletMenu compact />
@@ -335,6 +340,7 @@ export function TopNav() {
   const openSettings = useUi((s) => s.openSettings);
   const openFund = useUi((s) => s.openFund);
   const searchBinding = useSettings((s) => s.hotkeys["search.open"][0]);
+  const settingsKey = useSettings((s) => compactLabel(s.hotkeys["settings.open"]?.[0]));
   const armed = useOrders((s) => Object.values(s.byId).filter(isOpenOrder).length);
 
   return (
@@ -388,7 +394,12 @@ export function TopNav() {
               Fund
             </Button>
           </div>
-          <IconButton label="Settings" size="nav" onClick={() => openSettings()} title="Settings (Cmd+,)">
+          <IconButton
+            label="Settings"
+            size="nav"
+            onClick={() => openSettings()}
+            title={settingsKey ? `Settings (${settingsKey})` : "Settings"}
+          >
             <Settings />
           </IconButton>
         </div>

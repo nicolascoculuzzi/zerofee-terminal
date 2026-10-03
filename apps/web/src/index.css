@@ -692,6 +692,10 @@
   .zf-in-fade {
     animation-duration: 80ms;
   }
+  /* Spinners stop; in-flight actions show an elapsed-time label instead (DESIGN.md 2.8). */
+  .animate-spin {
+    animation: none;
+  }
 }
 
 @keyframes zf-hide {

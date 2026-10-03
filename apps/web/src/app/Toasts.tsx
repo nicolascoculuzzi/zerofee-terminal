@@ -259,7 +259,7 @@ export function Toasts() {
         <ToastItem key={t.id} toast={t} />
       ))}
       {hidden > 0 && (
-        <span className="pointer-events-auto rounded-full border border-hairline-strong bg-floating px-2 py-0.5 text-label text-fg-2 shadow-e1">
+        <span className="pointer-events-auto rounded-xs border border-hairline-strong bg-floating px-2 py-0.5 text-label text-fg-2 shadow-e1">
           +{hidden} more
         </span>
       )}

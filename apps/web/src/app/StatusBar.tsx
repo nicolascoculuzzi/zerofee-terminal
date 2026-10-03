@@ -7,6 +7,7 @@ import { Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
 import { cn } from "../lib/cn";
 import { fmtCount, fmtInt, fmtMs, fmtUsdExact } from "../lib/format";
+import { compactLabel } from "../lib/hotkeys";
 import { useNow } from "../lib/useNow";
 import { getServices } from "../services";
 import { useMarket } from "../state/market";
@@ -106,6 +107,8 @@ export function StatusBar() {
   const unreadPosts = useTrackers((s) => s.unreadPosts);
   const armed = useOrders((s) => Object.values(s.byId).filter(isOpenOrder).length);
   const setHelp = useUi((s) => s.setHotkeysHelp);
+  const quoteKey = useSettings((s) => compactLabel(s.hotkeys["quote.toggle"]?.[0]));
+  const densityKey = useSettings((s) => compactLabel(s.hotkeys["density.toggle"]?.[0]));
   const simulated = getServices().simulated;
 
   const live = connection === "live" && feed.state !== "degraded";
@@ -134,7 +137,8 @@ export function StatusBar() {
           <span aria-hidden="true" className={cn("size-1.5 rounded-full", dot)} />
           <span className="text-fg-2">{stateLabel}</span>
           <span className="zf-num hidden xl:inline">
-            {hz} Hz · lag {fmtInt(feed.lagMs)} ms · {fmtCount(Math.round(feed.eventsPerSec))} ev/s
+            {hz} Hz · lag <span className="inline-block w-[4ch] text-right">{fmtInt(feed.lagMs)}</span> ms ·{" "}
+            <span className="inline-block w-[5ch] text-right">{fmtCount(Math.round(feed.eventsPerSec))}</span> ev/s
           </span>
         </span>
       </Tooltip>
@@ -153,15 +157,15 @@ export function StatusBar() {
           value={quote}
           onChange={(q) => setDisplay({ quote: q })}
           options={[
-            { value: "USD", label: "USD", title: "Show values in USD (T then C)" },
-            { value: "SOL", label: "SOL", title: "Show values in SOL (T then C)" },
+            { value: "USD", label: "USD", title: quoteKey ? `Show values in USD (${quoteKey})` : "Show values in USD" },
+            { value: "SOL", label: "SOL", title: quoteKey ? `Show values in SOL (${quoteKey})` : "Show values in SOL" },
           ]}
           label="Quote currency"
         />
         <button
           type="button"
           onClick={toggleDensity}
-          title="Toggle density (T then D)"
+          title={densityKey ? `Toggle density (${densityKey})` : "Toggle density"}
           aria-label="Toggle density"
           className="flex items-center transition-colors hover:text-fg-1"
         >

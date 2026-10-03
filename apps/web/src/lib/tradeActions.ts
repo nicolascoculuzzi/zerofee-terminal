@@ -112,6 +112,8 @@ function costLines(settings: ExecutionSettings): { label: string; value: string 
     { label: "Priority fee", value: `${fmtFee(settings.priorityFeeSol)} SOL` },
     { label: "Tip", value: `${fmtFee(settings.tipSol)} SOL` },
     { label: "Landing", value: LANDING_INFO[settings.landing].label },
+    // The claim we prove on every trade (DESIGN.md 1.6).
+    { label: "Platform fee", value: "0" },
   ];
 }
 
