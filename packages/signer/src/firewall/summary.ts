@@ -17,6 +17,8 @@ export function describeAction(action: SummaryAction, signer: Address, connected
         return `Buy on ${action.venue} (${action.instruction}): spend up to ${formatQuote(action.maxQuoteIn ?? 0n, action.quoteMint)} for ${amount} base units of token ${shortAddress(action.baseMint)}.`;
       }
       return `Sell ${formatInteger(action.baseAmount)} base units of token ${shortAddress(action.baseMint)} on ${action.venue} (${action.instruction}) for at least ${formatQuote(action.minQuoteOut ?? 0n, action.quoteMint)}.`;
+    case "extend_account":
+      return `Pay the one-time rent to grow ${action.venue} pool ${shortAddress(action.account)} to its current size (required before trading on an older pool; not refundable).`;
     case "tip":
       return `Tip ${formatSol(action.lamports)} to landing tip account ${shortAddress(action.to)}.`;
     case "sol_transfer":

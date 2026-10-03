@@ -11,7 +11,7 @@ import { MemoryStore } from "../src/store";
 import type { StoredVault } from "../src/vault/format";
 import { type SignerWorkerHandle, startSignerWorker } from "../src/worker";
 import { LAMPORTS_PER_SOL, makeContext, randomAddress, type TestActors } from "./helpers/fixtures";
-import { curveBuyV2 } from "./helpers/scenarios";
+import { curveBuyV2, curveSellV2 } from "./helpers/scenarios";
 import { buildTransaction, transferSol } from "./helpers/tx";
 import { FAST_KDF, PASSWORD } from "./helpers/vault";
 
@@ -124,6 +124,37 @@ describe("signer RPC", () => {
       .call("sign", { walletId: wallet.id, transaction: new Uint8Array(10), addressLookupTables: { nope: ["x"] } })
       .catch((e: unknown) => e);
     expect(isSignerError(badTables, "INVALID_ARGUMENT")).toBe(true);
+  });
+
+  test("trade expectations cross the boundary with bigints intact and are validated", async () => {
+    const { client } = start();
+    const connected = randomAddress();
+    await client.call("createVault", { password: PASSWORD, connectedWallet: connected });
+    const wallet = await client.call("addWallet", {});
+    const actors: TestActors = { signer: wallet.address, connected, attacker: randomAddress(), nonceAccount: randomAddress() };
+    const transaction = buildTransaction({ feePayer: wallet.address, instructions: await curveSellV2(actors) });
+    const quote = (expectedOut: bigint) => [{ instruction: 2, expectedOut, slippageBps: 1500 }];
+
+    const signed = await client.call("sign", { walletId: wallet.id, transaction, expectations: quote(470_000_000n) });
+    expect(signed.summary.text).toContain("Checked against your own quote");
+    const refused = await client
+      .call("sign", { walletId: wallet.id, transaction, expectations: quote(600_000_000n) })
+      .catch((e: unknown) => e);
+    expect(isSignerError(refused, "FIREWALL_REFUSED") && refused.violations?.join()).toContain("below your quote");
+    expect((await client.call("check", { walletId: wallet.id, transaction, expectations: quote(600_000_000n) })).ok).toBe(false);
+
+    for (const expectations of [
+      { instruction: 2 },
+      [{ instruction: 2, expectedOut: 470_000_000, slippageBps: 1500 }],
+      [{ instruction: 2, expectedOut: 470_000_000n, slippageBps: "15%" }],
+      [{ instruction: "2", expectedOut: 470_000_000n, slippageBps: 1500 }],
+      [null],
+    ]) {
+      const bad = await client
+        .call("sign", { walletId: wallet.id, transaction, expectations: expectations as never })
+        .catch((e: unknown) => e);
+      expect({ expectations, code: isSignerError(bad) ? bad.code : String(bad) }).toEqual({ expectations, code: "INVALID_ARGUMENT" });
+    }
   });
 
   test("internal errors do not leak details across the boundary", async () => {

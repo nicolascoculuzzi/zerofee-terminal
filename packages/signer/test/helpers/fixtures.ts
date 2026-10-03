@@ -1,52 +1,33 @@
 /**
- * Verified mainnet IDs from docs/reports/Solana trading terminal teardown.md (program table,
- * tip accounts) and the pump.fun research note (Global, FeeConfig, fee recipients). Tests inject
- * them the way production will inject @zerofee/core's constants.
+ * Mainnet IDs for tests. Program IDs and tip accounts are the signer's embedded copies (what ships;
+ * test/constants-crosscheck.test.ts compares them with @zerofee/core). Global, FeeConfig and fee
+ * recipients come from the pump.fun research note (verified as PDAs in idl-layout.test.ts).
  */
 import { type Address, address, getAddressDecoder } from "@solana/kit";
 import { randomBytes } from "../../src/bytes";
 import {
   ASSOCIATED_TOKEN_PROGRAM,
   COMPUTE_BUDGET_PROGRAM,
+  PUMP_AMM_PROGRAM,
+  PUMP_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
+  USDC_MINT,
 } from "../../src/firewall/programs";
 import { createPumpBondingCurveRule, createPumpSwapRule } from "../../src/firewall/rules/pump";
 import type { FirewallCaps, FirewallContext } from "../../src/firewall/types";
+import { HELIUS_SENDER_TIP_ACCOUNTS, JITO_TIP_ACCOUNTS } from "../../src/policy";
 
 export const PROGRAMS = {
-  pump: address("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
-  pumpAmm: address("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"),
+  pump: PUMP_PROGRAM,
+  pumpAmm: PUMP_AMM_PROGRAM,
   pumpFees: address("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"),
   raydiumLaunchLab: address("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"),
 } as const;
 
-/** Jito's 8 tip accounts (report, "Fill in the tip accounts"). */
-export const JITO_TIP_ACCOUNTS: readonly Address[] = [
-  "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-  "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
-  "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
-  "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
-  "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
-  "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
-  "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
-  "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT",
-].map((a) => address(a));
-
-/** Helius Sender's 10 tip accounts. */
-export const HELIUS_TIP_ACCOUNTS: readonly Address[] = [
-  "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE",
-  "D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ",
-  "9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta",
-  "5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn",
-  "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD",
-  "2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ",
-  "wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF",
-  "3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT",
-  "4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey",
-  "4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or",
-].map((a) => address(a));
+export { JITO_TIP_ACCOUNTS };
+export const HELIUS_TIP_ACCOUNTS = HELIUS_SENDER_TIP_ACCOUNTS;
 
 export const MAINNET = {
   pumpGlobal: address("4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"),
@@ -60,7 +41,7 @@ export const MAINNET = {
   curveMint: address("3Z16oesTxW8exoENZTCd1ADVzFPePH3n33cTkUDLpump"),
   /** A canonical boost pool from the research note. */
   ammPool: address("5RxfsBsyA8t2Z1J21SkSq2gaNr8JvPFGPZBd8crXY9Ck"),
-  usdc: address("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"),
+  usdc: USDC_MINT,
 } as const;
 
 /** Jito's documented example marker. */

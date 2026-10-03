@@ -10,7 +10,7 @@ import { getTransferCheckedInstruction } from "@solana-program/token";
 import { findAssociatedTokenAddress } from "../src/firewall/ata";
 import { decodeTransaction } from "../src/firewall/decode";
 import { SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, WSOL_MINT } from "../src/firewall/programs";
-import { createPumpSwapRule } from "../src/firewall/rules/pump";
+import { createPumpSwapRule, findCanonicalPumpPool } from "../src/firewall/rules/pump";
 import {
   HELIUS_TIP_ACCOUNTS,
   JITO_TIP_ACCOUNTS,
@@ -21,8 +21,8 @@ import {
   PROGRAMS,
   randomAddress,
 } from "./helpers/fixtures";
-import { ammInstruction, curveInstruction } from "./helpers/pump";
-import { ammBuy, ammParams, ammSell, curveBuyV2, curveParams, curveSellV2, expectAllowed } from "./helpers/scenarios";
+import { ammExtendInstruction, ammInstruction, curveInstruction } from "./helpers/pump";
+import { AMM_COIN, ammBuy, ammParams, ammSell, curveBuyV2, curveParams, curveSellV2, expectAllowed } from "./helpers/scenarios";
 import {
   buildTransaction,
   computeBudget,
@@ -151,6 +151,24 @@ describe("firewall: allowed transactions", () => {
       }),
       ctx,
     );
+  });
+
+  test("PumpSwap extend_account on the trade's canonical pool (pre-upgrade pool), before a buy and before a sell", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const pool = await findCanonicalPumpPool(PROGRAMS.pump, PROGRAMS.pumpAmm, AMM_COIN, WSOL_MINT);
+    const extend = await ammExtendInstruction({ user: a.signer, account: pool });
+    const [budgetLimit, budgetPrice, ...buyRest] = await ammBuy(a);
+    const summary = await expectAllowed(
+      buildTransaction({ feePayer: a.signer, instructions: [budgetLimit!, budgetPrice!, extend, ...buyRest] }),
+      ctx,
+    );
+    expect(summary.actions).toContainEqual({ kind: "extend_account", venue: "PumpSwap", account: pool });
+    expect(summary.text).toContain(`Pay the one-time rent to grow PumpSwap pool ${pool.slice(0, 4)}…${pool.slice(-4)}`);
+    expect(summary.text).toContain("plus the pool extension rent above");
+    expect(summary.maxBuyLamports).toBe(250_000_000n);
+    const sell = await ammSell(a);
+    await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [extend, ...sell] }), ctx);
   });
 
   test("non-canonical PumpSwap pools pass only with the explicit opt-out", async () => {

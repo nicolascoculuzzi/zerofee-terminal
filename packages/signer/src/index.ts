@@ -12,12 +12,16 @@ export {
   ASSOCIATED_TOKEN_PROGRAM,
   COMPUTE_BUDGET_PROGRAM,
   JITO_DONT_FRONT_PREFIX,
+  PUMP_AMM_PROGRAM,
+  PUMP_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
+  USDC_MINT,
   WSOL_MINT,
 } from "./firewall/programs";
 export {
+  type AuxiliaryInstruction,
   createIdlVenueRule,
   createPumpBondingCurveRule,
   createPumpSwapRule,
@@ -25,7 +29,14 @@ export {
   type IdlVenueRuleOptions,
   type PumpSwapRuleOptions,
 } from "./firewall/rules/pump";
-export { PUMP_AMM_INSTRUCTIONS, PUMP_CURVE_INSTRUCTIONS, type VenueInstruction, type VenueLayout } from "./firewall/rules/pump-idl";
+export {
+  type AccountExtensionInstruction,
+  PUMP_AMM_EXTEND_ACCOUNT,
+  PUMP_AMM_INSTRUCTIONS,
+  PUMP_CURVE_INSTRUCTIONS,
+  type VenueInstruction,
+  type VenueLayout,
+} from "./firewall/rules/pump-idl";
 export {
   computeTotals,
   type DailySpendCaps,
@@ -39,6 +50,7 @@ export {
   utcDay,
 } from "./firewall/spend-tracker";
 export type {
+  AccountExtensionAction,
   AccountRef,
   AddressLookupTables,
   DecodedInstruction,
@@ -49,11 +61,22 @@ export type {
   RuleEnv,
   SummaryAction,
   TradeAction,
+  TradeExpectation,
   TransactionSummary,
+  VenueAction,
   VenueCheck,
   VenueRule,
 } from "./firewall/types";
 export { IndexedDbStore, type IndexedDbStoreOptions } from "./indexeddb";
+export {
+  createSignerPolicy,
+  DEFAULT_FIREWALL_CAPS,
+  HELIUS_SENDER_TIP_ACCOUNTS,
+  JITO_TIP_ACCOUNTS,
+  SIGNER_ALLOWED_PROGRAMS,
+  SIGNER_TIP_ACCOUNTS,
+  type SignerPolicyOptions,
+} from "./policy";
 export {
   createSignerClient,
   type MessageEndpoint,
