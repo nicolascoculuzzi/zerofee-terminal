@@ -21,7 +21,7 @@
  *       pool = PDA(["pool", u16 0, pool_authority, base_mint, quote_mint], pump_amm)
  *       pool_authority = PDA(["pool-authority", base_mint], pump)        (idl/pump.json migrate, migrate_v2)
  *   - the buy amount argument is reported for the central per-trade and daily caps, and the minimum
- *     output for the central min-out floor.
+ *     output for the central min-out floor (and the caller's own quote, when it sends expectations).
  * PumpSwap extend_account (core and pump-swap-sdk prepend it for pools shorter than 300 bytes) is the
  * one non-trade instruction allowed: only on the canonical pool of a PumpSwap trade in the same
  * transaction, at most once, with the trading wallet as the rent payer and the real System program

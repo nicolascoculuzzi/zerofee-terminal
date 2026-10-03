@@ -9,7 +9,7 @@ import { createSignerPolicy, DEFAULT_FIREWALL_CAPS, SIGNER_ALLOWED_PROGRAMS, SIG
 import { type SignerPolicy, SignerService, type SignRequest } from "../src/service";
 import { MemoryStore } from "../src/store";
 import { LAMPORTS_PER_SOL, makeContext, randomAddress, type TestActors } from "./helpers/fixtures";
-import { curveBuyV2 } from "./helpers/scenarios";
+import { curveBuyV2, curveSellV2 } from "./helpers/scenarios";
 import { buildTransaction, noop, transferSol } from "./helpers/tx";
 import { makeVault, PASSWORD } from "./helpers/vault";
 
@@ -111,6 +111,20 @@ describe("SignerService", () => {
     const tx = buildTransaction({ feePayer: wallet.address, instructions: await curveBuyV2(actors) });
     const violations = await expectCode(service.signTransaction(second.id, tx), "FIREWALL_REFUSED");
     expect(violations.join()).toContain("fee payer");
+  });
+
+  test("trade expectations are enforced when signing and in dry runs", async () => {
+    const { service, wallet, actors } = await setup();
+    // curveSellV2: the sell_v2 at #2 has min_sol_output 0.4 SOL.
+    const sell = buildTransaction({ feePayer: wallet.address, instructions: await curveSellV2(actors) });
+    const quote = (expectedOut: bigint): SignRequest => ({ expectations: [{ instruction: 2, expectedOut, slippageBps: 1500 }] });
+    expect((await service.checkTransaction(wallet.id, sell, quote(470_000_000n))).ok).toBe(true);
+    expect((await service.checkTransaction(wallet.id, sell, quote(500_000_000n))).ok).toBe(false);
+    const signed = await service.signTransaction(wallet.id, sell, quote(470_000_000n));
+    expect(signed.summary.text).toContain("Checked against your own quote");
+    const violations = await expectCode(service.signTransaction(wallet.id, sell, quote(500_000_000n)), "FIREWALL_REFUSED");
+    expect(violations.join()).toContain("below your quote of 0.5 SOL less your 15% max slippage (0.425 SOL)");
+    expect(service.auditLog.list().map((e) => e.status)).toEqual(["signed", "refused"]);
   });
 
   test("dry-run check neither signs nor reserves", async () => {

@@ -9,7 +9,7 @@
 import type { AuditEntry } from "./audit";
 import { SignerError, type SignerErrorCode } from "./errors";
 import type { DailySpendTotals } from "./firewall/spend-tracker";
-import type { FirewallResult, TransactionSummary } from "./firewall/types";
+import type { FirewallResult, TradeExpectation, TransactionSummary } from "./firewall/types";
 import type { LockReason, WalletInfo } from "./vault/vault";
 
 export interface SignerStatus {
@@ -26,6 +26,8 @@ export interface SignParams {
   readonly transaction: Uint8Array;
   readonly ownedNonceAccounts?: readonly string[];
   readonly addressLookupTables?: Readonly<Record<string, readonly string[]>>;
+  /** The app's own quote per trade instruction and the user's max slippage (see TradeExpectation). */
+  readonly expectations?: readonly TradeExpectation[];
 }
 
 export interface SignerRpcMethods {

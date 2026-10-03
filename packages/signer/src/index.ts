@@ -61,6 +61,7 @@ export type {
   RuleEnv,
   SummaryAction,
   TradeAction,
+  TradeExpectation,
   TransactionSummary,
   VenueAction,
   VenueCheck,

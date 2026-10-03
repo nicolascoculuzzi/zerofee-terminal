@@ -9,7 +9,8 @@
  * the connected wallet comes from the vault's authenticated header. Callers (the web app, possibly
  * compromised) only supply data the firewall can safely treat as untrusted: the transaction, the
  * nonce accounts it claims the wallet owns (authority must still be the signer, enforced on-chain),
- * and ALT contents (anything fund-sensitive must be a static key).
+ * ALT contents (anything fund-sensitive must be a static key), and trade expectations (they can only
+ * add refusals).
  *
  * There is deliberately no signMessage / sign-arbitrary-bytes API for trading wallets.
  */
@@ -19,7 +20,15 @@ import { asBufferSource, concatBytes } from "./bytes";
 import { SignerError } from "./errors";
 import { inspectTransaction } from "./firewall/firewall";
 import type { SpendTracker } from "./firewall/spend-tracker";
-import type { AddressLookupTables, FirewallCaps, FirewallContext, FirewallResult, TransactionSummary, VenueRule } from "./firewall/types";
+import type {
+  AddressLookupTables,
+  FirewallCaps,
+  FirewallContext,
+  FirewallResult,
+  TradeExpectation,
+  TransactionSummary,
+  VenueRule,
+} from "./firewall/types";
 import { Mutex } from "./mutex";
 import { SIGNER_TIP_ACCOUNTS } from "./policy";
 import { importVerifyKey } from "./vault/keys";
@@ -37,6 +46,12 @@ export interface SignerPolicy {
 export interface SignRequest {
   readonly ownedNonceAccounts?: readonly Address[];
   readonly addressLookupTables?: AddressLookupTables;
+  /**
+   * The browser's own quote for each trade instruction plus the user's max slippage. When present,
+   * every trade must have one and its minimum output must be at least expectedOut x (1 - slippage).
+   * See TradeExpectation for what this does and does not protect against.
+   */
+  readonly expectations?: readonly TradeExpectation[];
 }
 
 export interface SignResult {
@@ -141,6 +156,7 @@ export class SignerService {
       caps: policy.caps,
       venueRules: policy.venueRules,
       ...(request.addressLookupTables !== undefined ? { addressLookupTables: request.addressLookupTables } : {}),
+      ...(request.expectations !== undefined ? { expectations: request.expectations } : {}),
     };
   }
 }

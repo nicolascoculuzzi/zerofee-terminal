@@ -12,7 +12,9 @@
  *   // app
  *   const signer = createSignerClient(new Worker(new URL("./signer.worker.ts", import.meta.url), { type: "module" }));
  *   await signer.call("unlock", { password });
- *   const { signedTransaction, summary } = await signer.call("sign", { walletId, transaction });
+ *   // expectations: the app's own quote for each trade instruction and the user's max slippage.
+ *   const expectations = [{ instruction: 3, expectedOut: trade.quote.expectedOut, slippageBps: 1500 }];
+ *   const { signedTransaction, summary } = await signer.call("sign", { walletId, transaction, expectations });
  *
  * The policy (allowed programs, venue rules, tip accounts, per-trade caps) and the daily caps are
  * fixed when the worker starts; no RPC method can change them. The connected wallet is bound into
@@ -40,6 +42,7 @@ import { type Address, isAddress } from "@solana/kit";
 import { AuditLog } from "./audit";
 import { SignerError } from "./errors";
 import { type DailySpendCaps, type SpendState, SpendTracker } from "./firewall/spend-tracker";
+import type { TradeExpectation } from "./firewall/types";
 import { IndexedDbStore } from "./indexeddb";
 import { type MessageEndpoint, type SignerRpcHandlers, type SignParams, serveSignerRpc } from "./rpc";
 import { type SignerPolicy, SignerService, type SignRequest } from "./service";
@@ -73,6 +76,26 @@ function addressList(value: unknown, name: string): Address[] {
   return value as Address[];
 }
 
+/** Fresh plain copies of the caller's trade expectations (the firewall validates them again). */
+function expectationList(value: unknown): TradeExpectation[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new SignerError("INVALID_ARGUMENT", "expectations must be an array");
+  return value.map((raw: unknown, i) => {
+    if (typeof raw !== "object" || raw === null) throw new SignerError("INVALID_ARGUMENT", `expectations[${i}] must be an object`);
+    const { instruction, expectedOut, slippageBps } = raw as Record<string, unknown>;
+    if (typeof instruction !== "number" || !Number.isSafeInteger(instruction) || instruction < 0) {
+      throw new SignerError("INVALID_ARGUMENT", `expectations[${i}].instruction must be a non-negative integer`);
+    }
+    if (typeof expectedOut !== "bigint" || expectedOut <= 0n) {
+      throw new SignerError("INVALID_ARGUMENT", `expectations[${i}].expectedOut must be a positive bigint`);
+    }
+    if (typeof slippageBps !== "number" || !Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
+      throw new SignerError("INVALID_ARGUMENT", `expectations[${i}].slippageBps must be an integer from 0 to 10000`);
+    }
+    return { instruction, expectedOut, slippageBps };
+  });
+}
+
 function signRequest(params: SignParams): { walletId: string; transaction: Uint8Array; request: SignRequest } {
   const walletId = str(params.walletId, "walletId");
   if (!(params.transaction instanceof Uint8Array)) throw new SignerError("INVALID_ARGUMENT", "transaction must be a Uint8Array");
@@ -85,10 +108,15 @@ function signRequest(params: SignParams): { walletId: string; transaction: Uint8
     if (!isAddress(table)) throw new SignerError("INVALID_ARGUMENT", "lookup table keys must be addresses");
     addressLookupTables[table] = addressList(entries, `addressLookupTables[${table}]`);
   }
+  const expectations = expectationList(params.expectations);
   return {
     walletId,
     transaction: params.transaction,
-    request: { ownedNonceAccounts: addressList(params.ownedNonceAccounts, "ownedNonceAccounts"), addressLookupTables },
+    request: {
+      ownedNonceAccounts: addressList(params.ownedNonceAccounts, "ownedNonceAccounts"),
+      addressLookupTables,
+      ...(expectations !== undefined ? { expectations } : {}),
+    },
   };
 }
 

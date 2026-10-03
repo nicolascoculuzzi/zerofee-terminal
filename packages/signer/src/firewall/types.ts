@@ -18,6 +18,33 @@ export interface FirewallCaps {
 /** Address lookup table contents by table address. Untrusted input: see decode.ts. */
 export type AddressLookupTables = ReadonlyMap<string, readonly string[]> | Readonly<Record<string, readonly string[]>>;
 
+/**
+ * What the browser's own quote expects one trade instruction to return, and the user's maximum
+ * slippage. When a request carries expectations, every trade instruction must have exactly one, and
+ * the trade's guaranteed output (a sell's minimum quote out, a buy's minimum or exact tokens out)
+ * must be at least floor(expectedOut x (10,000 - slippageBps) / 10,000), core's applySlippageDown.
+ *
+ * This catches a transaction whose minimum output does not match the quote the user was shown: a
+ * tampered or buggy build path, or bytes assembled by anyone other than the browser's own code.
+ * Expectations are caller-supplied, so they can only add refusals.
+ *
+ * Residual risk: the quote is only as honest as the reserves it was computed from, and those come
+ * from the backend's trade context (curve or pool reserves). A malicious backend can report
+ * reserves under which a bad price looks like the quote, and both the quote and the minimum output
+ * then agree; this check (and the zero floor) cannot see that. Closing it needs an independent read
+ * of the reserves in the browser (e.g. from a second RPC provider) before quoting. In the Worker
+ * stage the app also supplies the slippage, so a compromised app can loosen or omit expectations;
+ * on its own origin the signer can hold the user's max slippage itself.
+ */
+export interface TradeExpectation {
+  /** Position of the trade instruction in the transaction (0-based, "#n" in summaries and violations). */
+  readonly instruction: number;
+  /** Quoted output in base units: tokens for buys, quote received after fees for sells. Positive. */
+  readonly expectedOut: bigint;
+  /** The user's maximum slippage in basis points, 0 to 10,000. */
+  readonly slippageBps: number;
+}
+
 export interface FirewallContext {
   /** The trading wallet that will sign. Must be the fee payer and the only signer. */
   readonly signer: Address;
@@ -34,6 +61,8 @@ export interface FirewallContext {
   readonly addressLookupTables?: AddressLookupTables;
   /** Rules for venue programs (pump.fun, PumpSwap, ...). */
   readonly venueRules?: readonly VenueRule[];
+  /** The caller's own quote per trade instruction (see TradeExpectation). Optional; untrusted; only adds refusals. */
+  readonly expectations?: readonly TradeExpectation[];
 }
 
 /** One account slot of an instruction, with its role in the message. */
