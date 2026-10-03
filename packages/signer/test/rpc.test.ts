@@ -33,7 +33,7 @@ function start(): { client: SignerClient; handle: SignerWorkerHandle; app: Messa
   const { allowedPrograms, tipAccounts, caps, venueRules } = makeContext(policyActors);
   const handle = startSignerWorker({
     policy: { allowedPrograms, tipAccounts, caps, venueRules: venueRules ?? [] },
-    dailyCaps: { buyLamports: 5n * LAMPORTS_PER_SOL },
+    dailyCaps: { buyLamports: 5n * LAMPORTS_PER_SOL, feeLamports: LAMPORTS_PER_SOL },
     vault: { kdfParams: FAST_KDF, allowWeakKdfForTesting: true },
     vaultStorage: new MemoryStore<StoredVault>(),
     spendStorage: new MemoryStore<SpendState>(),

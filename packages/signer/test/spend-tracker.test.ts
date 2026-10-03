@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Address } from "@solana/kit";
 import { randomBytes } from "../src/bytes";
-import { type SpendState, SpendTracker } from "../src/firewall/spend-tracker";
+import { type DailySpendCaps, type SpendState, SpendTracker } from "../src/firewall/spend-tracker";
 import type { TransactionSummary } from "../src/firewall/types";
 import { MemoryStore } from "../src/store";
 import { LAMPORTS_PER_SOL, MAINNET, randomAddress } from "./helpers/fixtures";
@@ -13,6 +13,7 @@ function summary(p: {
   buy?: bigint;
   tip?: bigint;
   fee?: bigint;
+  network?: bigint;
   quote?: Record<string, bigint>;
   nonce?: { account: Address; value: string };
 }): TransactionSummary {
@@ -23,17 +24,20 @@ function summary(p: {
     version: 0,
     feePayer: randomAddress(),
     priorityFeeLamports: p.fee ?? 0n,
+    networkFeeLamports: p.network ?? 0n,
     tipLamports: p.tip ?? 0n,
     maxBuyLamports: p.buy ?? 0n,
     maxBuyQuote: p.quote ?? {},
-    maxSolOutLamports: (p.buy ?? 0n) + (p.tip ?? 0n) + (p.fee ?? 0n),
+    maxSolOutLamports: (p.buy ?? 0n) + (p.tip ?? 0n) + (p.fee ?? 0n) + (p.network ?? 0n),
     ...(p.nonce ? { durableNonce: { nonceAccount: p.nonce.account, nonceValue: p.nonce.value } } : {}),
   };
 }
 
-function tracker(caps: ConstructorParameters<typeof SpendTracker>[0]["caps"], clock = { now: Date.UTC(2026, 9, 3, 10) }) {
+/** Fee budget defaults to a generous 100 SOL so tests that are not about fees ignore it. */
+function tracker(caps: Omit<DailySpendCaps, "feeLamports"> & { feeLamports?: bigint }, clock = { now: Date.UTC(2026, 9, 3, 10) }) {
   const storage = new MemoryStore<SpendState>();
-  return { t: new SpendTracker({ storage, caps, now: () => clock.now }), storage, clock };
+  const full: DailySpendCaps = { feeLamports: 100n * SOL, ...caps };
+  return { t: new SpendTracker({ storage, caps: full, now: () => clock.now }), storage, clock };
 }
 
 const msg = () => randomBytes(64);
@@ -86,12 +90,25 @@ describe("SpendTracker", () => {
     expect((await t.reserve(summary({ buy: 0n, fee: 5_000n }), msg())).ok).toBe(true);
   });
 
-  test("optional tip + priority fee budget", async () => {
-    const { t } = tracker({ buyLamports: SOL, feeLamports: 10_000n });
-    expect((await t.reserve(summary({ tip: 6_000n }), msg())).ok).toBe(true);
-    const over = await t.reserve(summary({ fee: 5_000n }), msg());
+  test("mandatory fee budget counts tips, priority fees and the base fee, sells included", async () => {
+    const { t } = tracker({ buyLamports: SOL, feeLamports: 20_000n });
+    expect((await t.reserve(summary({ tip: 6_000n, network: 5_000n }), msg())).ok).toBe(true);
+    const over = await t.reserve(summary({ fee: 5_000n, network: 5_000n }), msg());
     expect(over.ok).toBe(false);
-    if (!over.ok) expect(over.violations.join()).toContain("daily tip and priority fee cap");
+    if (!over.ok) expect(over.violations.join()).toContain("daily fee budget");
+    expect((await t.totals()).feeLamports).toBe(11_000n);
+    expect(() => new SpendTracker({ storage: new MemoryStore(), caps: { buyLamports: SOL } as DailySpendCaps })).toThrow(/feeLamports/);
+  });
+
+  test("wiping or rewriting stored totals cannot reset today's cap while the tracker lives", async () => {
+    const { t, storage } = tracker({ buyLamports: SOL });
+    expect((await t.reserve(summary({ buy: (SOL * 6n) / 10n }), msg())).ok).toBe(true);
+    storage.tamper((v) => ({ ...v, entries: [] })); // same-origin script deletes the record's contents
+    expect((await t.totals()).buyLamports).toBe((SOL * 6n) / 10n);
+    expect((await t.reserve(summary({ buy: (SOL * 6n) / 10n }), msg())).ok).toBe(false);
+    // The next successful reservation writes the merged history back to storage.
+    expect((await t.reserve(summary({ buy: (SOL * 3n) / 10n }), msg())).ok).toBe(true);
+    expect((await storage.load())!.value.entries.length).toBe(2);
   });
 
   test("non-SOL quote mints need their own daily cap", async () => {
@@ -110,7 +127,7 @@ describe("SpendTracker", () => {
     for (let i = 0; i < 1005; i++) await t.reserve(summary({ buy: 1n, tip: 1n }), msg());
     const state = (await storage.load())!.value;
     expect(state.entries.length).toBe(206); // folded at 1,001 entries down to aggregate + 200, then 5 more
-    expect(state.entries[0]!.group).toBe("aggregate");
+    expect(state.entries[0]!.group).toMatch(/^aggregate:/);
     const totals = await t.totals();
     expect(totals.buyLamports).toBe(1005n + 7n);
     expect(totals.feeLamports).toBe(1005n);

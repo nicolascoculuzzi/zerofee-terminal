@@ -648,3 +648,73 @@ describe("firewall: extra accounts and lookup tables", () => {
     );
   });
 });
+
+describe("firewall: mints from lookup tables, rent and nonce funding", () => {
+  test("a curve quote mint claimed through an ALT cannot steer which cap applies", async () => {
+    // Caller claims ALT entry 0 is USDC (so max_sol_cost would be checked against the USDC cap);
+    // on chain the table could hold wSOL and the program would run an uncapped SOL buy.
+    const a = makeActors();
+    const userUsdcAta = await findAssociatedTokenAddress(a.signer, MAINNET.usdc, TOKEN_PROGRAM);
+    const ix = await curveInstruction("buy_v2", curveParams(a, { quote_mint: MAINNET.usdc, associated_quote_user: userUsdcAta }), {
+      amount: 1n,
+      max_sol_cost: 400_000_000n,
+    });
+    const alt = randomAddress();
+    const tables = { [alt]: [MAINNET.usdc] };
+    const tx = buildTransaction({ feePayer: a.signer, instructions: [ix], lookupTables: tables });
+    await expectRefused(tx, makeContext(a, { addressLookupTables: tables }), /quote mint must be a static account key/);
+  });
+
+  test("TransferChecked and ATA creation refuse mints loaded from lookup tables", async () => {
+    const a = makeActors();
+    const mint = MAINNET.curveMint;
+    const alt = randomAddress();
+    const tables = { [alt]: [mint] };
+    const transfer = getTransferCheckedInstruction(
+      {
+        source: await findAssociatedTokenAddress(a.signer, mint, TOKEN_2022_PROGRAM),
+        mint,
+        destination: await findAssociatedTokenAddress(a.connected, mint, TOKEN_2022_PROGRAM),
+        authority: noop(a.signer),
+        amount: 1n,
+        decimals: 6,
+      },
+      { programAddress: TOKEN_2022_PROGRAM },
+    );
+    const create = await createAtaIdempotent(a.signer, a.connected, mint, TOKEN_2022_PROGRAM);
+    const tx = buildTransaction({ feePayer: a.signer, instructions: [create, transfer], lookupTables: tables });
+    const violations = await expectRefused(tx, makeContext(a, { addressLookupTables: tables }), /mint must be a static account key/);
+    expect(violations.filter((v) => /mint must be a static account key/.test(v))).toHaveLength(2);
+  });
+
+  test("token accounts may only be created for mints the transaction trades or transfers", async () => {
+    const a = makeActors();
+    const griefing: Instruction[] = [];
+    for (let i = 0; i < 3; i++) griefing.push(await createAtaIdempotent(a.signer, a.signer, randomAddress(), TOKEN_PROGRAM));
+    await expectRefused(buildTransaction({ feePayer: a.signer, instructions: griefing }), makeContext(a), /neither trades nor transfers/);
+    // Creating the ATA of the coin being bought (and wSOL) stays allowed.
+    await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: await curveBuyV2(a) }), makeContext(a));
+  });
+
+  test("nonce accounts cannot be funded beyond the cap", async () => {
+    const a = makeActors();
+    const seed = "nonce-9";
+    const nonceAccount = await createAddressWithSeed({ baseAddress: a.signer, programAddress: SYSTEM_PROGRAM, seed });
+    const create = (amount: bigint) =>
+      getCreateAccountWithSeedInstruction({
+        payer: noop(a.signer),
+        newAccount: nonceAccount,
+        base: a.signer,
+        seed,
+        amount,
+        space: 80n,
+        programAddress: SYSTEM_PROGRAM,
+      });
+    const init = getInitializeNonceAccountInstruction({ nonceAccount, nonceAuthority: a.signer });
+    const tx = (amount: bigint) => buildTransaction({ feePayer: a.signer, instructions: [create(amount), init] });
+    await expectRefused(tx(50n * LAMPORTS_PER_SOL), makeContext(a), /above the cap of 2000000/);
+    const strict = makeContext(a, { caps: { ...DEFAULT_CAPS, maxNonceAccountLamports: 1_000_000n } });
+    await expectRefused(tx(1_500_000n), strict, /above the cap of 1000000/);
+    await expectAllowed(tx(1_500_000n), makeContext(a));
+  });
+});

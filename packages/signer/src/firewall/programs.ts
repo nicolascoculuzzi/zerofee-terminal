@@ -38,5 +38,15 @@ export const JITO_DONT_FRONT_PREFIX = "jitodontfront";
 /** Max compute units per transaction (runtime constant). */
 export const MAX_COMPUTE_UNIT_LIMIT = 1_400_000;
 
+/** Network base fee per signature (lamports_per_signature). https://solana.com/docs/core/fees */
+export const BASE_FEE_LAMPORTS_PER_SIGNATURE = 5_000n;
+
+/**
+ * Default cap on the lamports a new nonce account may be funded with: comfortably above the
+ * rent-exempt minimum for 80 bytes (208 bytes x 5,080 lamports/byte = 1,056,640 at 2026-10 rent;
+ * 1,447,680 at the pre-2026 rate), far below anything worth parking there.
+ */
+export const DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS = 2_000_000n;
+
 /** Legacy and v0 transactions are limited to one packet. */
 export const PACKET_DATA_SIZE = 1232;

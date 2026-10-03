@@ -8,7 +8,8 @@
  *   - exact data length and account count (trailing read-only jitodontfront markers excepted);
  *   - `user` is the signer, and the signer appears nowhere else in the instruction;
  *   - the user's base and quote token accounts are the signer's ATAs (static keys), so bought tokens
- *     and sale proceeds cannot be redirected;
+ *     and sale proceeds cannot be redirected; the mints are static keys too, because they select the
+ *     cap and the expected token accounts;
  *   - the token programs it may CPI into (with the user's signature) are SPL Token / Token-2022, static;
  *   - the quote asset is wSOL or has a configured per-trade cap, and the base asset is not a quote
  *     asset (a "sell" of wSOL would be an uncapped buy of something else);
@@ -109,8 +110,18 @@ export function createIdlVenueRule(options: IdlVenueRuleOptions): VenueRule {
         if (i !== L.user && account.address === signer) violations.push(`${label}: trading wallet used in an unexpected position (${i})`);
       });
 
-      const baseMint = core[L.baseMint]!.address;
-      const quoteMint = L.quoteMint === undefined ? WSOL_MINT : core[L.quoteMint]!.address;
+      // The mints decide which cap applies and which token accounts are "the user's", so their
+      // identity must not come from caller-supplied lookup-table data.
+      const baseMintRef = core[L.baseMint]!;
+      const quoteMintRef = L.quoteMint === undefined ? undefined : core[L.quoteMint]!;
+      for (const [what, ref] of [
+        ["base mint", baseMintRef],
+        ["quote mint", quoteMintRef],
+      ] as const) {
+        if (ref && !ref.isStatic) violations.push(`${label}: ${what} must be a static account key, not loaded from a lookup table`);
+      }
+      const baseMint = baseMintRef.address;
+      const quoteMint = quoteMintRef?.address ?? WSOL_MINT;
       const quoteAssets = new Set<string>([WSOL_MINT, ...Object.keys(caps.maxBuyQuote)]);
       if (quoteAssets.has(baseMint)) violations.push(`${label}: base mint ${baseMint} is a quote asset; refusing to trade it as the token`);
       if (quoteMint !== WSOL_MINT && !hasCap(caps.maxBuyQuote, quoteMint)) {

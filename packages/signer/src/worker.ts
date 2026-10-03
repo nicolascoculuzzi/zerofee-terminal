@@ -18,9 +18,11 @@
  * the vault's authenticated header at creation.
  *
  * Limits of the worker stage: a Worker shares the app's origin, and the password is typed into
- * the app's DOM. Compromised app JavaScript therefore cannot read keys or bypass the firewall, but
- * it can capture the password and call `export`, and it can request firewall-approved transactions
- * within the caps.
+ * the app's DOM. Compromised app JavaScript therefore cannot read keys or bypass the per-transaction
+ * firewall, but it can capture the password and call `export`, request firewall-approved
+ * transactions within the per-trade caps, and (by wiping IndexedDB and restarting the worker) reset
+ * the daily spend totals; within one running worker the in-memory high-water mark prevents that.
+ * It could also bind a vault to its own "connected wallet" at onboarding, before the user does.
  *
  * Planned upgrade: a dedicated signer origin (e.g. https://signer.<canonical-domain>) loaded in a
  * sandboxed iframe with a strict CSP and SRI. The iframe renders its own password, export and

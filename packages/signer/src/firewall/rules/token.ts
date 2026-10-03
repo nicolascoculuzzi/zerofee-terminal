@@ -100,6 +100,7 @@ export async function checkTokenInstruction(ix: DecodedInstruction, env: RuleEnv
       if (!expect(4, 10)) return done();
       const [, mint, destination, authority] = core as [AccountRef, AccountRef, AccountRef, AccountRef];
       if (!isSigner(authority)) violations.push(`${label}: authority must be the trading wallet`);
+      if (!mint.isStatic) violations.push(`${label}: mint must be a static account key, not loaded from a lookup table`);
       const ownAta = await env.ata(signer, mint.address, ix.programAddress);
       const connectedAta = await env.ata(ctx.connectedWallet, mint.address, ix.programAddress);
       if (!destination.isStatic || (destination.address !== ownAta && destination.address !== connectedAta)) {

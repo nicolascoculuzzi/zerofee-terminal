@@ -9,14 +9,22 @@
  *   AdvanceNonceAccount      on an owned nonce account, authority = signer.
  *   WithdrawNonceAccount     on an owned nonce account, authority = signer, to the signer or the
  *                            connected wallet.
- *   CreateAccount[WithSeed]  only to create a nonce account: owner = System, space = 80, immediately
- *                            followed by InitializeNonceAccount with authority = signer.
+ *   CreateAccount[WithSeed]  only to create a nonce account: owner = System, space = 80, funded with at
+ *                            most caps.maxNonceAccountLamports, immediately followed by
+ *                            InitializeNonceAccount with authority = signer.
  *   InitializeNonceAccount   only as the second half of that pair.
  * Everything else (Assign, Allocate, TransferWithSeed, AuthorizeNonceAccount, ...) is refused.
  */
 import { type Address, createAddressWithSeed, getAddressDecoder } from "@solana/kit";
 import { readU32LE, readU64LE } from "../../bytes";
-import { SYSTEM_PROGRAM, SYSVAR_RECENT_BLOCKHASHES, SYSVAR_RENT, TOKEN_PROGRAM, WSOL_MINT } from "../programs";
+import {
+  DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS,
+  SYSTEM_PROGRAM,
+  SYSVAR_RECENT_BLOCKHASHES,
+  SYSVAR_RENT,
+  TOKEN_PROGRAM,
+  WSOL_MINT,
+} from "../programs";
 import type { AccountRef, DecodedInstruction, RuleEnv, RuleOutcome, SummaryAction } from "../types";
 import { countMismatch, splitTrailingDontFront, where } from "./common";
 
@@ -146,7 +154,18 @@ export async function checkSystemInstruction(ix: DecodedInstruction, env: RuleEn
       const lamports = readU64LE(data, 4);
       const space = readU64LE(data, 12);
       const owner = addressDecoder.decode(data.subarray(20, 52));
-      checkNonceCreation(label, from, created, owner, space, tx.instructions[ix.index + 1], signer, violations);
+      checkNonceCreation(
+        label,
+        from,
+        created,
+        owner,
+        space,
+        lamports,
+        ctx.caps.maxNonceAccountLamports ?? DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS,
+        tx.instructions[ix.index + 1],
+        signer,
+        violations,
+      );
       actions.push({ kind: "nonce_create", nonceAccount: created.address, lamports });
       return done();
     }
@@ -184,7 +203,18 @@ export async function checkSystemInstruction(ix: DecodedInstruction, env: RuleEn
         const derived = await createAddressWithSeed({ baseAddress, programAddress: SYSTEM_PROGRAM, seed });
         if (derived !== created.address) violations.push(`${label}: new account does not match its seed derivation`);
       }
-      checkNonceCreation(label, from, created, owner, space, tx.instructions[ix.index + 1], signer, violations);
+      checkNonceCreation(
+        label,
+        from,
+        created,
+        owner,
+        space,
+        lamports,
+        ctx.caps.maxNonceAccountLamports ?? DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS,
+        tx.instructions[ix.index + 1],
+        signer,
+        violations,
+      );
       actions.push({ kind: "nonce_create", nonceAccount: created.address, lamports });
       return done();
     }
@@ -214,6 +244,8 @@ function checkNonceCreation(
   created: AccountRef,
   owner: Address,
   space: bigint,
+  lamports: bigint,
+  maxLamports: bigint,
   next: DecodedInstruction | undefined,
   signer: Address,
   violations: string[],
@@ -223,6 +255,8 @@ function checkNonceCreation(
     violations.push(`${label}: accounts may only be created as nonce accounts (owner System, space ${NONCE_ACCOUNT_SPACE})`);
   }
   if (!created.isStatic) violations.push(`${label}: new account must be a static account key`);
+  if (lamports > maxLamports)
+    violations.push(`${label}: funds the nonce account with ${lamports} lamports, above the cap of ${maxLamports}`);
   if (!initializesNonce(next, created.address, signer)) {
     violations.push(`${label}: must be followed by InitializeNonceAccount for ${created.address} with the trading wallet as authority`);
   }

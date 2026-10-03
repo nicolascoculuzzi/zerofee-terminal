@@ -30,6 +30,7 @@ export {
   computeTotals,
   type DailySpendCaps,
   type DailySpendTotals,
+  mergeEntries,
   type SpendEntry,
   type SpendReservation,
   type SpendState,

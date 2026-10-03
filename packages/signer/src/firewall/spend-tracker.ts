@@ -1,7 +1,9 @@
 /**
- * Daily spend caps, enforced before signing. Every signed transaction commits its maximum spend
- * (the buy caps from the firewall summary, plus tips and priority fee as a separate budget) to the
- * current UTC day, whether or not it lands: a signed transaction can be submitted at any time.
+ * Daily spend caps, enforced before signing. Every signed transaction commits its maximum spend to
+ * the current UTC day, whether or not it lands (a signed transaction can be submitted any time):
+ *   - buys: the buy caps from the firewall summary (SOL, and per non-SOL quote mint);
+ *   - fees: tips + priority fee + network base fee, as a separate, mandatory budget. It applies to
+ *     every transaction, sells included, so set it generously enough that exits are never starved.
  *
  * Re-signing an identical message counts once: same message => same signature => the runtime can
  * execute it at most once.
@@ -12,9 +14,14 @@
  * so several such "variants" can all land in successive slots. Counting each one in full is the
  * only sound choice; armed buy grids therefore consume the daily cap per variant.
  *
- * The device clock defines the day; the server re-checks limits (SPEC "Limits").
+ * Storage is not trusted to only grow: the tracker keeps an in-memory high-water mark of today's
+ * entries and merges it with whatever storage returns, so deleting or rewriting the stored record
+ * cannot lower today's total while this tracker instance lives. Code on the same origin that can
+ * also restart the signer (a compromised app in the Worker stage) can still reset it; daily caps are
+ * only fully reliable once the signer runs on its own origin. The device clock defines the day; the
+ * server re-checks limits (SPEC "Limits").
  */
-import { asBufferSource, toHex } from "../bytes";
+import { asBufferSource, randomBytes, toHex } from "../bytes";
 import { SignerError } from "../errors";
 import { Mutex } from "../mutex";
 import type { VersionedStore } from "../store";
@@ -24,14 +31,14 @@ import type { TransactionSummary } from "./types";
 export interface DailySpendCaps {
   /** Max sum of SOL-quoted buy commitments per UTC day (lamports). */
   readonly buyLamports: bigint;
-  /** Optional max of tips + priority fees per UTC day (lamports). */
-  readonly feeLamports?: bigint;
+  /** Max tips + priority fees + base fees per UTC day (lamports). Gates sells too. */
+  readonly feeLamports: bigint;
   /** Per non-SOL quote mint. Spending a quote mint without an entry is refused. */
   readonly buyQuote?: Readonly<Record<string, bigint>>;
 }
 
 export interface SpendEntry {
-  /** "msg:<sha256 of message bytes>" (identical messages count once) or "aggregate" (compacted history). */
+  /** "msg:<sha256 of message bytes>" (identical messages count once) or "aggregate:<id>" (compacted history). */
   readonly group: string;
   readonly buyLamports: bigint;
   readonly feeLamports: bigint;
@@ -74,27 +81,31 @@ function addRecord(a: Readonly<Record<string, bigint>>, b: Readonly<Record<strin
   return out;
 }
 
+function maxEntry(a: SpendEntry, b: SpendEntry): SpendEntry {
+  return {
+    group: a.group,
+    buyLamports: a.buyLamports > b.buyLamports ? a.buyLamports : b.buyLamports,
+    feeLamports: a.feeLamports > b.feeLamports ? a.feeLamports : b.feeLamports,
+    buyQuote: maxRecord(a.buyQuote, b.buyQuote),
+  };
+}
+
+/** Union by group key (same key: component-wise maximum). Never loses an entry from either side. */
+export function mergeEntries(a: readonly SpendEntry[], b: readonly SpendEntry[]): SpendEntry[] {
+  const groups = new Map<string, SpendEntry>();
+  for (const e of [...a, ...b]) {
+    const prev = groups.get(e.group);
+    groups.set(e.group, prev ? maxEntry(prev, e) : e);
+  }
+  return [...groups.values()];
+}
+
 /** Sum over groups of the component-wise maximum within each group. */
 export function computeTotals(day: string, entries: readonly SpendEntry[]): DailySpendTotals {
-  const groups = new Map<string, SpendEntry>();
-  for (const e of entries) {
-    const prev = groups.get(e.group);
-    groups.set(
-      e.group,
-      prev
-        ? {
-            group: e.group,
-            buyLamports: e.buyLamports > prev.buyLamports ? e.buyLamports : prev.buyLamports,
-            feeLamports: e.feeLamports > prev.feeLamports ? e.feeLamports : prev.feeLamports,
-            buyQuote: maxRecord(prev.buyQuote, e.buyQuote),
-          }
-        : e,
-    );
-  }
   let buyLamports = 0n;
   let feeLamports = 0n;
   let buyQuote: Record<string, bigint> = {};
-  for (const g of groups.values()) {
+  for (const g of mergeEntries(entries, [])) {
     buyLamports += g.buyLamports;
     feeLamports += g.feeLamports;
     buyQuote = addRecord(buyQuote, g.buyQuote);
@@ -104,14 +115,14 @@ export function computeTotals(day: string, entries: readonly SpendEntry[]): Dail
 
 /**
  * Bounds stored history. Folding only ever over-counts: a folded message re-signed later counts
- * again, which is the conservative direction.
+ * again, and aggregates get unique keys so two different aggregates are both counted.
  */
 function compact(entries: readonly SpendEntry[]): SpendEntry[] {
   if (entries.length <= COMPACT_THRESHOLD) return [...entries];
   const old = entries.slice(0, entries.length - KEEP_RECENT);
   const folded = computeTotals("", old);
   const aggregate: SpendEntry = {
-    group: "aggregate",
+    group: `aggregate:${toHex(randomBytes(8))}`,
     buyLamports: folded.buyLamports,
     feeLamports: folded.feeLamports,
     buyQuote: folded.buyQuote,
@@ -130,19 +141,22 @@ export class SpendTracker {
   readonly #caps: DailySpendCaps;
   readonly #now: () => number;
   readonly #mutex = new Mutex();
+  /** High-water mark: everything this instance has committed or seen today. Storage cannot lower it. */
+  #memory: SpendState | undefined;
 
   constructor(options: SpendTrackerOptions) {
     this.#storage = options.storage;
     this.#caps = options.caps;
     this.#now = options.now ?? Date.now;
-    if (typeof this.#caps.buyLamports !== "bigint" || this.#caps.buyLamports < 0n)
-      throw new SignerError("INVALID_ARGUMENT", "caps.buyLamports must be a bigint");
+    for (const key of ["buyLamports", "feeLamports"] as const) {
+      const value = this.#caps[key];
+      if (typeof value !== "bigint" || value < 0n) throw new SignerError("INVALID_ARGUMENT", `caps.${key} must be a non-negative bigint`);
+    }
   }
 
   async totals(): Promise<DailySpendTotals> {
     const day = utcDay(this.#now());
-    const loaded = await this.#storage.load();
-    return computeTotals(day, loaded?.value.day === day ? loaded.value.entries : []);
+    return computeTotals(day, await this.#today(day));
   }
 
   /** Checks the transaction against today's caps and records it if it fits. Atomic with respect to other reservations. */
@@ -152,36 +166,49 @@ export class SpendTracker {
       const entry: SpendEntry = {
         group,
         buyLamports: summary.maxBuyLamports,
-        feeLamports: summary.tipLamports + summary.priorityFeeLamports,
+        feeLamports: summary.tipLamports + summary.priorityFeeLamports + summary.networkFeeLamports,
         buyQuote: { ...summary.maxBuyQuote },
       };
       for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
         const day = utcDay(this.#now());
         const loaded = await this.#storage.load();
-        const current = loaded?.value.day === day ? loaded.value.entries : [];
+        const stored = loaded?.value.day === day ? loaded.value.entries : [];
+        const remembered = this.#memory?.day === day ? this.#memory.entries : [];
+        const current = mergeEntries(stored, remembered);
+        this.#memory = { day, entries: current };
         const before = computeTotals(day, current);
         const after = computeTotals(day, [...current, entry]);
         const violations = this.#violations(before, after);
         if (violations.length) return { ok: false, violations, totals: before };
-        const saved = await this.#storage.save({ day, entries: compact([...current, entry]) }, loaded?.revision);
-        if (saved !== undefined) return { ok: true, totals: after };
+        const next = compact([...current, entry]);
+        if ((await this.#storage.save({ day, entries: next }, loaded?.revision)) !== undefined) {
+          this.#memory = { day, entries: next };
+          return { ok: true, totals: after };
+        }
       }
       throw new SignerError("STORAGE_CONFLICT", "spend tracker storage kept changing; try again");
     });
   }
 
+  async #today(day: string): Promise<SpendEntry[]> {
+    const loaded = await this.#storage.load();
+    const stored = loaded?.value.day === day ? loaded.value.entries : [];
+    return mergeEntries(stored, this.#memory?.day === day ? this.#memory.entries : []);
+  }
+
   #violations(before: DailySpendTotals, after: DailySpendTotals): string[] {
     const v: string[] = [];
     const caps = this.#caps;
-    // Only transactions that add spend are checked, so sells (exits) are never blocked by a buy cap.
+    // Only transactions that add buy spend are checked, so sells (exits) are never blocked by a buy cap.
     if (after.buyLamports > before.buyLamports && after.buyLamports > caps.buyLamports) {
       v.push(
         `daily buy cap: ${formatSol(before.buyLamports)} committed today, this transaction would bring it to ${formatSol(after.buyLamports)} (cap ${formatSol(caps.buyLamports)})`,
       );
     }
-    // The optional fee budget applies to every transaction that adds tips/priority fees, sells included.
-    if (caps.feeLamports !== undefined && after.feeLamports > before.feeLamports && after.feeLamports > caps.feeLamports) {
-      v.push(`daily tip and priority fee cap: would reach ${formatSol(after.feeLamports)} (cap ${formatSol(caps.feeLamports)})`);
+    if (after.feeLamports > before.feeLamports && after.feeLamports > caps.feeLamports) {
+      v.push(
+        `daily fee budget (tips, priority and base fees): would reach ${formatSol(after.feeLamports)} (cap ${formatSol(caps.feeLamports)})`,
+      );
     }
     for (const [mint, total] of Object.entries(after.buyQuote)) {
       if (total === (before.buyQuote[mint] ?? 0n)) continue;

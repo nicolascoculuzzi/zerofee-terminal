@@ -38,6 +38,7 @@ export async function checkAssociatedTokenInstruction(ix: DecodedInstruction, en
   if (!owner.isStatic || (owner.address !== ctx.signer && owner.address !== ctx.connectedWallet)) {
     violations.push(`${label}: owner must be the trading wallet or the connected wallet, not ${owner.address}`);
   }
+  if (!mint.isStatic) violations.push(`${label}: mint must be a static account key, not loaded from a lookup table`);
   if (!systemProgram.isStatic || systemProgram.address !== SYSTEM_PROGRAM) violations.push(`${label}: unexpected system program account`);
   if (!tokenProgram.isStatic || !TOKEN_PROGRAMS.includes(tokenProgram.address)) {
     violations.push(`${label}: token program must be SPL Token or Token-2022`);

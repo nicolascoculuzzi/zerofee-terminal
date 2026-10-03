@@ -43,7 +43,8 @@ describe("firewall: allowed transactions", () => {
     expect(summary.maxBuyLamports).toBe(500_000_000n);
     expect(summary.tipLamports).toBe(10_000n);
     expect(summary.priorityFeeLamports).toBe(6_000n); // 120,000 CU x 50,000 micro-lamports
-    expect(summary.maxSolOutLamports).toBe(500_016_000n);
+    expect(summary.networkFeeLamports).toBe(5_000n);
+    expect(summary.maxSolOutLamports).toBe(500_021_000n); // buy + tip + priority fee + base fee
     expect(summary.text).toContain("Buy on pump.fun bonding curve (buy_v2): spend up to 0.5 SOL");
     expect(summary.text).toContain("3Z16…pump");
     expect(summary.text).toContain("Tip 0.00001 SOL");

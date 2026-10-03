@@ -11,6 +11,8 @@ export interface FirewallCaps {
   readonly maxBuyLamports: bigint;
   /** Same, per non-SOL quote mint (base units). A quote mint without an entry cannot be bought with. */
   readonly maxBuyQuote: Readonly<Record<string, bigint>>;
+  /** Max lamports a newly created nonce account may be funded with. Default DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS (0.002 SOL). */
+  readonly maxNonceAccountLamports?: bigint;
 }
 
 /** Address lookup table contents by table address. Untrusted input: see decode.ts. */
@@ -137,12 +139,14 @@ export interface TransactionSummary {
   readonly computeUnitLimit?: number;
   readonly computeUnitPriceMicroLamports?: bigint;
   readonly priorityFeeLamports: bigint;
+  /** Network base fee: 5,000 lamports for the single signature. */
+  readonly networkFeeLamports: bigint;
   readonly tipLamports: bigint;
   /** Sum of the SOL-quoted buy caps (max_sol_cost, spendable_sol_in, max_quote_amount_in, ...). */
   readonly maxBuyLamports: bigint;
   /** Sum of buy caps per non-SOL quote mint. */
   readonly maxBuyQuote: Readonly<Record<string, bigint>>;
-  /** Upper bound on SOL paid to third parties: buys + tips + priority fee (excludes refundable rent and moves between own accounts). */
+  /** Upper bound on SOL paid to third parties: buys + tips + priority fee + base fee (excludes refundable rent and moves between own accounts). */
   readonly maxSolOutLamports: bigint;
   /**
    * Present when the first instruction advances an owned nonce account. If the lifetime token is

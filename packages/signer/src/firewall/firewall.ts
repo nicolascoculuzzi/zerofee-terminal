@@ -19,6 +19,7 @@ import { decodeTransaction } from "./decode";
 import { formatQuote, formatSol, shortAddress } from "./format";
 import {
   ASSOCIATED_TOKEN_PROGRAM,
+  BASE_FEE_LAMPORTS_PER_SIGNATURE,
   BUILTIN_PROGRAMS,
   COMPUTE_BUDGET_PROGRAM,
   SYSTEM_PROGRAM,
@@ -43,6 +44,11 @@ import type {
 } from "./types";
 
 export type InspectionResult = { ok: true; summary: TransactionSummary; tx: DecodedTransaction } | { ok: false; violations: string[] };
+
+/** Own-property lookup: caps objects cross the RPC boundary, never trust their prototype chain. */
+function quoteCap(caps: FirewallContext["caps"], mint: string): bigint | undefined {
+  return Object.hasOwn(caps.maxBuyQuote, mint) ? caps.maxBuyQuote[mint] : undefined;
+}
 
 export async function checkTransaction(txBytes: Uint8Array, ctx: FirewallContext): Promise<FirewallResult> {
   const result = await inspectTransaction(txBytes, ctx);
@@ -143,7 +149,7 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
       }
       maxBuyLamports += spend;
     } else {
-      const cap = caps.maxBuyQuote[action.quoteMint];
+      const cap = quoteCap(caps, action.quoteMint);
       if (cap === undefined) violations.push(`#${ixIndex}: no per-trade cap is configured for quote mint ${action.quoteMint}`);
       else if (spend > cap) {
         violations.push(
@@ -160,9 +166,22 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
     );
   }
   for (const [mint, total] of Object.entries(maxBuyQuote)) {
-    const cap = caps.maxBuyQuote[mint];
+    const cap = quoteCap(caps, mint);
     if (cap !== undefined && total > cap)
       violations.push(`buys in this transaction commit ${total} units of ${mint} in total, above the per-trade cap of ${cap}`);
+  }
+
+  // Token-account rent is refundable but uncapped, so creation is limited to mints the transaction
+  // actually trades or transfers (plus wSOL for wrapping): no rent griefing with arbitrary mints.
+  const usedMints = new Set<string>([WSOL_MINT]);
+  for (const { action } of actions) {
+    if (action.kind === "trade") usedMints.add(action.baseMint).add(action.quoteMint);
+    if (action.kind === "token_transfer") usedMints.add(action.mint);
+  }
+  for (const { ixIndex, action } of actions) {
+    if (action.kind === "create_ata" && !usedMints.has(action.mint)) {
+      violations.push(`#${ixIndex}: creates a token account for ${action.mint}, a mint this transaction neither trades nor transfers`);
+    }
   }
 
   if (violations.length) return { ok: false, violations };
@@ -187,9 +206,11 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
       `Advances durable nonce ${shortAddress(durableNonce.nonceAccount)} first: if signed against its nonce value it stays valid until that nonce advances.`,
     );
   }
-  const maxSolOutLamports = maxBuyLamports + tipLamports + budget.priorityFeeLamports;
+  const networkFeeLamports = BASE_FEE_LAMPORTS_PER_SIGNATURE; // exactly one signature (checked above)
+  const maxSolOutLamports = maxBuyLamports + tipLamports + budget.priorityFeeLamports + networkFeeLamports;
+  const deposits = actions.some(({ action }) => action.kind === "create_ata" || action.kind === "nonce_create");
   lines.push(
-    `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and priority fees (plus the network base fee).`,
+    `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and fees${deposits ? "; refundable deposits are listed above" : ""}.`,
   );
 
   const summary: TransactionSummary = {
@@ -201,6 +222,7 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
     ...(budget.computeUnitLimit !== undefined ? { computeUnitLimit: budget.computeUnitLimit } : {}),
     ...(budget.computeUnitPriceMicroLamports !== undefined ? { computeUnitPriceMicroLamports: budget.computeUnitPriceMicroLamports } : {}),
     priorityFeeLamports: budget.priorityFeeLamports,
+    networkFeeLamports,
     tipLamports,
     maxBuyLamports,
     maxBuyQuote,
@@ -225,6 +247,12 @@ function validateContext(ctx: FirewallContext): string[] {
   if (typeof caps !== "object" || caps === null) return [...problems, "caps missing"];
   for (const key of ["maxTipLamports", "maxPriorityFeeLamports", "maxBuyLamports"] as const) {
     if (typeof caps[key] !== "bigint" || caps[key] < 0n) problems.push(`caps.${key} must be a non-negative bigint`);
+  }
+  if (
+    caps.maxNonceAccountLamports !== undefined &&
+    (typeof caps.maxNonceAccountLamports !== "bigint" || caps.maxNonceAccountLamports < 0n)
+  ) {
+    problems.push("caps.maxNonceAccountLamports must be a non-negative bigint");
   }
   if (!Number.isSafeInteger(caps.maxComputeUnitLimit) || caps.maxComputeUnitLimit < 0)
     problems.push("caps.maxComputeUnitLimit must be a non-negative integer");

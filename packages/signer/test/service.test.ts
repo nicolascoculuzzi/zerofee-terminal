@@ -14,7 +14,7 @@ import { makeVault, PASSWORD } from "./helpers/vault";
 
 const SOL = LAMPORTS_PER_SOL;
 
-async function setup(dailyCaps: DailySpendCaps = { buyLamports: 10n * SOL }) {
+async function setup(dailyCaps: DailySpendCaps = { buyLamports: 10n * SOL, feeLamports: SOL }) {
   const { vault } = makeVault();
   const connected = randomAddress();
   await vault.createVault(PASSWORD, { connectedWallet: connected });
@@ -81,7 +81,7 @@ describe("SignerService", () => {
   });
 
   test("daily cap is enforced across signatures", async () => {
-    const { service, wallet, actors } = await setup({ buyLamports: SOL });
+    const { service, wallet, actors } = await setup({ buyLamports: SOL, feeLamports: SOL });
     await service.signTransaction(
       wallet.id,
       buildTransaction({ feePayer: wallet.address, instructions: await curveBuyV2(actors, (SOL * 6n) / 10n) }),
