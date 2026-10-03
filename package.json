@@ -14,7 +14,8 @@
     "trade": "bun run apps/cli/src/index.ts",
     "fork:start": "bun run packages/core/scripts/fork/start.ts",
     "fork:stop": "bun run packages/core/scripts/fork/stop.ts",
-    "fork:accounts": "bun run packages/core/scripts/fork/accounts.ts"
+    "fork:accounts": "bun run packages/core/scripts/fork/accounts.ts",
+    "e2e": "bun run packages/core/e2e/run.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
