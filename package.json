@@ -8,10 +8,13 @@
   ],
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/protocol --noEmit && tsc -p apps/cli --noEmit && tsc -p apps/server --noEmit && tsc -p packages/auth --noEmit && tsc -p packages/signer --noEmit",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/core/tsconfig.e2e.json --noEmit && tsc -p packages/protocol --noEmit && tsc -p apps/cli --noEmit && tsc -p apps/server --noEmit && tsc -p packages/auth --noEmit && tsc -p packages/signer --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "trade": "bun run apps/cli/src/index.ts"
+    "trade": "bun run apps/cli/src/index.ts",
+    "fork:start": "bun run packages/core/scripts/fork/start.ts",
+    "fork:stop": "bun run packages/core/scripts/fork/stop.ts",
+    "fork:accounts": "bun run packages/core/scripts/fork/accounts.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
