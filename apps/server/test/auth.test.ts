@@ -252,4 +252,28 @@ describe("config", () => {
     expect(() => loadConfig({ ALLOWED_ORIGINS: "http://evil.example" })).toThrow();
     expect(() => loadConfig({ DATABASE_URL: "mysql://x" })).toThrow("postgres");
   });
+
+  test(".env.example loads as-is (secrets empty, features off)", async () => {
+    const text = await Bun.file(new URL("../../../.env.example", import.meta.url)).text();
+    const env: Record<string, string> = {};
+    for (const line of text.split("\n")) {
+      const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+      if (m) env[m[1] as string] = m[2] as string;
+    }
+    const c = loadConfig(env);
+    expect(c.dryRun).toBe(true);
+    expect(c.userDb).toEqual({ databaseUrl: null, pgliteDir: "data/pglite" });
+    expect(c.adminToken).toBeNull();
+    expect(c.notifications).toMatchObject({ channelKey: null, vapidPublicKey: null, vapidPrivateKey: null, telegramBotToken: null });
+    expect(c.auth.publicOrigin).toBe("http://127.0.0.1:8787");
+  });
+
+  test("notification and admin secrets are validated at start-up", () => {
+    expect(() => loadConfig({ CHANNEL_ENCRYPTION_KEY: "too-short" })).toThrow("CHANNEL_ENCRYPTION_KEY");
+    expect(loadConfig({ CHANNEL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64") }).notifications.channelKey).not.toBeNull();
+    expect(() => loadConfig({ VAPID_PUBLIC_KEY: "abc" })).toThrow("both");
+    expect(() => loadConfig({ TELEGRAM_BOT_TOKEN: "nope" })).toThrow("TELEGRAM_BOT_TOKEN");
+    expect(() => loadConfig({ TELEGRAM_WEBHOOK_SECRET: "short" })).toThrow("TELEGRAM_WEBHOOK_SECRET");
+    expect(() => loadConfig({ ADMIN_TOKEN: "password123" })).toThrow("32 characters");
+  });
 });
