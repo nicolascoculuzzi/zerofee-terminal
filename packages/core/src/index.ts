@@ -11,6 +11,7 @@ export * from "./pumpswap";
 export * from "./send";
 export * from "./state";
 export * from "./token";
+export * from "./token2022";
 export * from "./trade";
 export * from "./tx";
 export * from "./util/bytes";
