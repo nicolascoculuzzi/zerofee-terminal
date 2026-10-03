@@ -1,6 +1,7 @@
 /**
- * Venue rules for pump.fun's bonding curve and PumpSwap. Program IDs are injected (they live in
- * @zerofee/core's constants); layouts come from the official IDLs (pump-idl.ts).
+ * Venue rules for pump.fun's bonding curve and PumpSwap. Program IDs are injected (the shipped
+ * policy passes the signer's embedded PUMP_PROGRAM / PUMP_AMM_PROGRAM, see policy.ts); layouts come
+ * from the official IDLs (pump-idl.ts).
  *
  * For each instruction:
  *   - only buy / buy_exact_sol_in / buy_v2 / buy_exact_quote_in_v2 / sell / sell_v2 (curve) and

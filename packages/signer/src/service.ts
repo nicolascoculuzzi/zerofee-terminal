@@ -5,11 +5,11 @@
  *   non-extractable key -> self-verify -> audit log -> signed wire transaction
  *
  * Trust split: the security-relevant context (program allowlist, venue rules, tip accounts, caps)
- * comes from the SignerPolicy the host bundles into the signer, and the connected wallet comes from
- * the vault's authenticated header. Callers (the web app, possibly compromised) only supply data
- * the firewall can safely treat as untrusted: the transaction, the nonce accounts it claims the
- * wallet owns (authority must still be the signer, enforced on-chain), and ALT contents (anything
- * fund-sensitive must be a static key).
+ * comes from the SignerPolicy the host bundles into the signer (createSignerPolicy in policy.ts), and
+ * the connected wallet comes from the vault's authenticated header. Callers (the web app, possibly
+ * compromised) only supply data the firewall can safely treat as untrusted: the transaction, the
+ * nonce accounts it claims the wallet owns (authority must still be the signer, enforced on-chain),
+ * and ALT contents (anything fund-sensitive must be a static key).
  *
  * There is deliberately no signMessage / sign-arbitrary-bytes API for trading wallets.
  */
@@ -21,11 +21,13 @@ import { inspectTransaction } from "./firewall/firewall";
 import type { SpendTracker } from "./firewall/spend-tracker";
 import type { AddressLookupTables, FirewallCaps, FirewallContext, FirewallResult, TransactionSummary, VenueRule } from "./firewall/types";
 import { Mutex } from "./mutex";
+import { SIGNER_TIP_ACCOUNTS } from "./policy";
 import { importVerifyKey } from "./vault/keys";
 import { getSigningKey, getVaultEpoch, type Vault } from "./vault/vault";
 
 export interface SignerPolicy {
   readonly allowedPrograms: readonly Address[];
+  /** Must be a subset of the signer's embedded SIGNER_TIP_ACCOUNTS (enforced on every request). */
   readonly tipAccounts: readonly Address[];
   readonly caps: FirewallCaps;
   readonly venueRules: readonly VenueRule[];
@@ -46,7 +48,10 @@ export interface SignResult {
 
 export interface SignerServiceOptions {
   vault: Vault;
-  /** Bundled with the signer, never received from callers. A function lets the host refresh tip accounts. */
+  /**
+   * Bundled with the signer, never received from callers (use createSignerPolicy). A function lets the
+   * host apply changed user caps; tip accounts outside SIGNER_TIP_ACCOUNTS are refused either way.
+   */
   policy: SignerPolicy | (() => SignerPolicy | Promise<SignerPolicy>);
   spendTracker?: SpendTracker;
   auditLog?: AuditLog;
@@ -122,6 +127,11 @@ export class SignerService {
     const key = getSigningKey(this.#vault, walletId); // throws LOCKED / WALLET_NOT_FOUND
     const connectedWallet = this.#vault.connectedWallet;
     const policy = typeof this.#policy === "function" ? await this.#policy() : this.#policy;
+    // A "tip account" the signer has not reviewed could be anyone's wallet, paid up to maxTipLamports per trade.
+    const foreignTip = (Array.isArray(policy.tipAccounts) ? policy.tipAccounts : []).find((a) => !SIGNER_TIP_ACCOUNTS.includes(a));
+    if (foreignTip !== undefined) {
+      throw new SignerError("INTERNAL", `policy tip account ${String(foreignTip)} is not one of the signer's embedded tip accounts`);
+    }
     return {
       signer: key.address,
       connectedWallet,

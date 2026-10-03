@@ -12,9 +12,12 @@ export {
   ASSOCIATED_TOKEN_PROGRAM,
   COMPUTE_BUDGET_PROGRAM,
   JITO_DONT_FRONT_PREFIX,
+  PUMP_AMM_PROGRAM,
+  PUMP_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
+  USDC_MINT,
   WSOL_MINT,
 } from "./firewall/programs";
 export {
@@ -54,6 +57,15 @@ export type {
   VenueRule,
 } from "./firewall/types";
 export { IndexedDbStore, type IndexedDbStoreOptions } from "./indexeddb";
+export {
+  createSignerPolicy,
+  DEFAULT_FIREWALL_CAPS,
+  HELIUS_SENDER_TIP_ACCOUNTS,
+  JITO_TIP_ACCOUNTS,
+  SIGNER_ALLOWED_PROGRAMS,
+  SIGNER_TIP_ACCOUNTS,
+  type SignerPolicyOptions,
+} from "./policy";
 export {
   createSignerClient,
   type MessageEndpoint,

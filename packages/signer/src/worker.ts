@@ -5,8 +5,9 @@
  * Wiring (the worker bundle must contain only this package and its pinned dependencies):
  *
  *   // signer.worker.ts (separate entry, no app code, no analytics)
- *   import { startSignerWorker, createPumpBondingCurveRule, createPumpSwapRule } from "@zerofee/signer/worker";
- *   startSignerWorker({ policy: POLICY, dailyCaps: DAILY_CAPS });   // POLICY is bundled config, never sent over RPC
+ *   import { startSignerWorker, createSignerPolicy } from "@zerofee/signer/worker";
+ *   // Embedded allowlist, tip accounts and venue rules; only the caps come from the user's settings.
+ *   startSignerWorker({ policy: createSignerPolicy({ caps: USER_CAPS }), dailyCaps: DAILY_CAPS });  // never sent over RPC
  *
  *   // app
  *   const signer = createSignerClient(new Worker(new URL("./signer.worker.ts", import.meta.url), { type: "module" }));
@@ -51,6 +52,7 @@ export { createPumpBondingCurveRule, createPumpSwapRule } from "./firewall/rules
 export type { DailySpendCaps } from "./firewall/spend-tracker";
 export type { FirewallCaps } from "./firewall/types";
 export { IndexedDbStore } from "./indexeddb";
+export { createSignerPolicy, DEFAULT_FIREWALL_CAPS, type SignerPolicyOptions } from "./policy";
 export type { SignerPolicy } from "./service";
 export { MemoryStore } from "./store";
 
