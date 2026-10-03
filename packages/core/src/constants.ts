@@ -386,17 +386,18 @@ export const PACKET_DATA_SIZE = 1232;
 export const BLOCKHASH_VALID_BLOCKS = 150;
 
 /**
- * Static CU limits per route (~1.3x the worst case measured by mainnet simulation on 2026-10-03:
- * curve buy 107,327 incl. Token-2022 ATA + user_volume_accumulator init / 94,7xx with existing ATA;
- * curve sell 75,212; PumpSwap buy 105,816 incl. wSOL ATA create; PumpSwap full-exit sell 97,608).
+ * Static CU limits per route, ~1.3x the worst case landed on 8 mainnet forks on 2026-10-03
+ * (docs/dev/FORK_TESTING.md): curve buy 118k incl. Token-2022 ATA + volume accumulator init,
+ * curve sell 86k, PumpSwap buy 132k incl. wSOL wrap, PumpSwap sell 99.5k. Earlier mainnet
+ * simulations measured lower (curve buy 107k, PumpSwap buy 106k), so the forks set the bar.
  * The FAQ recommends static limits rather than simulate-on-send; priority fee is charged on the limit.
  * https://github.com/pump-fun/pump-public-docs/blob/main/docs/FAQ.md
  */
 export const DEFAULT_CU_LIMITS = {
-  pumpBuy: 140_000,
-  pumpSell: 100_000,
-  ammBuy: 150_000,
-  ammSell: 130_000,
+  pumpBuy: 155_000,
+  pumpSell: 115_000,
+  ammBuy: 175_000,
+  ammSell: 135_000,
 } as const;
 
 /** Default public RPC (dev only - rate limited). */
