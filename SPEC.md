@@ -111,6 +111,10 @@ Program IDs, IDLs, fee accounts, tip accounts, minimum tips, rent and endpoints 
   - SOL and token transfers go only to the user's own token accounts, the user's own WSOL account, the connected wallet, or known tip accounts (with a per-preset tip cap).
   - No `Approve` or `SetAuthority` instructions.
   - Every buy variant's amount argument stays under the user's per-trade cap; the daily cap is tracked in the browser.
+  - Raydium venues (neither program checks who owns the output token account, so the firewall must):
+    - LaunchLab `LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj`: only `buy_exact_in`, `buy_exact_out`, `sell_exact_in`, `sell_exact_out`. Require exactly 18 accounts and `share_fee_rate` (3rd u64) = 0, so no referral account can take up to 1% of the trade. Account 0 is the signer. Accounts 5 and 6 are the signer's ATAs for accounts 9/10 (base/quote mint) under token programs 11/12. Account 1 is the vault authority `WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh`, 13 the event authority, 15 the System program. Account 4 is PDA `["pool", base, quote]`. Account 16 is PDA `[platform_config (3), quote]`.
+    - CPMM `CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C`: only `swap_base_input` and `swap_base_output`, 13 accounts. Accounts 4 and 5 are the signer's ATAs for mints 10 and 11 under programs 8 and 9. Account 1 is the authority `GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL`. Accounts 6, 7 and 12 are PDAs `["pool_vault", pool, mint]` and `["observation", pool]`.
+    - Caps apply to the quote spent: LaunchLab `buy_exact_in` arg 1 and `buy_exact_out` arg 2; CPMM `swap_base_input` arg 1 and `swap_base_output` arg 1 (`max_amount_in`) when the input mint is wSOL; and the System transfer that funds the wSOL ATA. Buys with non-SOL quotes (xStocks, USD1) need a non-SOL cap or should be refused.
 - The firewall and keystore live on an isolated origin, iframe or worker with minimal pinned dependencies and no analytics or third-party scripts. **A Web Worker alone is not enough for launch:** compromised app JavaScript on the same origin could capture the vault password, reset the daily-spend record, or bind the vault to its own "connected wallet" during onboarding. Public launch requires the signer on its own origin (iframe + strict `postMessage` origin checks); the worker RPC is shaped to move there unchanged.
 - Venue programs are refused unless they have a firewall rule (fail closed). Every new venue (Raydium LaunchLab/CPMM, Jupiter) ships with its rule and malicious-corpus tests; Jupiter needs a route decoder that proves the output lands in the user's own token account.
 - PumpSwap trades are limited to the canonical, LP-burned pool by default (anyone can create a second pool for a pair and take tokens sold into it at min-out 0). PumpSwap `extend_account` is allowed only for that pool, paid by the trading wallet.
@@ -302,7 +306,7 @@ Build in order. Each phase ends with something runnable and testable.
   - a real 0.001 SOL buy and sell land from a dev wallet, with both in the latency log.
 
 ### Phase 2: market data feed
-- Chainstack gRPC ingest, event decoders (pump, PumpSwap; LaunchLab and CPMM next), derived state, SQLite, Bun WS gateway with topics, SOL/USD feed
+- Chainstack gRPC ingest, event decoders (pump, PumpSwap; LaunchLab TradeEvent/PoolCreateEvent and CPMM SwapEvent also decode in `packages/core/src/events`, attributed to the emitting program because LaunchLab's TradeEvent shares pump's discriminator, but the feed does not track those venues yet), derived state, SQLite, Bun WS gateway with topics, SOL/USD feed
 - **Done when:** new launches appear in a debug view within about 1 s and counts reconcile against PumpPortal's free stream.
 
 ### Phase 3: identity and trading wallet
@@ -323,6 +327,10 @@ Build in order. Each phase ends with something runnable and testable.
 
 ### Phase 7: more venues
 - Raydium LaunchLab and CPMM builders (LaunchLab is about 38% of launchpad revenue via StonkFun), Jupiter `/build` as the long-tail fallback (never `/order`, which charges up to 50 bps on new tokens). Meteora DBC/DAMM v2 later.
+- **Done 2026-10-03 (dry-run):** LaunchLab and CPMM decoders, math, builders, event decoders and venue resolution in `packages/core/src/raydium`, replayed against mainnet trades and golden-tested against `@raydium-io/raydium-sdk-v2` (measurements in NOTES.md). Notes for the next steps:
+  - StonkFun coins are Token-2022 with a 3% transfer fee, and many StonkFun pairs are quoted in Token-2022 xStocks rather than SOL. Quotes apply the transfer fee, and slippage limits apply to what the user receives.
+  - Graduation is signed by Raydium's migration wallet. The CPMM pool is the canonical PDA on the launchpad's `PlatformConfig.cpswap_config`, so migration orders can be armed in advance.
+  - The signer firewall rules for both programs are under Security rules → Signer firewall. Until they are built, `packages/signer` refuses both programs (fail closed), so these venues only run in dry-run.
 
 ### Phase 8: the wedge
 - Copy trading, trailing stops, DCA, dev-sell exits, X tracker with keyword alerts, browser-open snipers with hard caps, public API.

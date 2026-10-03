@@ -651,6 +651,12 @@ export const BLOCKHASH_VALID_BLOCKS = 150;
  * (docs/dev/FORK_TESTING.md): curve buy 118k incl. Token-2022 ATA + volume accumulator init,
  * curve sell 86k, PumpSwap buy 132k incl. wSOL wrap, PumpSwap sell 99.5k. Earlier mainnet
  * simulations measured lower (curve buy 107k, PumpSwap buy 106k), so the forks set the bar.
+ * Raydium has no fork runs yet. Its limits are ~1.4-1.6x the worst case measured by mainnet
+ * simulation on 2026-10-03 (NOTES.md), enough to absorb a fork-vs-simulation gap like PumpSwap's
+ * (+25%): LaunchLab buy 83,401 creating a Token-2022 (transfer-fee) ATA / 66,970 with the ATA;
+ * LaunchLab full-exit sell 66,606 (Token-2022 close); CPMM buy 61,906 creating a Token-2022 ATA;
+ * CPMM sell 43,636. LaunchLab gets extra headroom because the program creates a missing
+ * platform/creator fee vault inside the swap.
  * The FAQ recommends static limits rather than simulate-on-send; priority fee is charged on the limit.
  * https://github.com/pump-fun/pump-public-docs/blob/main/docs/FAQ.md
  */
@@ -659,11 +665,10 @@ export const DEFAULT_CU_LIMITS = {
   pumpSell: 115_000,
   ammBuy: 175_000,
   ammSell: 135_000,
-  /** Placeholder until calibrated by mainnet simulation (see NOTES.md). */
-  launchLabBuy: 160_000,
-  launchLabSell: 130_000,
-  cpmmBuy: 150_000,
-  cpmmSell: 120_000,
+  launchLabBuy: 120_000,
+  launchLabSell: 100_000,
+  cpmmBuy: 85_000,
+  cpmmSell: 70_000,
 } as const;
 
 /** Default public RPC (dev only - rate limited). */
