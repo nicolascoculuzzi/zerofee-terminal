@@ -1,4 +1,5 @@
-import type { Launchpad, QuoteToken, Token2022Flags, Venue, WalletTag } from "../protocol";
+import type { Launchpad, QuoteToken, Token2022Flags, TokenRisk, Venue, WalletTag } from "../protocol";
+import { fmtRiskPct } from "./format";
 
 /**
  * Published metric definitions (SPEC.md "Token metric definitions"). Every metric shown in the
@@ -217,6 +218,32 @@ export function token2022Danger(flags: Token2022Flags | null): string[] {
   if (flags.nonTransferable) out.push("nonTransferable");
   if (flags.defaultFrozen) out.push("frozen-by-default");
   return out;
+}
+
+/**
+ * Why a buy needs the 3 s countdown confirm (DESIGN.md 1.7): any Token-2022 danger flag, or
+ * three or more holder metrics in the high band. Empty when the buy can go straight through.
+ */
+export function buyRiskReasons(
+  token: { risk: TokenRisk; token2022: Token2022Flags | null },
+  thresholds: RiskThresholds = RISK_DEFAULTS,
+): string[] {
+  const reasons: string[] = [];
+  const danger = token2022Danger(token.token2022);
+  if (danger.length > 0) reasons.push(`Token-2022 extensions: ${danger.join(", ")}`);
+  const r = token.risk;
+  const metrics: [RiskKey, number | null, string][] = [
+    ["top10", r.top10Pct, "Top 10"],
+    ["dev", r.devSold ? null : r.devPct, "Dev"],
+    ["snipers", r.snipersPct, "Snipers"],
+    ["insiders", r.insidersPct, "Insiders"],
+    ["bundlers", r.bundlersPct, "Bundlers"],
+  ];
+  const high = metrics.filter(([key, v]) => v !== null && riskTone(key, v, thresholds) === "bad");
+  if (high.length >= 3) {
+    reasons.push(`High risk on ${high.length} holder metrics: ${high.map(([, v, label]) => `${label} ${fmtRiskPct(v ?? 0)}`).join(", ")}`);
+  }
+  return reasons;
 }
 
 /**

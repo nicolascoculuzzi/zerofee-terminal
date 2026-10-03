@@ -19,6 +19,8 @@ export interface MarketState {
   slot: number;
   feed: FeedHealth;
   connection: FeedConnectionState;
+  /** True once the feed has been live; a later drop is a connection loss, not start-up. */
+  everLive: boolean;
   /** Applies coalesced Pulse updates in one store write; returns mints that newly entered each column. */
   applyPulse(batches: PulseBatch[]): Record<PulseColumnId, string[]>;
   upsertToken(token: TokenSummary): void;
@@ -40,6 +42,7 @@ export const useMarket = create<MarketState>()((set, get) => ({
   slot: 0,
   feed: { state: "reconnecting", lagMs: 0, eventsPerSec: 0 },
   connection: "connecting",
+  everLive: false,
 
   applyPulse(batches) {
     const entered: Record<PulseColumnId, string[]> = { new: [], final: [], migrated: [] };
@@ -84,6 +87,6 @@ export const useMarket = create<MarketState>()((set, get) => ({
   },
 
   setConnection(connection) {
-    set({ connection });
+    set((s) => ({ connection, everLive: s.everLive || connection === "live" }));
   },
 }));

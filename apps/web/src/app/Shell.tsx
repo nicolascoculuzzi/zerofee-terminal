@@ -1,3 +1,4 @@
+import { TriangleAlert } from "lucide-react";
 import { useEffect } from "react";
 import { Outlet, useNavigate } from "react-router";
 import { isBase58Address } from "../lib/address";
@@ -6,6 +7,7 @@ import { navigateTo, setNavigator } from "../lib/nav";
 import { closeTopOverlay } from "../lib/overlayStack";
 import { buy } from "../lib/tradeActions";
 import { getServices } from "../services";
+import { useMarket } from "../state/market";
 import { PRESET_IDS, useSettings } from "../state/settings";
 import { useUi } from "../state/ui";
 import { GlobalOverlays } from "./GlobalOverlays";
@@ -104,6 +106,23 @@ function useActivityTouch(): void {
   }, []);
 }
 
+/**
+ * Connection loss (DESIGN.md 4.18): a 28 px warn banner under the top bar while the feed is
+ * down after having been live. Trading actions refuse to run until it is back (tradeActions).
+ * Not a live region: only transaction toasts announce (DESIGN.md 7).
+ */
+function FeedBanner() {
+  const connection = useMarket((s) => s.connection);
+  const everLive = useMarket((s) => s.everLive);
+  if (!everLive || connection === "live" || connection === "degraded") return null;
+  return (
+    <div className="flex h-7 shrink-0 items-center gap-2 border-b border-warn-edge bg-warn-tint px-3 text-data text-warn">
+      <TriangleAlert className="icon-sm shrink-0" />
+      <span className="truncate">Live data paused. Reconnecting… Trading is disabled until the feed is live.</span>
+    </div>
+  );
+}
+
 export function Shell() {
   const navigate = useNavigate();
   useEffect(() => {
@@ -124,6 +143,7 @@ export function Shell() {
         Skip to main content
       </a>
       <TopNav />
+      <FeedBanner />
       <main id="main" tabIndex={-1} className="relative min-h-0 flex-1 overflow-hidden outline-none">
         <Outlet />
       </main>

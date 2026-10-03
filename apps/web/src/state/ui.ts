@@ -5,6 +5,14 @@ export type SettingsTab = "presets" | "hotkeys" | "display" | "trading" | "secur
 
 export type FundTab = "fund" | "deposit" | "withdraw";
 
+/** A buy waiting on the 3 s countdown confirm (DESIGN.md 1.7, 4.17). */
+export interface RiskConfirmRequest {
+  symbol: string;
+  /** Names the action in the title: "Buy WIF · 0.50 SOL". */
+  actionLabel: string;
+  reasons: string[];
+}
+
 export interface UiState {
   searchOpen: boolean;
   settingsOpen: boolean;
@@ -16,6 +24,7 @@ export interface UiState {
   panicOpen: boolean;
   unlock: { open: boolean; reason: string; onUnlocked: (() => void) | null };
   approval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
+  riskConfirm: { request: RiskConfirmRequest; resolve: (ok: boolean) => void } | null;
   /** Token under the cursor on Pulse (target for Space+1..4 buys). */
   hoverMint: string | null;
   /** Token page currently open, or the last one viewed (Instant Trade target). */
@@ -33,6 +42,7 @@ export interface UiState {
   requestUnlock(reason: string, onUnlocked?: () => void): void;
   closeUnlock(): void;
   setApproval(approval: UiState["approval"]): void;
+  setRiskConfirm(riskConfirm: UiState["riskConfirm"]): void;
   setHoverMint(mint: string | null): void;
   setFocusedMint(mint: string | null): void;
   setMobileTradeOpen(open: boolean): void;
@@ -50,6 +60,7 @@ export const useUi = create<UiState>()((set, get) => ({
   panicOpen: false,
   unlock: { open: false, reason: "", onUnlocked: null },
   approval: null,
+  riskConfirm: null,
   hoverMint: null,
   focusedMint: null,
   mobileTradeOpen: false,
@@ -65,6 +76,7 @@ export const useUi = create<UiState>()((set, get) => ({
   requestUnlock: (reason, onUnlocked) => set({ unlock: { open: true, reason, onUnlocked: onUnlocked ?? null } }),
   closeUnlock: () => set({ unlock: { open: false, reason: "", onUnlocked: null } }),
   setApproval: (approval) => set({ approval }),
+  setRiskConfirm: (riskConfirm) => set({ riskConfirm }),
   setHoverMint: (mint) => {
     if (get().hoverMint !== mint) set({ hoverMint: mint });
   },
@@ -72,6 +84,11 @@ export const useUi = create<UiState>()((set, get) => ({
   setMobileTradeOpen: (open) => set({ mobileTradeOpen: open }),
   closeTop: () => {
     const s = get();
+    if (s.riskConfirm) {
+      s.riskConfirm.resolve(false);
+      set({ riskConfirm: null });
+      return true;
+    }
     if (s.approval) {
       s.approval.resolve(false);
       set({ approval: null });

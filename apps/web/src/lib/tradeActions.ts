@@ -3,7 +3,7 @@
  * lock/approval gate for the current mode, the optimistic pending trade, progress, toasts
  * and the latency record. Components never call TradeService directly.
  */
-import type { Order, OrderSize, OrderTrigger } from "../protocol";
+import type { Order, OrderSize, OrderTrigger, TokenSummary } from "../protocol";
 import { getServices } from "../services";
 import type { ExecutionSettings, TpSlLeg, TradeReceipt, TradeSource } from "../services/tradeService";
 import { useMarket } from "../state/market";
@@ -16,6 +16,7 @@ import { useWallet } from "../state/wallet";
 import { uid } from "./cn";
 import { fmtFee, fmtSol } from "./format";
 import { LANDING_INFO } from "./landing";
+import { buyRiskReasons } from "./metrics";
 import { navigateTo } from "./nav";
 import { playTone } from "./sound";
 
@@ -29,16 +30,64 @@ function tokenInfo(mint: string): { symbol: string; priceSol: number } {
   return { symbol: "TOKEN", priceSol: 0 };
 }
 
+function tokenSummary(mint: string): TokenSummary | null {
+  const t = useMarket.getState().tokens[mint];
+  if (t) return t;
+  const detail = useToken.getState().detail;
+  return detail && detail.summary.mint === mint ? detail.summary : null;
+}
+
+/** Trading pauses while the live feed is down (DESIGN.md 4.18); cancels and Panic still work. */
+function feedDown(): boolean {
+  const c = useMarket.getState().connection;
+  return c !== "live" && c !== "degraded";
+}
+
+function blockedFeed(): void {
+  blocked("Feed offline", "Trading is disabled until the live feed reconnects.");
+}
+
+/**
+ * 3 s countdown confirm for buys of flagged tokens (DESIGN.md 1.7): Token-2022 danger flags or
+ * three or more high-risk holder metrics. Resolves true when the buy may proceed.
+ */
+function confirmRiskyBuy(mint: string, symbol: string, actionLabel: string): Promise<boolean> {
+  const token = tokenSummary(mint);
+  if (!token) return Promise.resolve(true);
+  const reasons = buyRiskReasons(token, useSettings.getState().display.riskThresholds);
+  if (reasons.length === 0) return Promise.resolve(true);
+  // One confirm at a time: a second request while one is open is declined, never stacked.
+  if (useUi.getState().riskConfirm) return Promise.resolve(false);
+  return new Promise((resolve) => useUi.getState().setRiskConfirm({ request: { symbol, actionLabel, reasons }, resolve }));
+}
+
 function blocked(title: string, body: string, action?: { label: string; run: () => void }): void {
   playTone("fail", useSettings.getState().display.soundVolume);
   useToasts.getState().push({ kind: "error", title, body, ttl: 7000, action });
 }
 
-/** Instant mode needs an unlocked keystore; resolves true when trading can proceed now. */
-function ensureUnlocked(reason: string, retry: () => void): boolean {
+/**
+ * Instant mode needs an unlocked keystore; true when trading can proceed now. A click opens the
+ * unlock dialog and retries after it; a locked trade hotkey shows one "Unlock to trade" toast
+ * instead (DESIGN.md 6.4), so a held key never fires a trade the moment the keystore opens.
+ */
+function ensureUnlocked(reason: string, retry: () => void, source: TradeSource): boolean {
   const { mode, service } = useWallet.getState();
   if (mode === "direct") return true;
   if (!service.locked) return true;
+  if (source === "hotkey") {
+    const toasts = useToasts.getState();
+    if (!toasts.toasts.some((t) => t.title === "Unlock to trade")) {
+      toasts.push({
+        kind: "warn",
+        title: "Unlock to trade",
+        body: "Trade hotkeys are paused while the keystore is locked.",
+        ttl: 6000,
+        action: { label: "Unlock", run: () => useUi.getState().requestUnlock("Unlock to trade") },
+      });
+    }
+    return false;
+  }
   useUi.getState().requestUnlock(reason, retry);
   return false;
 }
@@ -103,6 +152,10 @@ export interface BuyArgs {
 
 export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
   if (repeated(`buy:${args.mint}:${args.sol}`, args.source)) return [];
+  if (feedDown()) {
+    blockedFeed();
+    return [];
+  }
   let clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].buy;
@@ -147,10 +200,13 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
       return [];
     }
   }
-  if (!ensureUnlocked(`Unlock to buy $${symbol}`, () => void buy(args))) return [];
+  if (!ensureUnlocked(`Unlock to buy $${symbol}`, () => void buy(args), args.source)) return [];
+  const confirmed = await confirmRiskyBuy(args.mint, symbol, `Buy ${symbol} · ${fmtSol(args.sol)} SOL`);
+  if (!confirmed) return [];
   const approved = await approveDirect(`Buy $${symbol} for ${fmtSol(args.sol)} SOL`, costLines(settings));
   if (!approved) return [];
-  if (useWallet.getState().mode === "direct") clickedAt = Date.now();
+  // Latency starts when the human is done: after a confirm or a wallet popup, not at the click.
+  clickedAt = Date.now();
 
   const { trade, wallet } = getServices();
   wallet.touch();
@@ -215,6 +271,10 @@ export interface SellArgs {
 
 export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
   if (repeated(`sell:${args.mint}:${args.pct ?? args.solValue ?? args.tokenAmount ?? "all"}`, args.source)) return [];
+  if (feedDown()) {
+    blockedFeed();
+    return [];
+  }
   let clickedAt = Date.now();
   const settingsState = useSettings.getState();
   const settings = settingsState.presets[args.preset ?? settingsState.activePreset].sell;
@@ -244,7 +304,7 @@ export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
     blocked("Nothing to sell", `No $${symbol} balance in the selected wallet.`);
     return [];
   }
-  if (!ensureUnlocked(`Unlock to sell $${symbol}`, () => void sell(args))) return [];
+  if (!ensureUnlocked(`Unlock to sell $${symbol}`, () => void sell(args), args.source)) return [];
   const label =
     args.label ?? (args.pct !== undefined ? `${args.pct}%` : args.solValue !== undefined ? `${fmtSol(args.solValue)} SOL` : "amount");
   const approved = await approveDirect(`Sell ${label} of $${symbol}`, costLines(settings));
@@ -346,6 +406,10 @@ export async function placeLimit(args: {
 }): Promise<Order | null> {
   const wallet = activeWallet();
   if (!wallet) return null;
+  if (feedDown()) {
+    blockedFeed();
+    return null;
+  }
   const s = useSettings.getState();
   const settings = s.presets[args.preset ?? s.activePreset][args.side];
   if (args.side === "buy" && args.size.kind === "sol" && args.size.sol > s.caps.perTradeSol) {
@@ -353,6 +417,11 @@ export async function placeLimit(args: {
     return null;
   }
   if (!ensureCanSign("Unlock to pre-sign the limit order", () => void placeLimit(args))) return null;
+  if (args.side === "buy") {
+    const { symbol } = tokenInfo(args.mint);
+    const size = args.size.kind === "sol" ? ` · ${fmtSol(args.size.sol)} SOL` : "";
+    if (!(await confirmRiskyBuy(args.mint, symbol, `Arm limit buy ${symbol}${size}`))) return null;
+  }
   try {
     const order = await getServices().trade.placeLimit({
       mint: args.mint,
@@ -385,6 +454,10 @@ export async function armTpSl(args: {
   const wallet = activeWallet();
   if (!wallet) return [];
   if (args.legs.length === 0) return [];
+  if (feedDown()) {
+    blockedFeed();
+    return [];
+  }
   const s = useSettings.getState();
   const settings = s.presets[args.preset ?? s.activePreset].sell;
   if (!ensureCanSign("Unlock to pre-sign the TP/SL ladder", () => void armTpSl(args))) return [];
@@ -421,6 +494,14 @@ export async function armMigration(args: {
   const s = useSettings.getState();
   const settings = s.presets[args.preset ?? s.activePreset][args.side];
   if (!ensureCanSign("Unlock to pre-sign the migration order", () => void armMigration(args))) return null;
+  if (feedDown()) {
+    blockedFeed();
+    return null;
+  }
+  if (args.side === "buy") {
+    const { symbol } = tokenInfo(args.mint);
+    if (!(await confirmRiskyBuy(args.mint, symbol, `Arm migration buy ${symbol}`))) return null;
+  }
   try {
     const order = await getServices().trade.armMigration({ mint: args.mint, wallet, side: args.side, size: args.size, settings });
     useToasts
