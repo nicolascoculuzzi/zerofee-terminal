@@ -1,0 +1,99 @@
+import { create } from "zustand";
+import type { ApprovalRequest } from "../services/walletService";
+
+export type SettingsTab = "presets" | "hotkeys" | "display" | "trading" | "security" | "withdrawals" | "blacklists" | "about";
+
+export type FundTab = "fund" | "deposit" | "withdraw";
+
+export interface UiState {
+  searchOpen: boolean;
+  settingsOpen: boolean;
+  settingsTab: SettingsTab;
+  fundOpen: boolean;
+  fundTab: FundTab;
+  hotkeysHelpOpen: boolean;
+  unlock: { open: boolean; reason: string; onUnlocked: (() => void) | null };
+  approval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
+  /** Token under the cursor on Pulse (target for Space+1..4 buys). */
+  hoverMint: string | null;
+  /** Token page currently open, or the last one viewed (Instant Trade target). */
+  focusedMint: string | null;
+  mobileTradeOpen: boolean;
+
+  openSearch(open?: boolean): void;
+  openSettings(tab?: SettingsTab): void;
+  closeSettings(): void;
+  openFund(tab?: FundTab): void;
+  closeFund(): void;
+  setHotkeysHelp(open: boolean): void;
+  requestUnlock(reason: string, onUnlocked?: () => void): void;
+  closeUnlock(): void;
+  setApproval(approval: UiState["approval"]): void;
+  setHoverMint(mint: string | null): void;
+  setFocusedMint(mint: string | null): void;
+  setMobileTradeOpen(open: boolean): void;
+  /** Closes the top-most overlay; returns false when nothing was open. */
+  closeTop(): boolean;
+}
+
+export const useUi = create<UiState>()((set, get) => ({
+  searchOpen: false,
+  settingsOpen: false,
+  settingsTab: "presets",
+  fundOpen: false,
+  fundTab: "fund",
+  hotkeysHelpOpen: false,
+  unlock: { open: false, reason: "", onUnlocked: null },
+  approval: null,
+  hoverMint: null,
+  focusedMint: null,
+  mobileTradeOpen: false,
+
+  openSearch: (open = true) => set({ searchOpen: open }),
+  openSettings: (tab) => set((s) => ({ settingsOpen: true, settingsTab: tab ?? s.settingsTab })),
+  closeSettings: () => set({ settingsOpen: false }),
+  openFund: (tab = "fund") => set({ fundOpen: true, fundTab: tab }),
+  closeFund: () => set({ fundOpen: false }),
+  setHotkeysHelp: (open) => set({ hotkeysHelpOpen: open }),
+  requestUnlock: (reason, onUnlocked) => set({ unlock: { open: true, reason, onUnlocked: onUnlocked ?? null } }),
+  closeUnlock: () => set({ unlock: { open: false, reason: "", onUnlocked: null } }),
+  setApproval: (approval) => set({ approval }),
+  setHoverMint: (mint) => {
+    if (get().hoverMint !== mint) set({ hoverMint: mint });
+  },
+  setFocusedMint: (mint) => set({ focusedMint: mint }),
+  setMobileTradeOpen: (open) => set({ mobileTradeOpen: open }),
+  closeTop: () => {
+    const s = get();
+    if (s.approval) {
+      s.approval.resolve(false);
+      set({ approval: null });
+      return true;
+    }
+    if (s.unlock.open) {
+      set({ unlock: { open: false, reason: "", onUnlocked: null } });
+      return true;
+    }
+    if (s.searchOpen) {
+      set({ searchOpen: false });
+      return true;
+    }
+    if (s.hotkeysHelpOpen) {
+      set({ hotkeysHelpOpen: false });
+      return true;
+    }
+    if (s.fundOpen) {
+      set({ fundOpen: false });
+      return true;
+    }
+    if (s.settingsOpen) {
+      set({ settingsOpen: false });
+      return true;
+    }
+    if (s.mobileTradeOpen) {
+      set({ mobileTradeOpen: false });
+      return true;
+    }
+    return false;
+  },
+}));
