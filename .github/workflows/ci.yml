@@ -21,3 +21,35 @@ jobs:
       - run: bun test
       - run: bun run typecheck
       - run: bunx biome ci .
+
+  # Deployment artifacts (deploy/, docs/ops/DEPLOY.md): build the server image without pushing it,
+  # boot it the way production runs it, and validate the compose file, the Caddyfile and the scripts.
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the server image (not pushed)
+        run: docker build --platform linux/amd64 -f deploy/docker/server.Dockerfile --build-arg GIT_SHA="$GITHUB_SHA" -t zerofee-server:ci .
+      - name: Boot it read-only, non-root, all capabilities dropped
+        run: deploy/docker/smoke-test.sh zerofee-server:ci
+      - name: docker compose config
+        working-directory: deploy/docker
+        env:
+          APP_DOMAIN: app.example.com
+          ACME_EMAIL: ops@example.com
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+          METRICS_TOKEN: ci-only-not-a-secret-0123456789
+        run: |
+          cp .env.production.example .env.production
+          docker compose --env-file .env.production config --quiet
+      - name: caddy validate
+        run: |
+          docker run --rm \
+            -e APP_DOMAIN=app.example.com -e ACME_EMAIL=ops@example.com \
+            -e CSP_CONNECT_EXTRA="https://sender.helius-rpc.com https://api.mainnet-beta.solana.com" \
+            -v "$PWD/deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.6-alpine@sha256:c776e0c6413b544d0459665e54ec7b8b2a15000c0cbee8b254da0067b1d184ff \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: shellcheck
+        run: shellcheck -x --severity=warning deploy/scripts/dc deploy/scripts/*.sh deploy/backup/*.sh deploy/monitoring/*.sh deploy/hetzner/*.sh deploy/docker/*.sh
