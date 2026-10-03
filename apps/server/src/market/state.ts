@@ -158,6 +158,9 @@ export class MarketState {
   private readonly arrivalSeq = new Map<number, number>();
   private readonly pendingPools = new Map<string, PendingPoolEvent[]>();
   private pendingTotal = 0;
+  /** Non-SOL, non-USDC quote mints whose decimals were requested from the resolver. */
+  private readonly quoteRequests = new Set<string>();
+  private readonly quoteMintInfo = new Map<string, { decimals: number; tokenProgram: string }>();
   private readonly pros: Set<string>;
   private readonly recentCap: number;
   readonly latency = new SampleRing(50_000);
@@ -254,7 +257,15 @@ export class MarketState {
     const list = this.slotTxs.get(tx.slot) ?? [];
     list.push(record);
     this.slotTxs.set(tx.slot, list);
-    if (this.slotTxs.size > 600) this.slotTxs.delete(Math.min(...this.slotTxs.keys()));
+    // insertion order ~ slot order: evict the oldest inserted slot (~4 min of history kept)
+    if (this.slotTxs.size > 600) this.slotTxs.delete(this.slotTxs.keys().next().value as number);
+  }
+
+  /** Asks the resolver for an unfamiliar quote mint's decimals / token program (once). */
+  private requestQuoteMint(quoteMint: string): void {
+    if (knownQuoteDecimals(quoteMint) !== null || this.quoteRequests.has(quoteMint)) return;
+    this.quoteRequests.add(quoteMint);
+    this.deps.resolver.requestMint(quoteMint);
   }
 
   private applyEvent(ev: DecodedEvent, ctx: EvCtx): string | null {
@@ -317,6 +328,7 @@ export class MarketState {
       creatorFeeBps: ev.creatorFeeBps,
       initialRealTokenReserves: ev.realTokenReserves,
     } satisfies Partial<TokenRecord>);
+    this.requestQuoteMint(quoteMint);
     if (!rec.creator) this.setCreator(rec, ev.creator, "curve");
     // A trade that arrived before its create (out of order) already set newer reserves: keep them.
     if (!rec.curve || !rec.curveKey || cmpKey(ctx.key, rec.curveKey) >= 0) {
@@ -427,7 +439,11 @@ export class MarketState {
       rec.quoteMint = quoteMint;
       rec.quoteDecimals = knownQuoteDecimals(quoteMint) ?? rec.quoteDecimals;
       rec.quoteTokenProgram = knownQuoteTokenProgram(quoteMint);
-      if (knownQuoteDecimals(quoteMint) === null) this.deps.resolver.requestMint(quoteMint);
+      const known = this.quoteMintInfo.get(quoteMint);
+      if (known) {
+        rec.quoteDecimals = known.decimals;
+        rec.quoteTokenProgram = known.tokenProgram;
+      } else this.requestQuoteMint(quoteMint);
     }
     if (ev.mayhemMode && !rec.isMayhem) {
       rec.isMayhem = true;
@@ -905,11 +921,16 @@ export class MarketState {
   }
 
   onMintResolved(info: MintResolved): void {
-    for (const rec of this.tokens.values()) {
-      if (rec.quoteMint === info.mint && rec.quoteMint !== rec.mint) {
-        rec.quoteDecimals = info.decimals;
-        rec.quoteTokenProgram = info.tokenProgram;
-        this.touch(rec);
+    if (this.quoteRequests.has(info.mint)) {
+      // an exotic quote mint: fix decimals / token program of every token quoted in it
+      this.quoteMintInfo.set(info.mint, { decimals: info.decimals, tokenProgram: info.tokenProgram });
+      for (const rec of this.tokens.values()) {
+        if (rec.quoteMint === info.mint && rec.quoteMint !== rec.mint) {
+          rec.quoteDecimals = info.decimals;
+          rec.quoteTokenProgram = info.tokenProgram;
+          this.touch(rec);
+          this.changes.tradeCtx.add(rec.mint);
+        }
       }
     }
     const rec = this.tokens.get(info.mint);

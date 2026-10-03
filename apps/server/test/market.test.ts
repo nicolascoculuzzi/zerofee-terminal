@@ -111,13 +111,26 @@ describe("real fixtures through the market state", () => {
     );
   });
 
-  test("non-SOL quote curve: quote amounts from the trailing fields, SOL value unknown", () => {
-    const { m } = market();
+  test("non-SOL quote curve: quote amounts from the trailing fields, SOL value unknown, quote mint looked up once", () => {
+    const { m, resolver } = market();
     m.applyTx(logsIngest("pump-non-sol-trade"));
-    const s = m.summary("ArenDYANqFNkp8ZqAXt69vT5Dz7WD4zDfSpVw6oPpump");
-    expect(s?.quoteMint).toBe("Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh");
+    const mint = "ArenDYANqFNkp8ZqAXt69vT5Dz7WD4zDfSpVw6oPpump";
+    const quote = "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh";
+    const s = m.summary(mint);
+    expect(s?.quoteMint).toBe(quote);
     expect(s?.priceQuote).toBeGreaterThan(0);
     expect(s?.priceSol).toBe(0);
+    expect(resolver.requested.mints.filter((x) => x === quote)).toHaveLength(1);
+    // the resolver answers: decimals and token program flow into the record (and its trade context)
+    m.onMintResolved({
+      mint: quote,
+      tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      decimals: 6,
+      supply: 0n,
+      metadata: null,
+      dangers: [],
+    });
+    expect(m.tokens.get(mint)).toMatchObject({ quoteDecimals: 6, quoteTokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" });
   });
 
   test("detection latency samples = receive time - block time", () => {

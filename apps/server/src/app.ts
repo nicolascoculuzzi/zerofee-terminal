@@ -178,7 +178,12 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     if (reconciler) {
       reconciler.sweep();
       const r = reconciler.stats;
-      notes.push(`pumpportal reconcile: matched ${r.matched}, primary-only ${r.primaryOnly}, pumpportal-only ${r.crossOnly}`);
+      const lead = [...r.leadMs].sort((a, b) => a - b);
+      const q = (p: number) => (lead.length ? lead[Math.min(lead.length - 1, Math.floor((p / 100) * lead.length))] : "-");
+      notes.push(
+        `pumpportal reconcile: matched ${r.matched}, primary-only ${r.primaryOnly}, pumpportal-only ${r.crossOnly}; ` +
+          `pumpportal arrives after us by p50=${q(50)} p90=${q(90)} ms`,
+      );
     }
     const srcHealth = sources().map((s) => s.health());
     if (srcHealth[0])
