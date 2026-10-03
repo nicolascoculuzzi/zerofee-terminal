@@ -1,0 +1,35 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+keypair*.json
+*keypair*.json
+id.json
+*.key
+*.pem
+wallets/
+keystore/
+
+# Local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Dependencies and builds
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+
+# Logs
+*.log
+logs/
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/
