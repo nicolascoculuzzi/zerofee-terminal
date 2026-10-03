@@ -160,7 +160,7 @@ export function Toasts() {
     <div
       aria-live="polite"
       className={cn(
-        "pointer-events-none fixed z-[180] flex flex-col gap-2 max-md:bottom-16",
+        "pointer-events-none fixed z-toast flex flex-col gap-2 max-md:bottom-16",
         POSITION[position] ?? POSITION["bottom-right"],
       )}
     >

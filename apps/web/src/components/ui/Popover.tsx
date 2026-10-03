@@ -71,7 +71,7 @@ export function Popover({ open, onClose, anchor, children, align = "start", clas
     <div
       ref={panel}
       style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, width }}
-      className={cn("fixed z-[150] rounded-lg border border-line-strong bg-elev p-2", className)}
+      className={cn("fixed z-popover rounded-lg border border-line-strong bg-elev p-2", className)}
     >
       {children}
     </div>,

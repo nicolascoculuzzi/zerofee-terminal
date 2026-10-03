@@ -195,6 +195,32 @@
   flex-shrink: 0;
 }
 
+/* Stacking layers, lowest to highest. Floating tools sit under every overlay. */
+@utility z-dock {
+  z-index: 90;
+}
+@utility z-window {
+  z-index: 95;
+}
+@utility z-drawer {
+  z-index: 110;
+}
+@utility z-sheet {
+  z-index: 115;
+}
+@utility z-modal {
+  z-index: 120;
+}
+@utility z-popover {
+  z-index: 150;
+}
+@utility z-toast {
+  z-index: 180;
+}
+@utility z-tooltip {
+  z-index: 200;
+}
+
 @layer base {
   html,
   body,

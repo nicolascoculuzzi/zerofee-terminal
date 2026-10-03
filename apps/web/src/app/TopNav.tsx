@@ -125,7 +125,7 @@ function WalletMenu() {
         ref={anchor}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-7 items-center gap-2 rounded-md border border-line px-2 text-sm hover:bg-hover"
+        className="flex h-7 shrink-0 items-center gap-2 rounded-md border border-line px-2 text-sm whitespace-nowrap hover:bg-hover"
         aria-label="Trading wallet"
       >
         {locked ? <Lock className="icon-sm text-warn" /> : <LockOpen className="icon-sm text-muted" />}
@@ -250,8 +250,8 @@ export function TopNav() {
   return (
     <header className="flex h-topbar shrink-0 items-center gap-2 border-b border-line bg-panel px-2 sm:px-3">
       <Link to="/pulse" className="mr-2 shrink-0" aria-label="zerofee home">
-        <Logo className="hidden sm:inline-flex" />
-        <Logo compact className="sm:hidden" />
+        {/* The wordmark hides on phones; the mark stays. */}
+        <Logo wordmarkClassName="hidden sm:inline" />
       </Link>
       <nav className="hidden h-full items-stretch md:flex" aria-label="Main">
         {NAV_ITEMS.map((n) => (
@@ -291,9 +291,12 @@ export function TopNav() {
           <ModeSwitch />
         </div>
         <WalletMenu />
-        <Button variant="primary" size="md" className="hidden sm:inline-flex" onClick={() => openFund("fund")}>
-          Fund
-        </Button>
+        {/* Wrapped: Button's own inline-flex would beat a "hidden" passed through className. */}
+        <div className="hidden sm:block">
+          <Button variant="primary" size="md" onClick={() => openFund("fund")}>
+            Fund
+          </Button>
+        </div>
         <IconButton label="Settings" size="md" onClick={() => openSettings()}>
           <Settings className="icon-md" />
         </IconButton>

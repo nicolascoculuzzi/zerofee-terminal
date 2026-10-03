@@ -51,7 +51,7 @@ export function Modal({ open, onClose, title, children, footer, width = 480, cla
   useOverlayBehaviour(open, onClose, panel);
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-[120] flex items-start justify-center overflow-y-auto bg-scrim p-3 pt-[8vh] sm:p-6 sm:pt-[10vh]">
+    <div className="fixed inset-0 z-modal flex items-start justify-center overflow-y-auto bg-scrim p-3 pt-[8vh] sm:p-6 sm:pt-[10vh]">
       <button type="button" aria-label="Close dialog" className="fixed inset-0 cursor-default" onClick={onClose} tabIndex={-1} />
       <div
         ref={panel}
@@ -99,7 +99,7 @@ export function BottomSheet({
   useOverlayBehaviour(open, onClose, panel);
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-[115] flex items-end bg-scrim">
+    <div className="fixed inset-0 z-sheet flex items-end bg-scrim">
       <button type="button" aria-label="Close sheet" className="absolute inset-0 cursor-default" onClick={onClose} tabIndex={-1} />
       <div
         ref={panel}
@@ -142,7 +142,7 @@ export function Drawer({ open, onClose, title, children, width = 560, headerExtr
   useOverlayBehaviour(open, onClose, panel);
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-[110] flex justify-end bg-scrim">
+    <div className="fixed inset-0 z-drawer flex justify-end bg-scrim">
       <button type="button" aria-label="Close panel" className="absolute inset-0 cursor-default" onClick={onClose} tabIndex={-1} />
       <div
         ref={panel}

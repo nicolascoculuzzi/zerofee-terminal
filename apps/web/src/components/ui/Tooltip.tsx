@@ -76,7 +76,7 @@ export function Tooltip({ content, children, side = "top", delay = 220, classNam
             role="tooltip"
             style={{ left: pos?.x ?? -9999, top: pos?.y ?? -9999, maxWidth }}
             className={cn(
-              "pointer-events-none fixed z-[200] rounded-md border border-line-strong bg-elev px-2 py-1 text-xs text-fg",
+              "pointer-events-none fixed z-tooltip rounded-md border border-line-strong bg-elev px-2 py-1 text-xs text-fg",
               className,
             )}
           >

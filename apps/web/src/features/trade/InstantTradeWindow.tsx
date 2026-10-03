@@ -6,6 +6,7 @@ import { cn } from "../../lib/cn";
 import { fmtSol, fmtSolShort, fmtTokens } from "../../lib/format";
 import { compactLabel, type HotkeyAction } from "../../lib/hotkeys";
 import { buy, sell, sellInitials } from "../../lib/tradeActions";
+import { BREAKPOINT, useMediaQuery } from "../../lib/useMediaQuery";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
 import { useToken } from "../../state/token";
@@ -109,6 +110,8 @@ export function InstantTradeWindow() {
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const wallets = instant.wallets;
+  // A floating, hotkey-driven tool: desktop only. Phones trade from the token page's bottom bar.
+  const desktop = useMediaQuery(BREAKPOINT.md);
 
   // Initial placement: remembered position, else bottom-right above the status bar.
   useEffect(() => {
@@ -150,7 +153,7 @@ export function InstantTradeWindow() {
     [mint],
   );
 
-  if (!instant.open) return null;
+  if (!instant.open || !desktop) return null;
   const sellMode = instant.sellMode;
   const balance = status ? Math.max(0, status.solBalance - status.reservedSol) : 0;
 
@@ -159,7 +162,7 @@ export function InstantTradeWindow() {
       ref={panelRef}
       role="dialog"
       aria-label="Instant Trade"
-      className="fixed z-[95] w-72 rounded-lg border border-line-strong bg-panel"
+      className="fixed z-window w-72 rounded-lg border border-line-strong bg-panel"
       style={{ left: pos?.x ?? -9999, top: pos?.y ?? -9999 }}
     >
       <div

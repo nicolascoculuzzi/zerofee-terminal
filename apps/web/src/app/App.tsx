@@ -9,8 +9,9 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    const meta = document.querySelector('meta[name="theme-color"]');
-    meta?.setAttribute("content", theme === "light" ? "#f3f4f6" : "#08090b");
+    // Browser chrome follows the bg token from index.css, whichever theme resolved.
+    const bg = getComputedStyle(document.documentElement).getPropertyValue("--zf-bg").trim();
+    if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
   }, [theme]);
 
   useEffect(() => startFeed(), []);
