@@ -68,6 +68,12 @@ export class RpcLogsSource implements Source {
   private connectedAt = 0;
   private readonly subs = new Map<number, string>();
   readonly lag = new SampleRing(20_000);
+  /**
+   * Sub-second view of the pipeline: ms between the node announcing a slot (slotNotification) and each
+   * successful logs notification for that slot. Complements event-timestamp latency (1 s resolution).
+   */
+  readonly slotDelay = new SampleRing(50_000);
+  private readonly slotSeenAt = new Map<number, number>();
   readonly stats = {
     connected: false,
     reconnects: 0,
@@ -183,6 +189,8 @@ export class RpcLogsSource implements Source {
         this.stats.failedTxs++;
         return;
       }
+      const seenAt = this.slotSeenAt.get(context.slot);
+      if (seenAt !== undefined) this.slotDelay.add(now - seenAt);
       // The same tx mentions both programs (e.g. migrations): dedupe per (signature, slot).
       if (!this.seen.add(`${value.signature}:${context.slot}`)) {
         this.stats.duplicates++;
@@ -200,6 +208,10 @@ export class RpcLogsSource implements Source {
     if (m.method === "slotNotification") {
       const slot = (m.params as { result: { slot: number } }).result.slot;
       if (this.stats.tipSlot === null || slot > this.stats.tipSlot) this.stats.tipSlot = slot;
+      if (!this.slotSeenAt.has(slot)) {
+        this.slotSeenAt.set(slot, now);
+        if (this.slotSeenAt.size > 256) this.slotSeenAt.delete(this.slotSeenAt.keys().next().value as number);
+      }
       this.sink?.slot?.(slot, "processed");
       return;
     }
@@ -277,6 +289,7 @@ export class RpcLogsSource implements Source {
 
   health(): SourceHealth {
     const [p50, p90, max] = this.lag.percentiles([50, 90, 100]);
+    const [d50, d90, d99] = this.slotDelay.percentiles([50, 90, 99]);
     return {
       name: this.name,
       connected: this.stats.connected,
@@ -288,6 +301,7 @@ export class RpcLogsSource implements Source {
       notes: [
         `queue ${this.queue.size}/${this.queue.capacity} (max seen ${this.queue.maxSeen})`,
         `slot lag vs tip p50=${p50 ?? "-"} p90=${p90 ?? "-"} max=${max ?? "-"}`,
+        `ms after slotNotification p50=${d50 ?? "-"} p90=${d90 ?? "-"} p99=${d99 ?? "-"} (n=${this.slotDelay.count})`,
         `notifications ${this.stats.notifications} (failed txs ${this.stats.failedTxs}, duplicates ${this.stats.duplicates}, without events ${this.stats.withoutEvents})`,
         `decoded txs ${this.stats.decodedTxs}, decode failures ${this.stats.decodeFailures}, truncated logs ${this.stats.truncatedLogs}`,
         `received ${(this.stats.bytes / 1e6).toFixed(1)} MB`,

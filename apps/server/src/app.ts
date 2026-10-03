@@ -171,6 +171,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
 
   const health = (): HealthResponse => {
     const [p50, p90, p99] = m.latency.percentiles([50, 90, 99]);
+    const [l50, l90, l99] = m.launchLatency.percentiles([50, 90, 99]);
     const sol = solUsd?.snapshot() ?? null;
     const counts = pulse.counts();
     const notes: string[] = [];
@@ -203,6 +204,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         tradesPerSec1m: Math.round(m.tradeRate.perSec() * 10) / 10,
         lastEventAt: m.stats.lastEventAt,
         latency: { p50, p90, p99, samples: m.latency.count },
+        launchLatency: { p50: l50, p90: l90, p99: l99, samples: m.launchLatency.count },
       },
       solUsd: { price: sol?.price ?? null, ageMs: sol ? Date.now() - sol.updatedAt : null, stale: sol?.stale ?? true },
       chain: {

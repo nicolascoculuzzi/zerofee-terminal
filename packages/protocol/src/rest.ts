@@ -59,7 +59,10 @@ export interface HealthResponse {
     pendingPoolEvents: number;
     tradesPerSec1m: number;
     lastEventAt: number | null;
+    /** Detection latency of trades. */
     latency: LatencyStats;
+    /** Detection latency of launches (CreateEvent). */
+    launchLatency: LatencyStats;
   };
   solUsd: { price: number | null; ageMs: number | null; stale: boolean };
   chain: { slot: number | null; blockhashAgeMs: number | null };
