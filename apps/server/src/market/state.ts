@@ -503,9 +503,10 @@ export class MarketState {
       baseDecimals: ev.baseMintDecimals,
       quoteDecimals: ev.quoteMintDecimals,
     });
+    // Only the migration event links a coin to its canonical pool (it follows this event in the same
+    // tx); a pool someone else creates for the coin must not become its price source.
     const rec = this.tokens.get(ev.baseMint);
-    if (rec && (!rec.pool || rec.pool === ev.pool)) {
-      rec.pool = ev.pool;
+    if (rec && rec.pool === ev.pool) {
       if (!rec.poolState || !rec.poolKey || cmpKey(ctx.key, rec.poolKey) >= 0) {
         rec.poolState = { base: ev.poolBaseAmount, quoteVault: ev.poolQuoteAmount, virtualQuote: 0n };
         rec.poolKey = ctx.key;
@@ -547,6 +548,7 @@ export class MarketState {
   onPoolReady(info: PoolInfo): void {
     const list = this.pendingPools.get(info.pool);
     const rec = this.tokens.get(info.baseMint);
+    if (rec && info.isCanonical) this.adoptCanonicalPool(rec, info);
     if (rec && rec.pool === info.pool) {
       if (info.coinCreator) this.setCreator(rec, info.coinCreator, "pool");
       this.changes.tradeCtx.add(rec.mint);
@@ -564,15 +566,30 @@ export class MarketState {
     }
   }
 
+  /**
+   * A canonical pump pool (pool.creator == pool_authority PDA of the mint) means the coin graduated from
+   * the pump.fun curve, whatever its mint suffix. The migration time stays unknown unless we saw it.
+   */
+  private adoptCanonicalPool(rec: TokenRecord, info: PoolInfo): void {
+    if (rec.launchpad === "pump" && rec.pool === info.pool && rec.migrated) return;
+    rec.launchpad = "pump";
+    rec.pool = info.pool;
+    rec.migrated = true;
+    rec.complete = true;
+    this.touch(rec);
+  }
+
   private applyPoolTrade(ev: AmmSwapEvent, ctx: EvCtx, info: PoolInfo): string {
     const ts = Number(ev.timestamp) * 1000;
     const isBuy = ev.kind === "ammBuy";
     const quoteMint = normalizeQuoteMint(info.quoteMint);
     const known = this.tokens.get(info.baseMint);
+    if (known && info.isCanonical) this.adoptCanonicalPool(known, info);
     const rec =
       known ??
       this.getOrCreate(info.baseMint, {
-        launchpad: info.baseMint.endsWith("pump") ? "pump" : "pumpswap",
+        // canonical pool = graduated from the pump curve; other pools are PumpSwap-only listings
+        launchpad: info.isCanonical ? "pump" : "pumpswap",
         decimals: info.baseDecimals ?? 6,
         tokenProgram: info.baseTokenProgram,
         quoteMint,
