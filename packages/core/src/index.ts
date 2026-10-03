@@ -4,6 +4,7 @@
 export * from "./constants";
 export * from "./events";
 export * from "./fees";
+export * from "./metadata";
 export * from "./pump";
 export * from "./pumpswap";
 export * from "./send";
