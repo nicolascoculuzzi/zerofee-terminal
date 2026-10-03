@@ -367,21 +367,36 @@ export class MarketState {
     const changed = rec.creator !== creator;
     rec.creator = creator;
     rec.holders?.addDev(creator);
+    // PDA derivation is async and must never break the hot path.
+    const derive = (fn: () => Promise<Address>, set: (v: Address) => void) => {
+      try {
+        fn()
+          .then((v) => {
+            if (rec.creator === creator) {
+              set(v);
+              this.changes.tradeCtx.add(rec.mint);
+            }
+          })
+          .catch(() => {});
+      } catch {
+        /* invalid address */
+      }
+    };
     if (venue === "curve" && (changed || !rec.creatorVault)) {
-      void creatorVaultPda(creator as Address).then((v) => {
-        if (rec.creator === creator) {
+      derive(
+        () => creatorVaultPda(creator as Address),
+        (v) => {
           rec.creatorVault = v;
-          this.changes.tradeCtx.add(rec.mint);
-        }
-      });
+        },
+      );
     }
     if (venue === "pool" && (changed || !rec.coinCreatorVaultAuthority)) {
-      void coinCreatorVaultAuthorityPda(creator as Address).then((v) => {
-        if (rec.creator === creator) {
+      derive(
+        () => coinCreatorVaultAuthorityPda(creator as Address),
+        (v) => {
           rec.coinCreatorVaultAuthority = v;
-          this.changes.tradeCtx.add(rec.mint);
-        }
-      });
+        },
+      );
     }
   }
 
