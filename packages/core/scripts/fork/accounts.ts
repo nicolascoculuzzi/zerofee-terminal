@@ -85,6 +85,7 @@ import { type CloneList, cloneSourceUrl, type ForkTarget, redactUrl, sleep, type
 /** The only methods the fork tooling may call on mainnet. Anything that writes is refused outright. */
 const READ_ONLY_METHODS = new Set([
   "getAccountInfo",
+  "getMinimumBalanceForRentExemption",
   "getMultipleAccounts",
   "getSignaturesForAddress",
   "getTransaction",

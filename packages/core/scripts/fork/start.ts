@@ -33,14 +33,7 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
   signTransaction,
 } from "@solana/kit";
-import {
-  ACCOUNT_DISCRIMINATORS,
-  decodeBondingCurve,
-  fetchRawAccounts,
-  PUMP_PROGRAM_ID,
-  startsWith,
-  systemTransferInstruction,
-} from "../../src";
+import { fetchRawAccounts, maxBig, PUMP_AMM_PROGRAM_ID, PUMP_FEE_PROGRAM_ID, PUMP_PROGRAM_ID, systemTransferInstruction } from "../../src";
 import { classifyMints, createReadOnlyRpc, discoverTargets, programElfFingerprints, resolveCloneList } from "./accounts";
 import {
   assertLoopbackUrl,
@@ -115,35 +108,43 @@ async function waitForSignature(rpc: LocalRpc, sig: Signature, what: string, tim
   throw new Error(`${what} did not confirm within ${timeoutMs} ms`);
 }
 
+/** Owners whose accounts may encode "lamports above rent" as program state (curve SOL, accrued fees, ...). */
+const LAMPORT_ACCOUNTING_PROGRAMS: readonly Address[] = [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID, PUMP_FEE_PROGRAM_ID];
+
 /**
  * The test validator's genesis keeps the classic rent rate (6,960 lamports/byte incl. overhead) while mainnet
  * charges 5,080, so balances that satisfy mainnet's rent rules can violate the fork's:
  *  - Any account below the fork's rent-exempt minimum is "rent-paying" there, and the runtime rejects a
  *    transaction that credits it without lifting it to the minimum (e.g. a 1,000-lamport Jito tip into a freshly
- *    swept tip account fails with InsufficientFundsForRent).
- *  - pump keeps every bonding curve at exactly rent(len) + real_quote_reserves and charges the trader the
- *    shortfall, so on an un-normalized fork each first trade pays the rent-rate difference (524,520 lamports for
- *    a 151-byte curve) into the curve - a cost that does not exist on mainnet.
- * Top each clone up to the fork's equivalent of its mainnet cushion so programs behave exactly as on mainnet.
- * Trade math never reads these lamports (curve reserves live in account data); every top-up is recorded.
+ *    swept tip account fails with InsufficientFundsForRent). Such accounts are lifted to the fork's minimum.
+ *  - pump treats lamports above rent(len) as program state (a bonding curve holds rent + its real SOL + any
+ *    tracked extras such as fee-sharing balances) and charges the trader whenever that cushion falls short, so
+ *    on an un-normalized fork the first trade paid the rent-rate difference (524,520 lamports for a 151-byte
+ *    curve) into the curve - a cost that does not exist on mainnet. Accounts owned by the pump / PumpSwap / fees
+ *    programs therefore get exactly rent_fork(len) - rent_mainnet(len) added, which preserves lamports - rent.
+ * Mainnet rent is read live (never hardcoded). Trade math never reads these lamports; every top-up is recorded.
  */
-async function normalizeRent(rpc: LocalRpc, addresses: readonly Address[]): Promise<RentTopUp[]> {
+async function normalizeRent(
+  rpc: LocalRpc,
+  mainnetRent: (len: number) => Promise<bigint>,
+  addresses: readonly Address[],
+): Promise<RentTopUp[]> {
   const accs = await fetchRawAccounts(rpc, addresses);
-  const minByLen = new Map<number, bigint>();
+  const forkRentByLen = new Map<number, bigint>();
   const deficits: { address: Address; len: number; before: bigint; min: bigint }[] = [];
   // Programs are cloned separately and never appear in `addresses`.
   for (const acc of accs) {
     if (!acc) continue;
     const len = acc.data.length;
-    let min = minByLen.get(len);
-    if (min === undefined) {
-      min = await rpc.getMinimumBalanceForRentExemption(BigInt(len)).send();
-      minByLen.set(len, min);
+    let forkMin = forkRentByLen.get(len);
+    if (forkMin === undefined) {
+      forkMin = await rpc.getMinimumBalanceForRentExemption(BigInt(len)).send();
+      forkRentByLen.set(len, forkMin);
     }
-    if (acc.owner === PUMP_PROGRAM_ID && startsWith(acc.data, ACCOUNT_DISCRIMINATORS.bondingCurve)) {
-      min += decodeBondingCurve(acc.data).realQuoteReserves;
-    }
-    if (acc.lamports < min) deficits.push({ address: acc.address, len, before: acc.lamports, min });
+    const target = LAMPORT_ACCOUNTING_PROGRAMS.includes(acc.owner)
+      ? acc.lamports + maxBig(0n, forkMin - (await mainnetRent(len)))
+      : maxBig(acc.lamports, forkMin);
+    if (target > acc.lamports) deficits.push({ address: acc.address, len, before: acc.lamports, min: target });
   }
   if (deficits.length === 0) return [];
 
@@ -310,7 +311,19 @@ async function main() {
     const mismatched = checks.filter((c) => c.mainnetSha256 !== c.localSha256);
     if (mismatched.length) fail(`program ELF differs from mainnet: ${mismatched.map((c) => c.program).join(", ")}`, child);
 
-    const rentTopUps = await normalizeRent(local, [...clone.accounts, ...presentMaybe]);
+    const mainnetRentByLen = new Map<number, Promise<bigint>>();
+    const mainnetRent = (len: number) => {
+      let r = mainnetRentByLen.get(len);
+      if (!r) {
+        r = mainnet
+          .getMinimumBalanceForRentExemption(BigInt(len))
+          .send()
+          .then((v) => BigInt(v));
+        mainnetRentByLen.set(len, r);
+      }
+      return r;
+    };
+    const rentTopUps = await normalizeRent(local, mainnetRent, [...clone.accounts, ...presentMaybe]);
     // Prove the faucet even when no top-up was needed.
     if (rentTopUps.length === 0) {
       const kp = await generateKeyPair();
