@@ -1,5 +1,6 @@
 /**
- * Borsh decoders for the pump.fun / PumpSwap events a market-data feed needs. Input is the event payload
+ * Borsh decoders for the pump.fun / PumpSwap events a market-data feed needs, and the per-program dispatch
+ * that also routes Raydium LaunchLab / CPMM payloads to ./raydium.ts. Input is the event payload
  * `disc(8) + borsh`, as found in `Program data: <base64>` log lines or after the 8-byte EVENT_IX_TAG of an
  * event-CPI inner instruction.
  *
@@ -9,13 +10,20 @@
  *  - a payload that ends inside a required field, or a corrupt String/Vec length, throws EventDecodeError.
  */
 import type { Address } from "@solana/kit";
-import { EVENT_DISCRIMINATORS, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "../constants";
-import { Reader, startsWith } from "../util/bytes";
+import {
+  EVENT_DISCRIMINATORS,
+  PUMP_AMM_PROGRAM_ID,
+  PUMP_PROGRAM_ID,
+  RAYDIUM_CPMM_PROGRAM_ID,
+  RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+} from "../constants";
+import type { Reader } from "../util/bytes";
+import { type DecoderTable, decodeWithTables, requireUpTo, str } from "./borsh";
+import { CPMM_DECODERS, LAUNCHLAB_DECODERS } from "./raydium";
 import {
   type AmmCreatePoolEvent,
   type AmmSwapEvent,
   type DecodedEvent,
-  type DecodedEventKind,
   EventDecodeError,
   type PumpCompleteEvent,
   type PumpCreateEvent,
@@ -24,24 +32,11 @@ import {
   type Shareholder,
 } from "./types";
 
-const DISC_LEN = 8;
 /** pump caps name/symbol/uri at 32/13/200 characters (COIN_CREATION.md); allow UTF-8 headroom. */
 const MAX_NAME_BYTES = 256;
 const MAX_URI_BYTES = 1024;
 const MAX_IX_NAME_BYTES = 64;
 const MAX_SHAREHOLDERS = 64;
-
-function requireUpTo(kind: DecodedEventKind, r: Reader, end: number): void {
-  if (end > r.length) throw new EventDecodeError(kind, `payload ends at ${r.length} inside required fields (need ${end})`);
-}
-
-function str(kind: DecodedEventKind, r: Reader, max: number): string {
-  try {
-    return r.string(max);
-  } catch (e) {
-    throw new EventDecodeError(kind, e instanceof Error ? e.message : String(e));
-  }
-}
 
 function decodePumpCreate(r: Reader): PumpCreateEvent {
   const k = "pumpCreate" as const;
@@ -303,26 +298,37 @@ function decodeAmmSwap(r: Reader, isBuy: boolean): AmmSwapEvent {
   };
 }
 
-type Decoder = (r: Reader) => DecodedEvent;
-
-const PUMP_DECODERS: [Uint8Array, Decoder][] = [
+const PUMP_DECODERS: DecoderTable = [
   [EVENT_DISCRIMINATORS.pumpTrade, decodePumpTrade],
   [EVENT_DISCRIMINATORS.pumpCreate, decodePumpCreate],
   [EVENT_DISCRIMINATORS.pumpComplete, decodePumpComplete],
   [EVENT_DISCRIMINATORS.pumpCompleteAmmMigration, decodePumpMigration],
 ];
 
-const AMM_DECODERS: [Uint8Array, Decoder][] = [
+const AMM_DECODERS: DecoderTable = [
   [EVENT_DISCRIMINATORS.ammBuy, (r) => decodeAmmSwap(r, true)],
   [EVENT_DISCRIMINATORS.ammSell, (r) => decodeAmmSwap(r, false)],
   [EVENT_DISCRIMINATORS.ammCreatePool, decodeAmmCreatePool],
 ];
 
+const DECODERS_BY_PROGRAM: ReadonlyMap<Address, DecoderTable> = new Map<Address, DecoderTable>([
+  [PUMP_PROGRAM_ID, PUMP_DECODERS],
+  [PUMP_AMM_PROGRAM_ID, AMM_DECODERS],
+  [RAYDIUM_LAUNCHLAB_PROGRAM_ID, LAUNCHLAB_DECODERS],
+  [RAYDIUM_CPMM_PROGRAM_ID, CPMM_DECODERS],
+]);
+
 /** Programs whose events this module decodes. */
-export const EVENT_PROGRAMS: readonly Address[] = [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID];
+export const EVENT_PROGRAMS: readonly Address[] = [...DECODERS_BY_PROGRAM.keys()];
+
+/**
+ * Event programs that only log their events (`emit!`), with no event-CPI copy: Raydium CPMM. Their events
+ * exist only in the logs (see decodeTransactionEvents).
+ */
+export const LOG_ONLY_EVENT_PROGRAMS: readonly Address[] = [RAYDIUM_CPMM_PROGRAM_ID];
 
 export function isEventProgram(program: Address | null | undefined): boolean {
-  return program === PUMP_PROGRAM_ID || program === PUMP_AMM_PROGRAM_ID;
+  return program != null && DECODERS_BY_PROGRAM.has(program);
 }
 
 /**
@@ -331,21 +337,13 @@ export function isEventProgram(program: Address | null | undefined): boolean {
  * `program` is the program that emitted it. Pass it whenever it is known: discriminators of generically
  * named events collide across Anchor programs (Raydium LaunchLab also emits a `TradeEvent`), so with a
  * program only that program's layouts are tried and other programs yield null. `null`/omitted = unknown
- * emitter (legacy behaviour: match on the discriminator alone).
+ * emitter (legacy behaviour: match pump / PumpSwap layouts on the discriminator alone; Raydium layouts are
+ * never tried without attribution).
  *
  * Returns null for unknown discriminators; throws EventDecodeError for a known one whose body is malformed.
  */
 export function decodeEventPayload(payload: Uint8Array, program?: Address | null): DecodedEvent | null {
-  if (payload.length < DISC_LEN) return null;
-  let tables: [Uint8Array, Decoder][][];
-  if (program === PUMP_PROGRAM_ID) tables = [PUMP_DECODERS];
-  else if (program === PUMP_AMM_PROGRAM_ID) tables = [AMM_DECODERS];
-  else if (program == null) tables = [PUMP_DECODERS, AMM_DECODERS];
-  else return null;
-  for (const table of tables) {
-    for (const [disc, decode] of table) {
-      if (startsWith(payload, disc)) return decode(new Reader(payload, DISC_LEN));
-    }
-  }
-  return null;
+  if (program == null) return decodeWithTables([PUMP_DECODERS, AMM_DECODERS], payload);
+  const table = DECODERS_BY_PROGRAM.get(program);
+  return table ? decodeWithTables([table], payload) : null;
 }

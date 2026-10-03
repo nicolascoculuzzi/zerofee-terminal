@@ -283,6 +283,10 @@ export class MarketState {
       case "ammBuy":
       case "ammSell":
         return this.onPoolTrade(ev, ctx);
+      case "launchlabTrade":
+      case "launchlabPoolCreate":
+      case "cpmmSwap":
+        return null; // Raydium venues are tradeable but not tracked by the market feed yet
     }
   }
 

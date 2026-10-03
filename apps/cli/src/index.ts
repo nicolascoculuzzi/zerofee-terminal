@@ -254,7 +254,7 @@ function printSimulatedFill(q: Awaited<ReturnType<typeof buildTrade>>["quote"], 
       `simulated fill: tokens=${ev.tokenAmount} quoteNet=${ev.quoteAmount} fee=${ev.fee} creatorFee=${ev.creatorFee} ` +
         `-> ${q.side === "buy" ? "tokens" : "SOL out"} ${got} vs quoted ${q.expectedOut} (${got === q.expectedOut ? "EXACT MATCH" : `diff ${got - q.expectedOut}; state moved between fetch and simulation`})`,
     );
-  } else {
+  } else if (ev.kind === "ammBuy" || ev.kind === "ammSell") {
     const got = ev.kind === "ammBuy" ? ev.baseAmount : ev.userQuoteAmount;
     console.log(
       `simulated fill: base=${ev.baseAmount} quote=${ev.quoteAmount} userQuote=${ev.userQuoteAmount} lpFee=${ev.lpFee} protocolFee=${ev.protocolFee} ` +

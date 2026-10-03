@@ -70,7 +70,7 @@ export function parseProgramDataLogs(logs: readonly string[]): ParsedProgramData
 
 export interface LogEventsResult {
   events: DecodedEvent[];
-  /** pump/PumpSwap-attributed lines that failed: known discriminator with a malformed body, or bad base64. */
+  /** Lines attributed to a decoded program that failed: known discriminator with a malformed body, or bad base64. */
   failures: number;
   failureMessages: string[];
   truncated: boolean;
@@ -79,16 +79,21 @@ export interface LogEventsResult {
 }
 
 /**
- * Decodes every pump / PumpSwap event in a transaction's logs, attributed by invoke stack. Lines with no
- * invoke context (partial log excerpts) are matched on the discriminator alone.
+ * Decodes every event of the EVENT_PROGRAMS (pump, PumpSwap, Raydium LaunchLab, Raydium CPMM) in a
+ * transaction's logs, attributed by invoke stack. Lines with no invoke context (partial log excerpts) are
+ * matched on the discriminator alone (pump / PumpSwap layouts only).
+ *
+ * `programs` restricts decoding to lines attributed to those programs; every other line, including lines
+ * with no invoke context, then counts as foreign.
  */
-export function decodeLogEvents(logs: readonly string[]): LogEventsResult {
+export function decodeLogEvents(logs: readonly string[], programs?: readonly Address[]): LogEventsResult {
   const parsed = parseProgramDataLogs(logs);
   const events: DecodedEvent[] = [];
   const failureMessages: string[] = [];
   let foreign = 0;
   for (const l of parsed.lines) {
-    if (l.program !== null && !isEventProgram(l.program)) {
+    const wanted = programs ? l.program !== null && programs.includes(l.program) : l.program === null || isEventProgram(l.program);
+    if (!wanted) {
       foreign++;
       continue;
     }
