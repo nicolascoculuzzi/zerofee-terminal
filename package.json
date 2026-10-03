@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "test": "bun test",
+    "test:validator": "ZF_VALIDATOR_TESTS=1 bun test packages/core/test/integration",
     "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/core/tsconfig.e2e.json --noEmit && tsc -p packages/protocol --noEmit && tsc -p apps/cli --noEmit && tsc -p apps/server --noEmit && tsc -p packages/auth --noEmit && tsc -p packages/signer --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
