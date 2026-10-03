@@ -14,8 +14,8 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Live data feed + backend gateway | ✅ | 6-min public-RPC run: 303 launches, 341 trades/s, 0 decode failures, ~0.5–1 s detection; Yellowstone gRPC client verified under Bun |
 | Wallet login (SIWS) + browser trading wallet + signer firewall | ✅ | Adversarial review: no critical bypass; 4 findings fixed. 346 tests across the repo |
 | Web UI on simulated data | 🔨 | Shell done; screens in progress |
-| Design system (Mobbin-grounded, "no AI slop" checklist) | 🔨 | |
-| Local mainnet-fork test harness (real programs, real landed txs, no real money) | 🔨 | |
+| Design system (Mobbin-grounded, "no AI slop" checklist) | ✅ | [DESIGN.md](design/DESIGN.md): 161 Mobbin references, computed AA contrast, slop checklist |
+| Local mainnet-fork test harness (real programs, real landed txs, no real money) | ✅ | 10/10 e2e: curve, mayhem and PumpSwap buys/sells/exits land, exact to the lamport ([how](dev/FORK_TESTING.md)) |
 | Wire UI ↔ feed ↔ wallet ↔ engine | ⏳ | |
 | UI polish rounds against the design system | ⏳ | |
 | First real 0.001 SOL trade | 🙋 | Needs a throwaway dev wallet key in your local `.env` |
@@ -37,7 +37,7 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 
 | Piece | Status |
 |---|---|
-| Deploy config (Docker, Hetzner guide), monitoring, runbook | ⏳ |
+| Deploy config (Docker, Hetzner guide), monitoring, runbook | 🔨 |
 | Security review: signer firewall, front-end CSP/SRI | ⏳ (firewall reviewed once; signer must move to its own origin before launch) |
 | Chainstack gRPC, Helius key, domain, Hetzner server | 🙋 |
 | Legal review (ToS, risk disclosures, sanctions screening) | 🙋 |
