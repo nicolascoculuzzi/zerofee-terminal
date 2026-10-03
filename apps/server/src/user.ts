@@ -7,6 +7,7 @@ import type { NonceStore } from "@zerofee/auth";
 import type { OrdersSnapshot, WalletSnapshot } from "@zerofee/protocol";
 import { authRoutes } from "./api/auth";
 import { ApiRouter } from "./api/router";
+import { type SettingsHooks, settingsRoutes } from "./api/settings";
 import { OriginPolicy } from "./auth/origin";
 import { SessionService } from "./auth/sessions";
 import type { ServerConfig } from "./config";
@@ -55,6 +56,8 @@ export class UserLayer {
   readonly topics: UserTopicSource;
   readonly wsConnPerUser: number;
   readonly now: () => number;
+  /** Settings / tracked-wallet change notifications from the REST API (the alert engine subscribes). */
+  readonly settingsHooks: SettingsHooks = {};
   private timers: ReturnType<typeof setInterval>[] = [];
 
   constructor(
@@ -87,6 +90,7 @@ export class UserLayer {
     this.wsConnPerUser = rl.wsConnPerUser;
     this.api = new ApiRouter({ sessions: this.sessions, origins: this.origins, limits: this.limits, admin: null });
     this.api.add(authRoutes(this.sessions));
+    this.api.add(settingsRoutes(this.store, this.now, this.settingsHooks));
     const store = this.store;
     this.topics = {
       canWatchWallet: (userId, address) => store.users.ownsWallet(userId, address),
