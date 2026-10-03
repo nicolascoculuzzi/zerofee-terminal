@@ -214,11 +214,15 @@ The browser pre-signs transactions against a **durable nonce** (first instructio
 
 **Constraints**
 - Size, minimum output, fee, tip, lane and account list are frozen at signing. pump.fun upgrades, migrations, creator changes and ALT closures strand orders, so the UI needs a re-arm flow and the IDL-diff alarm must notify affected users.
-- Nonce slots cost about 0.001–0.0015 SOL rent each (refundable); default pool is 10 per user.
+- Nonce slots cost about 0.00106 SOL rent each on mainnet ((80 + 128) bytes × 5,080 lamports/byte), refundable; default pool is 10 per user.
 - Submit armed orders via Jito bundle-only with `jitodontfront`, keep variants tight, and fire the cancel if an attempt misses within a few slots (a leaked nonce tx is a permanent option).
 - Transactions can exceed `PACKET_DATA_SIZE`. Use v0 transactions with operator-owned ALTs (never closed while referenced), or v1 transactions where relays accept them.
 - Before submitting, the server checks the wallet still holds the SOL or tokens; the UI shows reserved balances.
-- **Blocking question for Phase 5:** does a fee-paying nonce tx that fails during execution still advance the nonce? Test on devnet first; until then, design for one attempt per nonce.
+- **Tested 2026-10-03 on a local Agave 4.3.0 validator:** a nonce transaction that lands but fails during execution **still advances the nonce** and pays the base fee. Replaying the same signed transaction is rejected. So each nonce gets **one landed attempt**: a failed attempt (e.g., slippage) kills every variant on that nonce.
+  - Submit only when the live quote clears the chosen variant's minimum output with margin. On failure, mark the order "consumed, re-arm" and push-notify the user.
+  - **Full-exit sells** (stop-loss, final TP, dev-sell exit) may be armed as an attempt ladder across several nonces. Once one fills, the rest fail harmlessly: there are no tokens left, so they cost only the base and priority fee, and tips aren't paid because failed transactions revert.
+  - **Never ladder buys or partial sells across nonces** (double-fill risk). If those need retries, later attempts need an on-chain guard such as a balance assertion (e.g., Lighthouse). That would have to be added to the firewall allowlist; evaluate later.
+  - Repro: [docs/experiments/nonce-failure](docs/experiments/nonce-failure/README.md).
 
 ## Feature checklist
 
@@ -305,7 +309,7 @@ Build in order. Each phase ends with something runnable and testable.
 - **Done when:** a full buy → sell loop works from the UI on mainnet, with the optimistic UI and the latency breakdown visible.
 
 ### Phase 5: armed orders
-- Prerequisite: devnet test of nonce failure semantics.
+- Nonce failure semantics: resolved 2026-10-03 (one landed attempt per nonce; see Armed orders).
 - Nonce slots, armed limit/TP/SL/migration orders, armed-orders view, re-arm flow, pre-signed cancels, admin halt and user Panic.
 - **Done when:** a small mainnet TP/SL fires correctly with the tab closed.
 
@@ -346,7 +350,7 @@ Funding: free to use, with an optional tip jar that defaults to zero, so the zer
 
 | Question | Status |
 |---|---|
-| Nonce advance on failed execution | Decides one vs many attempts per armed order; devnet test before Phase 5 |
+| Nonce advance on failed execution | **Resolved 2026-10-03:** yes, it advances; one landed attempt per nonce (local Agave 4.3.0 test) |
 | Nonce vs MEV protection | Mitigated by Jito bundle-only + tight variants + fast cancel; measure landing rate |
 | Armed tx size | v0 + ALTs vs v1 support per relay |
 | Direct-mode arming | Can a connected wallet approve a batch of variants in one popup? |
