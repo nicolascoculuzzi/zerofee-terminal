@@ -140,7 +140,6 @@ interface SimToken {
   mint: string;
   name: string;
   symbol: string;
-  glyph: string;
   launchpad: Launchpad;
   quote: QuoteToken;
   venue: Venue;
@@ -922,7 +921,7 @@ export class SimEngine {
   private launchToken(at: number, fateOverride?: Fate): SimToken {
     const rng = this.rng;
     const launchpad = rng.weighted(LAUNCHPAD_WEIGHTS);
-    const { name, symbol, glyph } = generateTokenName(rng);
+    const { name, symbol } = generateTokenName(rng);
     const quote: QuoteToken =
       launchpad === "stonkfun"
         ? rng.weighted([
@@ -962,7 +961,6 @@ export class SimEngine {
       mint: fakeAddress(rng, MINT_SUFFIX[launchpad] ?? ""),
       name,
       symbol,
-      glyph,
       launchpad,
       quote,
       venue: CURVE_VENUE[launchpad],
@@ -1199,7 +1197,7 @@ export class SimEngine {
     const outcomes = [6.2, 3.1, 2.4, 1.4, 0.9, 0.6, 0.35, 0.2, -0.1, -0.25, -0.4, -0.45, -0.6, -0.72, -0.85, 0.15, 0.05];
     const now = Date.now();
     outcomes.forEach((r, i) => {
-      const { name, symbol, glyph } = generateTokenName(rng);
+      const { name, symbol } = generateTokenName(rng);
       const bought = rng.pick([0.25, 0.5, 0.5, 1, 1, 2]);
       const sold = Math.max(0, bought * (1 + r));
       const openedAt = now - rng.range(1, 29) * 86_400_000 - i * 3_600_000;
@@ -1210,7 +1208,7 @@ export class SimEngine {
         mint,
         symbol,
         name,
-        imageUri: `gen:${glyph}`,
+        imageUri: null,
         launchpad: "pump",
         boughtSol: bought,
         soldSol: sold,
@@ -1258,7 +1256,7 @@ export class SimEngine {
       kind: "deposit",
       mint: null,
       symbol: null,
-      solAmount: 12,
+      solAmount: 12.3104,
       tokenAmount: null,
       marketCapUsd: null,
       ts: now - 31 * 86_400_000,
@@ -1539,7 +1537,7 @@ export class SimEngine {
       mint: t.mint,
       symbol: t.symbol,
       name: t.name,
-      imageUri: `gen:${t.glyph}`,
+      imageUri: null,
       launchpad: t.launchpad,
       createdAt: t.createdAt,
       marketCapUsd: price * t.supply * this.solUsd,
@@ -1581,7 +1579,7 @@ export class SimEngine {
       mint: t.mint,
       name: t.name,
       symbol: t.symbol,
-      imageUri: `gen:${t.glyph}`,
+      imageUri: null,
       launchpad: t.launchpad,
       quote: t.quote,
       venue: t.venue,
@@ -1933,7 +1931,7 @@ export class SimEngine {
         mint: t.mint,
         symbol: t.symbol,
         name: t.name,
-        imageUri: `gen:${t.glyph}`,
+        imageUri: null,
         launchpad: t.launchpad,
         boughtSol: h.boughtSol,
         soldSol: h.soldSol,
@@ -2030,7 +2028,7 @@ export class SimEngine {
           mint: t.mint,
           symbol: t.symbol,
           name: t.name,
-          imageUri: `gen:${t.glyph}`,
+          imageUri: null,
           launchpad: t.launchpad,
           boughtSol: 0,
           soldSol: 0,
@@ -2413,7 +2411,7 @@ export class SimEngine {
               `${sym} looking strong here. ${t.mint}`,
               `aped ${sym}, dev seems to be cooking`,
               `${sym} holders growing fast, chart is clean`,
-              `${sym} about to graduate 🎓`,
+              `${sym} about to graduate`,
               `careful with ${sym}, lots of bundles in the first slot`,
               `${sym} ${t.mint.slice(0, 6)}…${t.mint.slice(-4)} on watch`,
             ])
@@ -2426,7 +2424,7 @@ export class SimEngine {
         text = `this. ${sym}`;
         break;
       case "retweet":
-        text = `RT @${other}: ${sym} 🚀`;
+        text = `RT @${other}: ${sym} is moving`;
         break;
       case "profile_update":
         text = t ? `changed display name to "${displayName} | ${sym}"` : `updated bio: "on-chain since day one"`;

@@ -29,7 +29,10 @@ function trimZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
-/** 1234 → "1.23K", 12_345_678 → "12.3M". */
+/**
+ * Compact numbers with 3 significant digits and trailing zeros kept, so columns line up:
+ * 1234 → "1.23K", 4200 → "4.20K", 12_345_678 → "12.3M".
+ */
 export function fmtCompact(n: number, digits = 3): string {
   if (!Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
@@ -41,10 +44,10 @@ export function fmtCompact(n: number, digits = 3): string {
     [1e3, "K"],
   ];
   for (const [value, suffix] of units) {
-    if (abs >= value) return sign + trimZeros((abs / value).toPrecision(digits)) + suffix;
+    if (abs >= value * 0.9995) return sign + (abs / value).toPrecision(digits) + suffix;
   }
   if (abs >= 100) return sign + abs.toFixed(0);
-  if (abs >= 1) return sign + trimZeros(abs.toFixed(2));
+  if (abs >= 1) return sign + abs.toFixed(2);
   return sign + fmtSmall(abs, 3);
 }
 
@@ -64,16 +67,21 @@ export function fmtSolPrice(n: number): string {
   return fmtSmall(n, 4);
 }
 
-/** SOL amounts: 0.0123, 1.25, 12.3, 1.2K. */
+/** SOL amounts with fixed decimals per magnitude: 0.012 → "0.012", 1.25 → "1.250", 12.3 → "12.30", 1234 → "1.23K". */
 export function fmtSol(n: number): string {
   if (!Number.isFinite(n)) return "—";
   const abs = Math.abs(n);
   if (abs >= 1000) return fmtCompact(n, 3);
   if (abs >= 100) return n.toFixed(1);
-  if (abs >= 10) return trimZeros(n.toFixed(2));
-  if (abs >= 1) return trimZeros(n.toFixed(3));
-  if (abs >= 0.001 || abs === 0) return trimZeros(n.toFixed(4));
+  if (abs >= 10) return n.toFixed(2);
+  if (abs >= 0.001 || abs === 0) return n.toFixed(3);
   return fmtSmall(n, 3);
+}
+
+/** User-entered amounts (preset buttons, inputs): shortest form, "0.5", "1", "0.25". */
+export function fmtSolShort(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return String(Number(n.toPrecision(6)));
 }
 
 export function fmtSignedSol(n: number): string {
@@ -83,7 +91,7 @@ export function fmtSignedSol(n: number): string {
 
 export function fmtPct(n: number, opts: { signed?: boolean; digits?: number } = {}): string {
   if (!Number.isFinite(n)) return "—";
-  const digits = opts.digits ?? (Math.abs(n) >= 100 ? 0 : Math.abs(n) >= 10 ? 1 : Math.abs(n) >= 1 ? 1 : 2);
+  const digits = opts.digits ?? (Math.abs(n) >= 100 ? 0 : 1);
   const body = Math.abs(n) >= 10_000 ? `${fmtCompact(Math.abs(n), 3)}%` : `${Math.abs(n).toFixed(digits)}%`;
   if (opts.signed) return `${n >= 0 ? "+" : "-"}${body}`;
   return n < 0 ? `-${body}` : body;

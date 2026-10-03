@@ -13,7 +13,7 @@ const OnboardingPage = lazy(() => import("../features/onboarding/OnboardingPage"
 
 function PageFallback() {
   return (
-    <div className="flex h-full items-center justify-center text-xs text-dim">
+    <div className="flex h-full items-center justify-center text-sm text-dim">
       <span className="zf-live-dot">Loading…</span>
     </div>
   );

@@ -8,6 +8,13 @@ import { type Toast, useToasts } from "../state/toasts";
 import { type ClientTrade, useTrades } from "../state/trades";
 import { LatencyBreakdownView } from "./StatusBar";
 
+/*
+ * Trade toasts follow Phantom's order lifecycle pair ("Opening…" then "Opened"):
+ * https://mobbin.com/screens/e7d53c9d-f418-4a56-9b5a-b8e2a5647e4e
+ * https://mobbin.com/screens/c5d3a411-f5d2-4618-bfb4-0eb2abcbf5d4
+ * One toast per trade, updated in place: pending stages, then landed (with latency) or failed (with reason).
+ */
+
 const STAGES: { key: ClientTrade["stage"]; label: string }[] = [
   { key: "built", label: "Built" },
   { key: "signed", label: "Signed" },
@@ -25,46 +32,44 @@ function TradeToastBody({ trade }: { trade: ClientTrade }) {
   const fill = trade.receipt?.fill;
   return (
     <div className="min-w-0 flex-1">
-      <div className="flex items-center gap-1.5 text-xs font-semibold">
-        {trade.status === "pending" && <LoaderCircle size={13} className="animate-spin text-accent" />}
-        {trade.status === "confirmed" && <CheckCircle2 size={13} className="text-buy" />}
-        {trade.status === "failed" && <XCircle size={13} className="text-sell" />}
-        <span className={cn(trade.side === "buy" ? "text-buy" : "text-sell")}>{verb}</span>
+      <div className="flex items-center gap-1 text-sm font-semibold">
+        {trade.status === "pending" && <LoaderCircle className="icon-sm animate-spin text-info" />}
+        {trade.status === "confirmed" && <CheckCircle2 className="icon-sm text-buy" />}
+        {trade.status === "failed" && <XCircle className="icon-sm text-sell" />}
+        <span className={trade.side === "buy" ? "text-buy" : "text-sell"}>{verb}</span>
         <span className="truncate">
-          ${trade.symbol} · {trade.label}
+          {trade.symbol} · {trade.label}
         </span>
       </div>
       {trade.status === "pending" && (
-        <div className="mt-1.5 flex gap-1">
+        <div className="mt-2 flex gap-1">
           {STAGES.map((s, i) => (
             <span
               key={s.key}
-              className={cn("h-1 flex-1 rounded-full", idx >= i + 1 ? "bg-accent" : idx === i ? "zf-live-dot bg-accent/50" : "bg-elev")}
+              className={cn("h-1 flex-1 rounded-full", idx >= i + 1 ? "bg-info" : idx === i ? "zf-live-dot bg-info/50" : "bg-elev")}
               title={s.label}
             />
           ))}
         </div>
       )}
       {trade.status === "confirmed" && trade.receipt && (
-        <div className="mt-0.5 text-[11px] text-muted">
-          {fill &&
-            (fill.side === "buy"
-              ? `${fmtTokens(fill.tokenAmount)} tokens for ${fmtSol(fill.solAmount)} SOL`
-              : `${fmtTokens(fill.tokenAmount)} tokens → ${fmtSol(fill.solAmount)} SOL`)}{" "}
-          · landed in <span className="font-semibold text-fg">{fmtMs(trade.receipt.latency.landedMs)}</span>
+        <div className="mt-1 text-xs text-muted">
+          {fill && `${fmtTokens(fill.tokenAmount)} for ${fmtSol(fill.solAmount)} SOL`}
+          {" · landed in "}
+          <span className="font-semibold text-fg">{fmtMs(trade.receipt.latency.landedMs)}</span>
         </div>
       )}
-      {trade.status === "failed" && <div className="mt-0.5 text-[11px] text-sell/90">{trade.error ?? "Failed"}</div>}
+      {trade.status === "failed" && <div className="mt-1 text-xs text-sell">{trade.error ?? "Failed"}</div>}
       {trade.receipt && (
-        <div className="mt-1 flex items-center gap-2 text-[10px] text-dim">
+        <div className="mt-1 flex items-center gap-2 text-2xs text-dim">
           {trade.receipt.signature && (
-            <span className="flex items-center gap-0.5 font-mono">
+            <span className="flex items-center gap-1 font-mono">
               {trade.receipt.signature.slice(0, 10)}…
-              <CopyButton text={trade.receipt.signature} label="Copy signature" size={10} />
+              <CopyButton text={trade.receipt.signature} label="Copy signature" />
             </span>
           )}
-          <button type="button" onClick={() => setOpen((o) => !o)} className="ml-auto flex items-center gap-0.5 hover:text-fg">
-            Latency <ChevronDown size={10} className={cn("transition-transform", open && "rotate-180")} />
+          <button type="button" onClick={() => setOpen((o) => !o)} className="ml-auto flex items-center gap-1 hover:text-fg">
+            Latency <ChevronDown className={cn("icon-xs transition-transform", open && "rotate-180")} />
           </button>
         </div>
       )}
@@ -91,43 +96,38 @@ const ToastItem = memo(function ToastItem({ toast }: { toast: Toast }) {
 
   const icon =
     toast.kind === "success" ? (
-      <CheckCircle2 size={14} className="text-buy" />
+      <CheckCircle2 className="icon-sm text-buy" />
     ) : toast.kind === "error" ? (
-      <XCircle size={14} className="text-sell" />
+      <XCircle className="icon-sm text-sell" />
     ) : toast.kind === "warn" ? (
-      <AlertTriangle size={14} className="text-warn" />
+      <AlertTriangle className="icon-sm text-warn" />
     ) : (
-      <Info size={14} className="text-info" />
+      <Info className="icon-sm text-info" />
     );
 
+  const failed = trade?.status === "failed" || (!trade && toast.kind === "error");
   return (
     <div
       role="status"
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
       className={cn(
-        "pointer-events-auto flex w-[320px] max-w-[calc(100vw-24px)] gap-2 rounded-lg border bg-panel p-2.5 shadow-pop",
-        trade?.status === "failed" || toast.kind === "error"
-          ? "border-sell/30"
-          : trade?.status === "confirmed" || toast.kind === "success"
-            ? "border-buy/25"
-            : toast.kind === "warn"
-              ? "border-warn/30"
-              : "border-line-strong",
+        "pointer-events-auto flex w-80 max-w-[calc(100vw-24px)] gap-2 rounded-lg border bg-elev p-3",
+        failed ? "border-sell/40" : !trade && toast.kind === "warn" ? "border-warn/40" : "border-line-strong",
       )}
     >
       {trade ? (
         <TradeToastBody trade={trade} />
       ) : (
         <>
-          <div className="pt-0.5">{icon}</div>
+          <div className="pt-px">{icon}</div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold">{toast.title}</div>
-            {toast.body && <div className="mt-0.5 break-words text-[11px] text-muted">{toast.body}</div>}
+            <div className="text-sm font-semibold">{toast.title}</div>
+            {toast.body && <div className="mt-1 break-words text-xs text-muted">{toast.body}</div>}
             {toast.action && (
               <button
                 type="button"
-                className="mt-1 text-[11px] font-semibold text-accent hover:underline"
+                className="mt-1 text-xs font-semibold text-fg underline decoration-line-strong underline-offset-2 hover:decoration-fg"
                 onClick={() => {
                   toast.action?.run();
                   dismiss(toast.id);
@@ -139,13 +139,8 @@ const ToastItem = memo(function ToastItem({ toast }: { toast: Toast }) {
           </div>
         </>
       )}
-      <button
-        type="button"
-        aria-label="Dismiss"
-        onClick={() => dismiss(toast.id)}
-        className="self-start rounded p-0.5 text-dim hover:text-fg"
-      >
-        <X size={12} />
+      <button type="button" aria-label="Dismiss" onClick={() => dismiss(toast.id)} className="self-start text-dim hover:text-fg">
+        <X className="icon-sm" />
       </button>
     </div>
   );

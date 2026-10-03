@@ -8,11 +8,12 @@ import { getServices } from "../../services";
 import { useToasts } from "../../state/toasts";
 import { Tooltip } from "./Tooltip";
 
+/** Wallet tag chip (YOU, DEV, SNIPER…). Only risk tags carry colour. */
 export function Tag({ tag, label, className }: { tag: WalletTag; label?: string; className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex h-4 shrink-0 items-center rounded border px-1 text-[9px] font-semibold leading-none tracking-wide",
+        "inline-flex h-4 shrink-0 items-center rounded-sm border px-1 text-2xs font-semibold tracking-wide",
         TAG_STYLE[tag],
         className,
       )}
@@ -24,22 +25,22 @@ export function Tag({ tag, label, className }: { tag: WalletTag; label?: string;
 
 export function Pill({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
   return (
-    <span title={title} className={cn("inline-flex h-5 items-center gap-1 rounded-full border px-2 text-[10px] font-medium", className)}>
+    <span title={title} className={cn("inline-flex h-5 items-center gap-1 rounded-full border px-2 text-2xs font-medium", className)}>
       {children}
     </span>
   );
 }
 
-export function ProgressBar({ value, className, color = "bg-accent" }: { value: number; className?: string; color?: string }) {
+export function ProgressBar({ value, className, color = "bg-muted" }: { value: number; className?: string; color?: string }) {
   const pct = Math.max(0, Math.min(100, value * 100));
   return (
     <div className={cn("h-1 w-full overflow-hidden rounded-full bg-elev", className)}>
-      <div className={cn("h-full rounded-full transition-[width] duration-300", color)} style={{ width: `${pct}%` }} />
+      <div className={cn("h-full rounded-full transition-[width]", color)} style={{ width: `${pct}%` }} />
     </div>
   );
 }
 
-/** Metric label with its published definition on hover. */
+/** Metric label with its published definition on hover (SPEC "Token metric definitions"). */
 export function MetricLabel({ metric, children, className }: { metric: MetricKey; children?: ReactNode; className?: string }) {
   const def = METRICS[metric];
   return (
@@ -47,21 +48,34 @@ export function MetricLabel({ metric, children, className }: { metric: MetricKey
       content={
         <span>
           <span className="font-semibold">{def.label}</span>
-          <span className="mt-0.5 block text-muted">{def.definition}</span>
+          <span className="mt-1 block text-muted">{def.definition}</span>
         </span>
       }
     >
-      <span className={cn("cursor-help border-b border-dotted border-line-strong", className)}>{children ?? def.label}</span>
+      <span className={cn("cursor-help underline decoration-line-strong decoration-dotted underline-offset-2", className)}>
+        {children ?? def.label}
+      </span>
     </Tooltip>
   );
 }
 
-export function EmptyState({ icon, title, body, action }: { icon?: ReactNode; title: string; body?: ReactNode; action?: ReactNode }) {
+/** One short muted line; an action may follow. No hero layout, no illustration. */
+export function EmptyState({
+  title,
+  body,
+  action,
+  className,
+}: {
+  icon?: ReactNode;
+  title: string;
+  body?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-      {icon && <div className="text-dim">{icon}</div>}
-      <div className="text-sm font-medium text-fg">{title}</div>
-      {body && <div className="max-w-sm text-xs text-muted">{body}</div>}
+    <div className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-4 text-sm text-dim", className)}>
+      <span className="text-muted">{title}</span>
+      {body && <span>{body}</span>}
       {action}
     </div>
   );
@@ -75,30 +89,39 @@ export function SolMark({ className }: { className?: string }) {
   );
 }
 
-/** "𝕏" glyph for X links; we don't ship third-party logos. */
+/** "𝕏" glyph for X links; third-party logos are not shipped. */
 export function XGlyph({ className }: { className?: string }) {
-  return <span className={cn("text-[11px] font-bold leading-none", className)}>𝕏</span>;
+  return <span className={cn("text-xs font-bold leading-none", className)}>𝕏</span>;
 }
 
 /**
  * Social links. With simulated data the handles are fictional, so clicking copies the link
  * instead of opening it (no network calls from the app).
  */
-export function SocialLinks({ socials, size = 12, className }: { socials: TokenSocials; size?: number; className?: string }) {
+export function SocialLinks({ socials, className }: { socials: TokenSocials; size?: number; className?: string }) {
   const items: { key: string; url: string; icon: ReactNode; label: string }[] = [];
   if (socials.x) {
-    const url = socials.x.includes("/status/") ? `https://x.com/${socials.x}` : `https://x.com/${socials.x}`;
-    items.push({ key: "x", url, icon: <XGlyph />, label: socials.x.includes("/status/") ? "Tweet" : `@${socials.x}` });
+    items.push({
+      key: "x",
+      url: `https://x.com/${socials.x}`,
+      icon: <XGlyph />,
+      label: socials.x.includes("/status/") ? "Tweet" : `@${socials.x}`,
+    });
   }
   if (socials.telegram) {
-    items.push({ key: "tg", url: `https://t.me/${socials.telegram}`, icon: <Send size={size - 1} />, label: `t.me/${socials.telegram}` });
+    items.push({
+      key: "tg",
+      url: `https://t.me/${socials.telegram}`,
+      icon: <Send className="icon-sm" />,
+      label: `t.me/${socials.telegram}`,
+    });
   }
   if (socials.website) {
-    items.push({ key: "web", url: `https://${socials.website}`, icon: <Globe size={size} />, label: socials.website });
+    items.push({ key: "web", url: `https://${socials.website}`, icon: <Globe className="icon-sm" />, label: socials.website });
   }
   if (items.length === 0) return null;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-dim", className)}>
+    <span className={cn("inline-flex items-center gap-1 text-dim", className)}>
       {items.map((it) => (
         <Tooltip key={it.key} content={`${it.label}${getServices().simulated ? " (simulated; click copies the link)" : ""}`}>
           <button
@@ -110,7 +133,7 @@ export function SocialLinks({ socials, size = 12, className }: { socials: TokenS
               void copyText(it.url);
               useToasts.getState().push({ kind: "info", title: "Link copied", body: it.url, ttl: 2000 });
             }}
-            className="inline-flex items-center hover:text-fg"
+            className="inline-flex size-4 items-center justify-center hover:text-fg"
           >
             {it.icon}
           </button>
@@ -134,11 +157,12 @@ export function ExplorerLink({ signature, className }: { signature: string; clas
       }}
       className={cn("inline-flex items-center text-dim hover:text-fg", className)}
     >
-      <ExternalLink size={12} />
+      <ExternalLink className="icon-sm" />
     </button>
   );
 }
 
+/** Hairline panel with a compact header (Kraken Pro module anatomy). */
 export function Section({
   title,
   extra,
@@ -152,8 +176,8 @@ export function Section({
 }) {
   return (
     <section className={cn("rounded-lg border border-line bg-panel", className)}>
-      <div className="flex h-9 items-center justify-between border-b border-line px-3">
-        <div className="text-xs font-semibold text-fg">{title}</div>
+      <div className="flex h-8 items-center justify-between border-b border-line px-3">
+        <div className="text-sm font-semibold text-fg">{title}</div>
         {extra}
       </div>
       <div>{children}</div>

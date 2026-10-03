@@ -30,8 +30,8 @@ export function getServices(): Services {
   const engine = new SimEngine(seedFromUrl());
   const connected = fakeAddress(engine.rng);
   const wallets = [
-    { id: "tw-main", label: "Main", address: fakeAddress(engine.rng), sol: 10 },
-    { id: "tw-sniper", label: "Sniper", address: fakeAddress(engine.rng), sol: 2.5 },
+    { id: "tw-main", label: "Main", address: fakeAddress(engine.rng), sol: 11.4826 },
+    { id: "tw-sniper", label: "Sniper", address: fakeAddress(engine.rng), sol: 2.0391 },
   ];
   engine.seedWorld(wallets.map((w, i) => ({ address: w.address, sol: w.sol, demo: i === 0 })));
   engine.start();

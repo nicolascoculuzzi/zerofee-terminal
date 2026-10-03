@@ -192,18 +192,19 @@ export function token2022Danger(flags: Token2022Flags | null): string[] {
   return out;
 }
 
-export const LAUNCHPADS: { id: Launchpad; label: string; short: string; color: string }[] = [
-  { id: "pump", label: "Pump", short: "P", color: "#3ddc97" },
-  { id: "mayhem", label: "Mayhem", short: "M", color: "#ff5d8f" },
-  { id: "bonk", label: "Bonk", short: "B", color: "#f7a531" },
-  { id: "bags", label: "Bags", short: "Bg", color: "#2bb3ff" },
-  { id: "stonkfun", label: "StonkFun", short: "S", color: "#b388ff" },
-  { id: "launchlab", label: "Raydium LaunchLab", short: "R", color: "#7c8cff" },
-  { id: "meteora_dbc", label: "Meteora DBC", short: "Mt", color: "#ff7a45" },
-  { id: "moonit", label: "Moonit", short: "Mo", color: "#ffd84d" },
-  { id: "boop", label: "Boop", short: "Bp", color: "#4dd2ff" },
-  { id: "heaven", label: "Heaven", short: "H", color: "#e6e6e6" },
-  { id: "other", label: "Other", short: "?", color: "#8a93a3" },
+/** Launchpads in the Pulse "Protocols" filter. Badges are monochrome: colour is reserved for meaning. */
+export const LAUNCHPADS: { id: Launchpad; label: string; short: string }[] = [
+  { id: "pump", label: "Pump", short: "P" },
+  { id: "mayhem", label: "Mayhem", short: "M" },
+  { id: "bonk", label: "Bonk", short: "B" },
+  { id: "bags", label: "Bags", short: "Bg" },
+  { id: "stonkfun", label: "StonkFun", short: "S" },
+  { id: "launchlab", label: "Raydium LaunchLab", short: "R" },
+  { id: "meteora_dbc", label: "Meteora DBC", short: "Mt" },
+  { id: "moonit", label: "Moonit", short: "Mo" },
+  { id: "boop", label: "Boop", short: "Bp" },
+  { id: "heaven", label: "Heaven", short: "H" },
+  { id: "other", label: "Other", short: "?" },
 ];
 
 export const LAUNCHPAD_BY_ID = Object.fromEntries(LAUNCHPADS.map((l) => [l.id, l])) as Record<Launchpad, (typeof LAUNCHPADS)[number]>;
@@ -234,16 +235,17 @@ export const TAG_LABEL: Record<WalletTag, string> = {
   pool: "POOL",
 };
 
+/** Only risk tags are coloured (dev = medium, sniper/insider/bundler = high); the rest stay neutral. */
 export const TAG_STYLE: Record<WalletTag, string> = {
-  you: "bg-accent/15 text-accent border-accent/30",
-  dev: "bg-warn/15 text-warn border-warn/30",
+  you: "bg-fg/10 text-fg border-fg/25",
+  dev: "bg-warn/10 text-warn border-warn/25",
   sniper: "bg-sell/10 text-sell border-sell/25",
   insider: "bg-sell/10 text-sell border-sell/25",
   bundler: "bg-sell/10 text-sell border-sell/25",
-  pro: "bg-info/10 text-info border-info/25",
-  whale: "bg-info/10 text-info border-info/25",
-  tracked: "bg-violet/15 text-violet border-violet/30",
-  kol: "bg-violet/15 text-violet border-violet/30",
-  curve: "bg-elev text-muted border-line",
-  pool: "bg-elev text-muted border-line",
+  pro: "bg-elev text-muted border-line-strong",
+  whale: "bg-elev text-muted border-line-strong",
+  tracked: "bg-elev text-fg border-line-strong",
+  kol: "bg-elev text-muted border-line-strong",
+  curve: "bg-elev text-dim border-line",
+  pool: "bg-elev text-dim border-line",
 };

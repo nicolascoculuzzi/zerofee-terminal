@@ -19,7 +19,7 @@ export function HotkeysHelp() {
       title="Keyboard shortcuts"
       width={560}
       footer={
-        <div className="flex items-center justify-between text-[11px] text-dim">
+        <div className="flex items-center justify-between text-xs text-dim">
           <span>
             Trade hotkeys are {tradeHotkeys ? "on" : "off"}. Hold Space, then press the key. Buys target the hovered Pulse card or the open
             token.
@@ -40,10 +40,10 @@ export function HotkeysHelp() {
       <div className="grid gap-4 sm:grid-cols-2">
         {groups.map((g) => (
           <div key={g} className={g === "Trading" ? "sm:row-span-2" : ""}>
-            <div className="zf-label mb-1.5">{g}</div>
+            <div className="zf-label mb-2">{g}</div>
             <div className="space-y-1">
               {HOTKEY_ACTIONS.filter((a) => a.group === g).map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2 text-xs">
+                <div key={a.id} className="flex items-center justify-between gap-2 text-sm">
                   <span className="text-muted">{a.label}</span>
                   <span className="flex gap-1">
                     {(hotkeys[a.id] ?? []).map((b) => (

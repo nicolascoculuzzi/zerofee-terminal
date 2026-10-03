@@ -40,9 +40,9 @@ function FundFromConnected({ address }: { address: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between rounded-md bg-panel-2 px-3 py-2 text-xs">
-        <span className="flex items-center gap-1.5 text-muted">
-          <Wallet size={13} /> <span className="capitalize">{connected?.provider ?? "Wallet"}</span>{" "}
+      <div className="flex items-center justify-between rounded-md bg-panel-2 px-3 py-2 text-sm">
+        <span className="flex items-center gap-1 text-muted">
+          <Wallet className="icon-md" /> <span className="capitalize">{connected?.provider ?? "Wallet"}</span>{" "}
           <span className="font-mono">{connected ? shortAddr(connected.address) : ""}</span>
         </span>
         <span className="font-semibold">◎ {connectedSol === null ? "…" : fmtSol(connectedSol)}</span>
@@ -63,7 +63,7 @@ function FundFromConnected({ address }: { address: string }) {
           Max
         </Button>
       </div>
-      <p className="text-[11px] text-dim">
+      <p className="text-xs text-dim">
         One approval in your connected wallet moves SOL into the trading wallet. Keep only what you're willing to lose in it.
       </p>
       <Button variant="primary" size="lg" className="w-full" disabled={busy || !amount} onClick={() => void submit()}>
@@ -77,21 +77,21 @@ function Deposit({ address }: { address: string }) {
   return (
     <div className="space-y-3">
       <div className="flex gap-3">
-        <div className="flex h-28 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-line-strong text-center text-[10px] text-dim">
-          <QrCode size={28} />
+        <div className="flex h-28 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-line-strong text-center text-2xs text-dim">
+          <QrCode className="icon-lg" />
           QR code
           <br />
           (with real wallet)
         </div>
-        <div className="min-w-0 space-y-1.5">
+        <div className="min-w-0 space-y-2">
           <div className="zf-label">Trading wallet address</div>
-          <div className="flex items-start gap-1 break-all rounded-md bg-panel-2 p-2 font-mono text-[11px]">
+          <div className="flex items-start gap-1 break-all rounded-md bg-panel-2 p-2 font-mono text-xs">
             {address}
             <CopyButton text={address} label="Copy address" />
           </div>
         </div>
       </div>
-      <ul className="list-disc space-y-1 pl-4 text-[11px] text-muted">
+      <ul className="list-disc space-y-1 pl-4 text-xs text-muted">
         <li>Send only SOL on Solana mainnet to this address (for example from an exchange withdrawal).</li>
         <li>The balance updates when the transfer lands; no memo is needed.</li>
       </ul>
@@ -140,7 +140,7 @@ function Withdraw({ address }: { address: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between text-xs text-muted">
+      <div className="flex justify-between text-sm text-muted">
         <span>Available</span>
         <span className="text-fg">
           ◎ {fmtSol(available)} {reserved > 0 && <span className="text-dim">({fmtSol(reserved)} reserved by armed orders)</span>}
@@ -150,7 +150,7 @@ function Withdraw({ address }: { address: string }) {
         value={amount}
         onChange={setAmount}
         suffix={
-          <button type="button" className="text-accent" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
+          <button type="button" className="font-semibold text-fg" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
             Max
           </button>
         }
@@ -165,8 +165,8 @@ function Withdraw({ address }: { address: string }) {
           type="button"
           onClick={() => setDest("connected")}
           className={cn(
-            "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-xs",
-            dest === "connected" ? "border-accent/50 bg-accent/5" : "border-line hover:bg-hover",
+            "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm",
+            dest === "connected" ? "border-fg/40 bg-hover" : "border-line hover:bg-hover",
           )}
         >
           <span>
@@ -183,8 +183,8 @@ function Withdraw({ address }: { address: string }) {
               disabled={pending}
               onClick={() => setDest(d.id)}
               className={cn(
-                "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-xs disabled:opacity-60",
-                dest === d.id ? "border-accent/50 bg-accent/5" : "border-line hover:bg-hover",
+                "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm disabled:opacity-60",
+                dest === d.id ? "border-fg/40 bg-hover" : "border-line hover:bg-hover",
               )}
             >
               <span>
@@ -192,7 +192,7 @@ function Withdraw({ address }: { address: string }) {
               </span>
               {pending ? (
                 <span className="flex items-center gap-1 text-warn">
-                  <Clock size={11} /> active in {Math.ceil((d.activeAt - Date.now()) / 3_600_000)} h
+                  <Clock className="icon-sm" /> active in {Math.ceil((d.activeAt - Date.now()) / 3_600_000)} h
                 </span>
               ) : (
                 <span className="text-muted">Verified</span>
@@ -200,7 +200,11 @@ function Withdraw({ address }: { address: string }) {
             </button>
           );
         })}
-        <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => openSettings("withdrawals")}>
+        <button
+          type="button"
+          className="text-xs text-muted underline decoration-line-strong underline-offset-2 hover:text-fg"
+          onClick={() => openSettings("withdrawals")}
+        >
           Manage destinations (new ones need a wallet signature + 24 h delay)
         </button>
       </div>
@@ -221,7 +225,7 @@ export function FundModal() {
   return (
     <Modal open={open} onClose={close} title={`Trading wallet${label ? ` · ${label}` : ""}`} width={440}>
       {!address ? (
-        <div className="text-xs text-muted">Create a trading wallet first.</div>
+        <div className="text-sm text-muted">Create a trading wallet first.</div>
       ) : (
         <div className="space-y-4">
           <Segmented<FundTab>
@@ -233,7 +237,7 @@ export function FundModal() {
                 value: "fund",
                 label: (
                   <span className="flex items-center justify-center gap-1">
-                    <Wallet size={11} /> From wallet
+                    <Wallet className="icon-sm" /> From wallet
                   </span>
                 ),
               },
@@ -241,7 +245,7 @@ export function FundModal() {
                 value: "deposit",
                 label: (
                   <span className="flex items-center justify-center gap-1">
-                    <ArrowDownToLine size={11} /> Deposit
+                    <ArrowDownToLine className="icon-sm" /> Deposit
                   </span>
                 ),
               },
@@ -249,12 +253,11 @@ export function FundModal() {
                 value: "withdraw",
                 label: (
                   <span className="flex items-center justify-center gap-1">
-                    <ArrowUpFromLine size={11} /> Withdraw
+                    <ArrowUpFromLine className="icon-sm" /> Withdraw
                   </span>
                 ),
               },
             ]}
-            tone={() => "accent"}
           />
           {tab === "fund" && <FundFromConnected address={address} />}
           {tab === "deposit" && <Deposit address={address} />}

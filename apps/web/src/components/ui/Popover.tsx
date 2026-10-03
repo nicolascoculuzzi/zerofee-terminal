@@ -10,10 +10,15 @@ export interface PopoverProps {
   children: ReactNode;
   align?: "start" | "end";
   className?: string;
+  /** Width in px (layout constraint). */
   width?: number;
 }
 
-/** Anchored panel in a portal; closes on outside click or Escape. */
+/**
+ * Anchored menu/panel in a portal; closes on outside click or Escape. Flat elevated surface
+ * with a strong hairline, like Coinbase Advanced's timeframe menu
+ * (https://mobbin.com/screens/efd4eda6-5b2e-46b1-befb-20a18b06dff2).
+ */
 export function Popover({ open, onClose, anchor, children, align = "start", className, width }: PopoverProps) {
   const panel = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -32,9 +37,9 @@ export function Popover({ open, onClose, anchor, children, align = "start", clas
       const w = p?.width ?? width ?? 240;
       const h = p?.height ?? 200;
       let left = align === "end" ? a.right - w : a.left;
-      left = Math.min(window.innerWidth - w - 6, Math.max(6, left));
+      left = Math.min(window.innerWidth - w - 8, Math.max(8, left));
       let top = a.bottom + 4;
-      if (top + h > window.innerHeight - 6) top = Math.max(6, a.top - h - 4);
+      if (top + h > window.innerHeight - 8) top = Math.max(8, a.top - h - 4);
       setPos({ left, top });
     };
     place();
@@ -66,7 +71,7 @@ export function Popover({ open, onClose, anchor, children, align = "start", clas
     <div
       ref={panel}
       style={{ left: pos?.left ?? -9999, top: pos?.top ?? -9999, width }}
-      className={cn("fixed z-[150] rounded-lg border border-line-strong bg-panel p-2 shadow-pop", className)}
+      className={cn("fixed z-[150] rounded-lg border border-line-strong bg-elev p-2", className)}
     >
       {children}
     </div>,

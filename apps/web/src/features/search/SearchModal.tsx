@@ -42,23 +42,23 @@ function TokenRow({
       onClick={onOpen}
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
       onPointerMove={onHover}
-      className={cn("flex cursor-pointer items-center gap-2.5 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
+      className={cn("flex cursor-pointer items-center gap-2 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
     >
-      <TokenAvatar mint={token.mint} symbol={token.symbol} imageUri={token.imageUri} launchpad={token.launchpad} size={34} />
+      <TokenAvatar mint={token.mint} symbol={token.symbol} imageUri={token.imageUri} launchpad={token.launchpad} size="md" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[13px] font-semibold">{token.symbol}</span>
-          <span className="truncate text-xs text-dim">{token.name}</span>
-          {watched && <Star size={11} className="fill-warn text-warn" />}
-          <CopyButton text={token.mint} label="Copy contract address" size={11} />
+        <div className="flex items-center gap-1">
+          <span className="text-base font-semibold">{token.symbol}</span>
+          <span className="truncate text-sm text-dim">{token.name}</span>
+          {watched && <Star className="icon-sm fill-fg text-fg" />}
+          <CopyButton text={token.mint} label="Copy contract address" />
         </div>
-        <div className="flex items-center gap-2 text-[11px]">
+        <div className="flex items-center gap-2 text-xs">
           <span className="text-buy">{fmtAge(token.createdAt, now)}</span>
           <span className="font-mono text-dim">{shortAddr(token.mint, 4, 4)}</span>
-          <SocialLinks socials={token.socials} size={11} />
+          <SocialLinks socials={token.socials} />
         </div>
       </div>
-      <div className="hidden w-[150px] grid-cols-3 gap-2 text-right text-[11px] sm:grid">
+      <div className="hidden w-[150px] grid-cols-3 gap-2 text-right text-xs sm:grid">
         <span>
           <span className="block text-dim">MC</span>
           <span className="font-semibold">{fmtUsd(token.marketCapUsd)}</span>
@@ -78,10 +78,10 @@ function TokenRow({
           e.stopPropagation();
           void buy({ mint: token.mint, sol: quickBuy, source: "search" });
         }}
-        className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-accent/15 px-2 text-[11px] font-semibold text-accent hover:bg-accent/25"
+        className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-buy/10 px-2 text-xs font-semibold text-buy hover:bg-buy/20"
         aria-label={`Quick buy ${fmtSol(quickBuy)} SOL of ${token.symbol}`}
       >
-        <Zap size={11} /> {fmtSol(quickBuy)}
+        <Zap className="icon-sm" /> {fmtSol(quickBuy)}
       </button>
     </div>
   );
@@ -108,21 +108,21 @@ function WalletRow({
       onClick={onOpen}
       onKeyDown={(e) => e.key === "Enter" && onOpen()}
       onPointerMove={onHover}
-      className={cn("flex cursor-pointer items-center gap-2.5 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
+      className={cn("flex cursor-pointer items-center gap-2 px-3 py-2", active ? "bg-hover" : "hover:bg-hover/60")}
     >
       <span className="flex h-[34px] w-[34px] items-center justify-center rounded-md bg-elev text-muted">
-        <Wallet size={15} />
+        <Wallet className="icon-lg" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="font-mono text-xs">{shortAddr(wallet.address, 6, 6)}</span>
-          {wallet.label && <span className="truncate text-xs text-muted">{wallet.label}</span>}
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-sm">{shortAddr(wallet.address, 6, 6)}</span>
+          {wallet.label && <span className="truncate text-sm text-muted">{wallet.label}</span>}
           {wallet.tags.map((t) => (
             <Tag key={t} tag={t} />
           ))}
-          <CopyButton text={wallet.address} label="Copy address" size={11} />
+          <CopyButton text={wallet.address} label="Copy address" />
         </div>
-        <div className="text-[11px] text-dim">
+        <div className="text-xs text-dim">
           Wallet · {wallet.holdings} live token{wallet.holdings === 1 ? "" : "s"} held
         </div>
       </div>
@@ -135,9 +135,9 @@ function WalletRow({
               useToasts.getState().push({ kind: "success", title: "Wallet tracked", body: shortAddr(wallet.address, 6, 6), ttl: 2000 });
             }
           }}
-          className="flex h-6 items-center gap-1 rounded-full border border-line px-2 text-[11px] text-muted hover:text-fg"
+          className="flex h-6 items-center gap-1 rounded-full border border-line px-2 text-xs text-muted hover:text-fg"
         >
-          <UserPlus size={11} /> Track
+          <UserPlus className="icon-sm" /> Track
         </button>
       )}
     </div>
@@ -238,10 +238,10 @@ export function SearchModal() {
   return (
     <Modal open={open} onClose={() => setOpen(false)} bare width={660} label="Search">
       <div className="flex h-12 items-center gap-2 border-b border-line px-3">
-        <Search size={15} className="text-dim" />
+        <Search className="icon-lg text-dim" />
         <input
           data-autofocus
-          className="h-full flex-1 bg-transparent text-sm outline-none placeholder:text-dim"
+          className="h-full flex-1 bg-transparent text-md outline-none placeholder:text-dim"
           placeholder="Search by name, ticker, contract address or wallet…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -250,7 +250,7 @@ export function SearchModal() {
         />
         {query && (
           <button type="button" aria-label="Clear" onClick={() => setQuery("")} className="text-dim hover:text-fg">
-            <X size={14} />
+            <X className="icon-md" />
           </button>
         )}
         <Kbd>Esc</Kbd>
@@ -258,11 +258,11 @@ export function SearchModal() {
       <div className="max-h-[60vh] overflow-y-auto py-1" role="listbox" aria-label="Results">
         {!query.trim() && recent.length > 0 && (
           <div className="px-3 pb-2 pt-1">
-            <div className="mb-1.5 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between">
               <span className="zf-label flex items-center gap-1">
-                <Clock size={10} /> Recent searches
+                <Clock className="icon-xs" /> Recent searches
               </span>
-              <button type="button" className="text-[10px] text-dim hover:text-fg" onClick={clearRecent}>
+              <button type="button" className="text-2xs text-dim hover:text-fg" onClick={clearRecent}>
                 Clear
               </button>
             </div>
@@ -272,7 +272,7 @@ export function SearchModal() {
                   key={r}
                   type="button"
                   onClick={() => setQuery(r)}
-                  className="max-w-[220px] truncate rounded-full border border-line px-2 py-0.5 text-[11px] text-muted hover:text-fg"
+                  className="max-w-[220px] truncate rounded-full border border-line px-2 py-px text-xs text-muted hover:text-fg"
                 >
                   {r}
                 </button>
@@ -299,13 +299,13 @@ export function SearchModal() {
           ),
         )}
         {query.trim() && items.length === 0 && (
-          <div className="px-3 py-8 text-center text-xs text-dim">No tokens or wallets match “{query}”.</div>
+          <div className="px-3 py-8 text-center text-sm text-dim">No tokens or wallets match “{query}”.</div>
         )}
         {!query.trim() && items.length === 0 && recent.length === 0 && (
-          <div className="px-3 py-8 text-center text-xs text-dim">Type a name, $ticker, contract address or wallet address.</div>
+          <div className="px-3 py-8 text-center text-sm text-dim">Type a name, $ticker, contract address or wallet address.</div>
         )}
       </div>
-      <div className="flex items-center gap-3 border-t border-line px-3 py-1.5 text-[10px] text-dim">
+      <div className="flex items-center gap-3 border-t border-line px-3 py-1 text-2xs text-dim">
         <span className="flex items-center gap-1">
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd> navigate

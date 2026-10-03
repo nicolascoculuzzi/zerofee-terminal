@@ -10,7 +10,10 @@ const ITEMS = [
   { to: "/orders", label: "Orders", icon: ListChecks },
 ] as const;
 
-/** Bottom tab bar for narrow screens (PWA-style). */
+/*
+ * Bottom tab bar for narrow screens (PWA layout), after Phantom's five-icon tab bar:
+ * https://mobbin.com/screens/76e93b20-0652-4758-8e2d-4925312a1fba
+ */
 export function MobileNav() {
   return (
     <nav
@@ -22,10 +25,13 @@ export function MobileNav() {
           key={to}
           to={to}
           className={({ isActive }) =>
-            cn("flex flex-col items-center justify-center gap-0.5 text-[10px]", isActive ? "text-accent" : "text-muted")
+            cn(
+              "flex flex-col items-center justify-center gap-1 border-t-2 text-2xs",
+              isActive ? "border-accent text-fg" : "border-transparent text-muted",
+            )
           }
         >
-          <Icon size={18} />
+          <Icon className="icon-lg" />
           {label}
         </NavLink>
       ))}
