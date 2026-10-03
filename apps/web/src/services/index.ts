@@ -18,7 +18,8 @@ export interface Services {
   defaults: { trackedWallets: DefaultTrackedWallet[] };
 }
 
-let instance: Services | null = null;
+/** Kept on globalThis so hot module reloads in dev reuse the running simulation instead of forking a second one. */
+const holder = globalThis as { __zerofeeServices?: Services };
 
 /**
  * Service container. Today it always builds the mock stack. When the gateway, trade engine
@@ -26,7 +27,7 @@ let instance: Services | null = null;
  * here instead (e.g. keyed on `import.meta.env.VITE_GATEWAY_URL`). Nothing else changes.
  */
 export function getServices(): Services {
-  if (instance) return instance;
+  if (holder.__zerofeeServices) return holder.__zerofeeServices;
   const engine = new SimEngine(seedFromUrl());
   const connected = fakeAddress(engine.rng);
   const wallets = [
@@ -35,12 +36,13 @@ export function getServices(): Services {
   ];
   engine.seedWorld(wallets.map((w, i) => ({ address: w.address, sol: w.sol, demo: i === 0 })));
   engine.start();
-  instance = {
+  const instance: Services = {
     data: new MockDataSource(engine),
     trade: new MockTradeService(engine),
     wallet: new MockWalletService(engine, { connected, wallets }),
     simulated: true,
     defaults: { trackedWallets: engine.defaultTracked },
   };
+  holder.__zerofeeServices = instance;
   return instance;
 }

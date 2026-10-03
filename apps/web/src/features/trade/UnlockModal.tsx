@@ -63,7 +63,7 @@ export function UnlockModal() {
         <div className="flex items-start gap-2 rounded-md bg-panel-2 p-3 text-sm text-muted">
           <Lock className="icon-md mt-1 shrink-0 text-warn" />
           <span>
-            {unlock.reason || "Your keystore is locked."} The key is decrypted in this browser only and locks again after{" "}
+            {unlock.reason || "Your keystore is locked"}. The key is decrypted in this browser only and locks again after{" "}
             {autoLock > 0 ? `${autoLock} min idle` : "you lock it"}.
           </span>
         </div>

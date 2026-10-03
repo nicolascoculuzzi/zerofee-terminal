@@ -56,6 +56,22 @@ function formatter(mode: ChartMode, currency: ChartCurrency, supply: number) {
   return (v: number) => (mode === "mc" ? `${prefix}${fmtCompact(v)}${suffix}` : `${prefix}${fmtSmall(v / supply, 4)}${suffix}`);
 }
 
+/** Short marker label so clustered tracked-wallet trades stay readable ("Sniper Sam" → "SS"). */
+function initials(name: string): string {
+  const words = name
+    .replace(/[^\p{L}\p{N} ]/gu, "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return "T";
+  if (words.length === 1) return (words[0] ?? "T").slice(0, 2).toUpperCase();
+  return words
+    .slice(0, 2)
+    .map((w) => w[0] ?? "")
+    .join("")
+    .toUpperCase();
+}
+
 interface Legend {
   o: number;
   h: number;
@@ -336,7 +352,7 @@ export function TokenChart({ mint, supply }: { mint: string; supply: number }) {
           position: buy ? "belowBar" : "aboveBar",
           shape: "circle",
           color: colors.warn,
-          text: buy ? "Dev buy" : "Dev sell",
+          text: "Dev",
         });
       } else {
         groups.set(key, {
@@ -344,7 +360,7 @@ export function TokenChart({ mint, supply }: { mint: string; supply: number }) {
           position: buy ? "belowBar" : "aboveBar",
           shape: "square",
           color: colors.fg,
-          text: trk?.name ?? "Tracked",
+          text: initials(trk?.name ?? "Tracked"),
         });
       }
       if (groups.size >= 160) break;

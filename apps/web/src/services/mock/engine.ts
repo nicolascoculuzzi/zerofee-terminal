@@ -2488,7 +2488,7 @@ export class SimEngine {
         for (const t of this.tokens.values()) if ((t.holders.get(address)?.bal ?? 0) > 0) holdings++;
         wallets.push({ address, label, tags, holdings });
       };
-      for (const w of this.defaultTracked) consider(w.address, `${w.emoji} ${w.name}`, ["tracked"]);
+      for (const w of this.defaultTracked) consider(w.address, w.name, ["tracked"]);
       for (const u of this.users.keys()) consider(u, "Your trading wallet", ["you"]);
       for (const w of this.wallets) {
         if (wallets.length >= 6) break;

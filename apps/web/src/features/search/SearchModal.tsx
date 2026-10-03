@@ -6,7 +6,7 @@ import { CopyButton, Kbd } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { cn } from "../../lib/cn";
-import { fmtAge, fmtSol, fmtUsd, shortAddr } from "../../lib/format";
+import { fmtAge, fmtSolShort, fmtUsd, shortAddr } from "../../lib/format";
 import { buy } from "../../lib/tradeActions";
 import { useNow } from "../../lib/useNow";
 import type { SearchResults, TokenSummary, WalletSearchHit } from "../../protocol";
@@ -79,9 +79,9 @@ function TokenRow({
           void buy({ mint: token.mint, sol: quickBuy, source: "search" });
         }}
         className="flex h-6 shrink-0 items-center gap-1 rounded-full bg-buy/10 px-2 text-xs font-semibold text-buy hover:bg-buy/20"
-        aria-label={`Quick buy ${fmtSol(quickBuy)} SOL of ${token.symbol}`}
+        aria-label={`Quick buy ${fmtSolShort(quickBuy)} SOL of ${token.symbol}`}
       >
-        <Zap className="icon-sm" /> {fmtSol(quickBuy)}
+        <Zap className="icon-sm" /> {fmtSolShort(quickBuy)}
       </button>
     </div>
   );

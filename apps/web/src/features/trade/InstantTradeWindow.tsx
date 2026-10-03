@@ -117,7 +117,7 @@ export function InstantTradeWindow() {
     const start =
       instant.x >= 0 && instant.y >= 0
         ? { x: instant.x, y: instant.y }
-        : { x: window.innerWidth - WIDTH - 24, y: window.innerHeight - h - 48 };
+        : { x: window.innerWidth - WIDTH - 344, y: window.innerHeight - h - 48 };
     setPos(clampPos(start.x, start.y, h));
     const onResize = () => setPos((p) => (p ? clampPos(p.x, p.y, panelRef.current?.offsetHeight ?? h) : p));
     window.addEventListener("resize", onResize);

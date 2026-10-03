@@ -14,8 +14,9 @@ function subscript(n: number): string {
 export function fmtSmall(n: number, sig = 4): string {
   if (!Number.isFinite(n)) return "—";
   if (n === 0) return "0";
-  const abs = Math.abs(n);
   const sign = n < 0 ? "-" : "";
+  // Branch on the rounded value so 0.00099996 prints as "0.001", not "0.0₂1".
+  const abs = Number(Math.abs(n).toPrecision(sig));
   if (abs >= 1) return sign + trimZeros(abs.toFixed(abs >= 100 ? 2 : abs >= 10 ? 3 : 4));
   if (abs >= 0.001) return sign + trimZeros(abs.toPrecision(sig));
   // "0.0₅1234" = 0.000001234: the subscript counts the zeros after the decimal point.
