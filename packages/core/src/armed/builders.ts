@@ -79,6 +79,9 @@ export interface TradeTemplate {
     market: Address;
     feeRecipient: Address;
     buybackFeeRecipient: Address;
+    /** Coin flags that shape the account list (fee recipient list, PumpSwap remaining accounts). */
+    isMayhemMode?: boolean;
+    isCashbackCoin?: boolean;
   };
   defaultCuLimit: number;
 }
@@ -108,6 +111,7 @@ export async function pumpBuyTemplate(ctx: PumpTradeContext, order: { spend: big
       market: a.bondingCurve,
       feeRecipient: a.feeRecipient,
       buybackFeeRecipient: a.buybackFeeRecipient,
+      isMayhemMode: ctx.curve.isMayhemMode,
     },
     defaultCuLimit: DEFAULT_CU_LIMITS.pumpBuy,
   };
@@ -141,6 +145,7 @@ export async function pumpSellTemplate(
       market: a.bondingCurve,
       feeRecipient: a.feeRecipient,
       buybackFeeRecipient: a.buybackFeeRecipient,
+      isMayhemMode: ctx.curve.isMayhemMode,
     },
     defaultCuLimit: DEFAULT_CU_LIMITS.pumpSell,
   };
@@ -190,6 +195,8 @@ export async function ammBuyTemplate(
       market: ctx.poolAddress,
       feeRecipient: a.protocolFeeRecipient,
       buybackFeeRecipient: a.buybackFeeRecipient,
+      isMayhemMode: ctx.pool.isMayhemMode,
+      isCashbackCoin: ctx.pool.isCashbackCoin,
     },
     defaultCuLimit: DEFAULT_CU_LIMITS.ammBuy,
   };
@@ -220,6 +227,8 @@ export async function ammSellTemplate(
       market: ctx.poolAddress,
       feeRecipient: a.protocolFeeRecipient,
       buybackFeeRecipient: a.buybackFeeRecipient,
+      isMayhemMode: ctx.pool.isMayhemMode,
+      isCashbackCoin: ctx.pool.isCashbackCoin,
     },
     defaultCuLimit: DEFAULT_CU_LIMITS.ammSell,
   };
@@ -284,7 +293,7 @@ export interface ArmedOrderSpec {
   armingQuoteOut: bigint;
   /** Required on every order that shares a nonce with another. */
   ocoGroup?: string;
-  /** Defaults to the first template's static CU limit. */
+  /** Overrides every template's static CU limit (default: each venue's own DEFAULT_CU_LIMITS entry). */
   cuLimit?: number;
   /** Default true: armed orders go Jito bundle-only with the anti-sandwich marker. */
   jitoDontFront?: boolean;
@@ -406,6 +415,16 @@ export async function armOrders(specs: readonly ArmedOrderSpec[], signer: Transa
     if (users.some((u) => u.nonce.value !== users[0]?.nonce.value))
       throw new ArmingError(`nonce ${account} has two different values in one batch`);
   }
+  // An OCO group only means something if its orders really share a nonce (all of them, one common nonce).
+  const groups = new Map<string, ArmedOrderSpec[]>();
+  for (const spec of specs) if (spec.ocoGroup) groups.set(spec.ocoGroup, [...(groups.get(spec.ocoGroup) ?? []), spec]);
+  for (const [group, members] of groups) {
+    const common = members.reduce(
+      (acc, m) => new Set([...acc].filter((a) => m.nonces.some((n) => n.account === a))),
+      new Set((members[0] as ArmedOrderSpec).nonces.map((n) => n.account)),
+    );
+    if (members.length > 1 && common.size === 0) throw new ArmingError(`OCO group ${group}: its orders share no nonce`);
+  }
 
   const unsigned: Transaction[] = [];
   const pendingPerSpec: PendingVariant[][] = [];
@@ -413,10 +432,11 @@ export async function armOrders(specs: readonly ArmedOrderSpec[], signer: Transa
   for (const spec of specs) {
     const levels = pinTips(spec.tipLevels, spec.tipAccounts);
     tipLevelsPerSpec.push(levels);
-    const cuLimit = spec.cuLimit ?? spec.templates[0]?.defaultCuLimit ?? DEFAULT_CU_LIMITS.ammBuy;
     const pending: PendingVariant[] = [];
     for (const [attempt, nonce] of spec.nonces.entries()) {
       for (const template of spec.templates) {
+        // Each venue keeps its own static CU limit (running out of CU is a landed failure).
+        const cuLimit = spec.cuLimit ?? template.defaultCuLimit;
         for (const [minOutIndex, minOut] of spec.minOuts.entries()) {
           const instructions = await template.build(minOut);
           for (const level of levels) {
@@ -527,6 +547,8 @@ function frozenAccounts(spec: ArmedOrderSpec, levels: readonly TipLevel[]): Froz
       market: t.frozen.market,
       feeRecipient: t.frozen.feeRecipient,
       buybackFeeRecipient: t.frozen.buybackFeeRecipient,
+      ...(t.frozen.isMayhemMode !== undefined ? { isMayhemMode: t.frozen.isMayhemMode } : {}),
+      ...(t.frozen.isCashbackCoin !== undefined ? { isCashbackCoin: t.frozen.isCashbackCoin } : {}),
     })),
     tipAccounts: [...new Set(levels.flatMap((l) => l.tips.map((t) => t.tipAccount)).filter((a): a is Address => a !== undefined))],
     lookupTables: Object.keys(spec.lookupTables ?? {}) as Address[],

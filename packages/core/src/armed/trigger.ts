@@ -12,6 +12,7 @@ import type { PumpGlobal } from "../pump/accounts";
 import { CurveCompleteError, type CurveState, curveFeeRates, quoteBuyExactQuoteIn, quoteSell } from "../pump/curve";
 import type { AmmGlobalConfig, Pool } from "../pumpswap/accounts";
 import { type AmmReserves, ammFeeRates, quoteAmmBuyExactQuoteIn, quoteAmmSell } from "../pumpswap/math";
+import { ceilDiv } from "../util/math";
 import { type LookupTableState, lookupTableStatus } from "./alt";
 import type { ArmedMarketEvent } from "./events";
 import { changedInterfaces, interfacesForVenue } from "./interfaceVersion";
@@ -148,11 +149,18 @@ export function applyMarketEvent(order: Pick<ArmedOrder, "mint" | "trigger">, st
 /**
  * Highest high-water mark a trailing stop may follow: above it, the stop level would sit higher
  * than the tightest variant can fill with the safety margin, so the trail stops rising there
- * (the UI should prompt "re-arm higher").
+ * (the UI should prompt "re-arm higher"). Rounded UP at both steps so that the stop level of the
+ * capped trail is a quote at which the tightest variant is still pickable.
  */
 export function trailingHighWaterCap(maxMinOut: bigint, trailBps: number, safetyMarginBps: number): bigint {
   if (!Number.isInteger(trailBps) || trailBps <= 0 || trailBps >= 10_000) throw new RangeError(`trailBps out of range: ${trailBps}`);
-  return (maxMinOut * BPS * BPS) / ((BPS - BigInt(trailBps)) * (BPS - BigInt(safetyMarginBps)));
+  if (!Number.isInteger(safetyMarginBps) || safetyMarginBps < 0 || safetyMarginBps >= 10_000) {
+    throw new RangeError(`safetyMarginBps out of range: ${safetyMarginBps}`);
+  }
+  // Lowest live quote at which the tightest variant clears the margin...
+  const minQuote = ceilDiv(maxMinOut * BPS, BPS - BigInt(safetyMarginBps));
+  // ...and the lowest high-water mark whose stop level reaches it.
+  return ceilDiv(minQuote * BPS, BPS - BigInt(trailBps));
 }
 
 export interface TrailingView {
@@ -273,6 +281,7 @@ export type StaleReason =
   | "curve-missing"
   | "migrated"
   | "creator-changed"
+  | "coin-flags-changed"
   | "fee-recipient-rotated"
   | "buyback-recipient-rotated"
   | "nonce-missing"
@@ -291,12 +300,18 @@ export interface StaleFinding {
   detail: string;
 }
 
+/** Live coin facts that shape an account list. */
+interface CoinFlags {
+  isMayhemMode?: boolean;
+  isCashbackCoin?: boolean;
+}
+
 /** What the server currently observes; omit what it does not know. */
 export interface StalenessObservation {
-  /** Live bonding curve (null = account gone). */
-  curve?: { creator: Address; complete: boolean } | null;
+  /** Live bonding curve (null = account gone). Also checked for PumpSwap legs whose pool is not live yet. */
+  curve?: ({ creator: Address; complete: boolean } & CoinFlags) | null;
   /** Live pool (null = not created yet, expected before a migration). */
-  pool?: { coinCreator: Address } | null;
+  pool?: ({ coinCreator: Address } & CoinFlags) | null;
   /** Currently valid fee recipients per venue (pump: fee + reserved lists; pumpswap: protocol + reserved lists). */
   feeRecipients?: Partial<Record<ArmedVenue, readonly Address[]>>;
   buybackFeeRecipients?: Partial<Record<ArmedVenue, readonly Address[]>>;
@@ -312,11 +327,22 @@ export interface StalenessObservation {
   walletTokenBalance?: bigint;
 }
 
-/** Account-list changes that strand the order: creator change, migration, rotated recipients, ALT or nonce changes, IDL upgrades. */
+/**
+ * Account-list changes that strand the order: creator change, migration, rotated recipients, coin
+ * flags, ALT or nonce changes, IDL upgrades. Resolve which signature consumed a nonce
+ * (signaturesOnNonce) before acting on "nonce-advanced": it is only reported for LIVE attempts,
+ * since submitted and cancelling attempts are expected to advance.
+ */
 export function detectStaleness(order: ArmedOrder, obs: StalenessObservation): StaleFinding[] {
   const out: StaleFinding[] = [];
   const add = (reason: StaleReason, definitive: boolean, detail: string) => out.push({ reason, definitive, detail });
   const venues = new Set(order.frozen.venues.map((v) => v.venue));
+  const flagsChanged = (v: (typeof order.frozen.venues)[number], live: CoinFlags, where: string) => {
+    for (const k of ["isMayhemMode", "isCashbackCoin"] as const) {
+      if (v[k] !== undefined && live[k] !== undefined && v[k] !== live[k])
+        add("coin-flags-changed", true, `${where} ${k} ${v[k]} -> ${live[k]}`);
+    }
+  };
 
   for (const v of order.frozen.venues) {
     if (v.venue === "pump" && obs.curve !== undefined) {
@@ -325,10 +351,20 @@ export function detectStaleness(order: ArmedOrder, obs: StalenessObservation): S
         if (obs.curve.complete && !venues.has("pumpswap")) add("migrated", true, "curve completed and the order has no PumpSwap variants");
         if (obs.curve.creator !== v.creator)
           add("creator-changed", true, `curve creator ${v.creator} -> ${obs.curve.creator} (creator_vault moved)`);
+        flagsChanged(v, obs.curve, "curve");
       }
     }
-    if (v.venue === "pumpswap" && obs.pool && obs.pool.coinCreator !== v.creator) {
-      add("creator-changed", true, `pool coin_creator ${v.creator} -> ${obs.pool.coinCreator}`);
+    if (v.venue === "pumpswap") {
+      if (obs.pool) {
+        if (obs.pool.coinCreator !== v.creator) add("creator-changed", true, `pool coin_creator ${v.creator} -> ${obs.pool.coinCreator}`);
+        flagsChanged(v, obs.pool, "pool");
+      } else if (obs.curve) {
+        // Pool not live yet (migration snipe / graduation leg): migrate copies these from the curve.
+        if (obs.curve.creator !== v.creator) {
+          add("creator-changed", true, `curve creator ${v.creator} -> ${obs.curve.creator}: the canonical pool will copy the new one`);
+        }
+        flagsChanged(v, obs.curve, "curve (pre-migration)");
+      }
     }
     const fee = obs.feeRecipients?.[v.venue];
     if (fee && !fee.includes(v.feeRecipient))
@@ -346,7 +382,9 @@ export function detectStaleness(order: ArmedOrder, obs: StalenessObservation): S
       if (!live) add("nonce-missing", true, `nonce ${a.nonce.account} is gone`);
       else if (live.authority !== order.wallet)
         add("nonce-authority-changed", true, `nonce ${a.nonce.account} authority is ${live.authority}`);
-      else if (live.value !== a.nonce.value) add("nonce-advanced", true, `nonce ${a.nonce.account} advanced without a known signature`);
+      else if (live.value !== a.nonce.value && a.status === "live") {
+        add("nonce-advanced", true, `nonce ${a.nonce.account} advanced without a known signature`);
+      }
     }
   }
 

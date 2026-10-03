@@ -5,7 +5,8 @@
  * fact that settles everything is WHICH SIGNATURE CONSUMED A NONCE (`nonce-consumed`): a variant
  * of this order (filled, or landed-and-failed), the pre-signed cancel, or something else (an OCO
  * sibling or a foreign transaction). Dispatch every `nonce-consumed` to all orders bound to that
- * nonce (`signaturesOnNonce` helps resolve the signature).
+ * nonce (`signaturesOnNonce` helps resolve the signature). Events carry the nonce VALUE that was
+ * consumed, so a slot re-armed at a new value is never touched by events about an older generation.
  *
  *   armed --submitted--> submitted --nonce-consumed(own variant, ok)-----> filled
  *                                  --nonce-consumed(own variant, failed)-> failed-consumed
@@ -22,8 +23,19 @@ import { type ArmedAttempt, type ArmedOrder, isAttemptOpen, isTerminalStatus } f
 export type ArmedOrderEvent =
   /** The engine submitted `variantId` of attempt `attempt`. */
   | { type: "submitted"; attempt: number; variantId: string; slot?: bigint }
-  /** `nonce` advanced; `signature` is the transaction that advanced it (`success` = executed without error). */
-  | { type: "nonce-consumed"; nonce: Address; signature: string; success: boolean; slot?: bigint; bySiblingOrderId?: string }
+  /**
+   * `nonce` advanced away from `nonceValue` (the consuming tx's lifetime token); `signature` is the
+   * transaction that advanced it (`success` = executed without error).
+   */
+  | {
+      type: "nonce-consumed";
+      nonce: Address;
+      nonceValue: string;
+      signature: string;
+      success: boolean;
+      slot?: bigint;
+      bySiblingOrderId?: string;
+    }
   /** The submitted attempt did not land within the engine's window: burn the nonce. */
   | { type: "submit-missed"; attempt: number }
   /** User cancel, Panic, admin halt or expiry: fire every open cancel. */
@@ -78,7 +90,7 @@ const hasLive = (o: ArmedOrder) => o.attempts.some((a) => a.status === "live");
 const hasInFlight = (o: ArmedOrder) => o.attempts.some((a) => a.status === "submitted" || a.status === "cancelling");
 
 function onNonceConsumed(d: Draft, e: Extract<ArmedOrderEvent, { type: "nonce-consumed" }>): void {
-  const hit = d.order.attempts.filter((a) => a.nonce.account === e.nonce && isAttemptOpen(a));
+  const hit = d.order.attempts.filter((a) => a.nonce.account === e.nonce && a.nonce.value === e.nonceValue && isAttemptOpen(a));
   for (const attempt of hit) {
     const variant = attempt.variants.find((v) => v.tx.signature === e.signature);
     if (variant) {

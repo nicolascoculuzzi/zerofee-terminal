@@ -4,7 +4,19 @@
  * server-side verification of the signed bytes against the metadata.
  */
 import { describe, expect, test } from "bun:test";
-import type { Address, KeyPairSigner, Transaction, TransactionPartialSigner } from "@solana/kit";
+import {
+  type Address,
+  appendTransactionMessageInstructions,
+  compileTransaction,
+  compressTransactionMessageUsingAddressLookupTables,
+  createTransactionMessage,
+  type KeyPairSigner,
+  pipe,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingDurableNonce,
+  type Transaction,
+  type TransactionPartialSigner,
+} from "@solana/kit";
 import {
   type ArmedOrder,
   ArmedOrderRejected,
@@ -23,7 +35,9 @@ import {
   canonicalPoolPda,
   computeReservation,
   currentInterfaceVersion,
+  DEFAULT_CU_LIMITS,
   DEFAULT_MAX_ARMED_BUY_VARIANTS,
+  findAssociatedTokenAddress,
   hasCancelForEveryNonce,
   inspectArmedTransaction,
   JITO_TIP_ACCOUNTS_FALLBACK,
@@ -34,7 +48,12 @@ import {
   pumpBuyTemplate,
   pumpSellTemplate,
   SYSTEM_PROGRAM_ID,
+  setComputeUnitPriceInstruction,
+  signTransactionBatch,
+  TOKEN_PROGRAM_ID,
+  toSignedTx,
   verifyArmedOrderTransactions,
+  WSOL_MINT,
 } from "../src";
 import { armedWallet, curveContext, nonceRefs, operatorTables, poolContext, TIP_LEVELS } from "./armedTestKit";
 
@@ -390,5 +409,110 @@ describe("buy grids, canonical pools, snipes, dual venue", async () => {
   test("a signer that returns the wrong number of signature sets is rejected", async () => {
     const broken: TransactionPartialSigner = { address: wallet, signTransactions: async (_txs: readonly Transaction[]) => [] };
     await expect(armOrder(await buySpec(), broken)).rejects.toThrow("signature sets");
+  });
+});
+
+describe("verification binds the metadata to the signed bytes (accounts, full-exit guard, fees)", async () => {
+  const signer = await armedWallet();
+  const wallet = signer.address;
+  const curve = await curveContext(wallet);
+  const tables = await operatorTables();
+  const codes = async (o: ArmedOrder, withTables = true) =>
+    (await verifyArmedOrderTransactions(o, withTables ? { lookupTables: tables } : {})).map((x) => x.code);
+
+  test("full exit claimed but the signed sells do not close the base token account", async () => {
+    const partial = await armOrder(
+      { ...(await stopLossSpec(wallet)), fullExit: false, templates: [await pumpSellTemplate(curve, { amount: AMOUNT })] },
+      signer,
+    );
+    expect(await codes(partial)).toEqual([]);
+    expect(await codes({ ...partial, fullExit: true })).toContain("full-exit-guard-missing");
+  });
+
+  test("mint, market, creator, fee and buyback recipients must match the frozen facts", async () => {
+    const order = await armOrder(await stopLossSpec(wallet), signer);
+    expect(await codes(order)).toEqual([]);
+    const other = "Hy5oibb1cYdmjyPJ2fiypDtKYvp1uZTuPkmFzVy7TL8c" as Address;
+    type Venue = ArmedOrder["frozen"]["venues"][number];
+    const withVenue = (patch: Partial<Venue>): ArmedOrder => ({
+      ...order,
+      frozen: { ...order.frozen, venues: [{ ...(order.frozen.venues[0] as Venue), ...patch }] },
+    });
+    expect(await codes({ ...order, mint: other })).toContain("trade-mismatch");
+    for (const patch of [{ market: other }, { creator: other }, { feeRecipient: other }, { buybackFeeRecipient: other }]) {
+      expect(await codes(withVenue(patch))).toContain("account-mismatch");
+    }
+    expect(await codes({ ...order, frozen: { ...order.frozen, venues: [] } })).toContain("account-mismatch");
+    // Without the table contents the recipients loaded from it cannot be checked: say so.
+    expect(await codes(order, false)).toContain("unresolved-account");
+  });
+
+  test("each venue keeps its own CU limit in an exit that survives graduation", async () => {
+    const ctx = await migrationPoolContext({
+      mint: curve.mint,
+      curve: curve.curve,
+      baseTokenProgram: curve.baseTokenProgram,
+      user: wallet,
+    });
+    const order = await armOrder(
+      {
+        ...(await stopLossSpec(wallet)),
+        templates: [
+          await pumpSellTemplate(curve, { amount: AMOUNT, closeBaseAccount: true }),
+          await ammSellTemplate(ctx, { amount: AMOUNT, closeBaseAccount: true }),
+        ],
+        minOuts: [30_000_000n],
+        tipLevels: TIP_LEVELS.slice(0, 1),
+      },
+      signer,
+    );
+    const fee = (venue: string) => order.attempts[0]?.variants.find((v) => v.venue === venue)?.priorityFeeLamports;
+    const price = TIP_LEVELS[0]?.cuPriceMicroLamports ?? 0n;
+    expect(fee("pump")).toBe((price * BigInt(DEFAULT_CU_LIMITS.pumpSell) + 999_999n) / 1_000_000n);
+    expect(fee("pumpswap")).toBe((price * BigInt(DEFAULT_CU_LIMITS.ammSell) + 999_999n) / 1_000_000n);
+    expect(await codes(order)).toEqual([]);
+  });
+
+  test("cancels are held to the fee caps and may only tip known tip accounts", async () => {
+    const tip = JITO_TIP_ACCOUNTS_FALLBACK[0] as Address;
+    const pricey = await armOrder(
+      { ...(await stopLossSpec(wallet)), cancel: { tips: [{ lane: "jito", lamports: 20_000_000n, tipAccount: tip }] } },
+      signer,
+    );
+    expect(await codes(pricey)).toContain("tip-cap");
+    const wsol = await findAssociatedTokenAddress(wallet, WSOL_MINT, TOKEN_PROGRAM_ID);
+    const sneaky = await armOrder(
+      { ...(await stopLossSpec(wallet)), cancel: { tips: [{ lane: "jito", lamports: 1_000n, tipAccount: wsol }] } },
+      signer,
+    );
+    expect(await codes(sneaky)).toContain("transfer-not-allowed");
+  });
+
+  test("a CU price without a CU limit is charged on the default limit and refused", async () => {
+    const order = await armOrder({ ...(await stopLossSpec(wallet)), minOuts: [30_000_000n], tipLevels: TIP_LEVELS.slice(0, 1) }, signer);
+    const attempt = order.attempts[0];
+    const v = attempt?.variants[0];
+    if (!v || !attempt) throw new Error("fixture");
+    const ixs = await (await pumpSellTemplate(curve, { amount: AMOUNT, closeBaseAccount: true })).build(v.minOut);
+    const msg = pipe(
+      createTransactionMessage({ version: 0 }),
+      (m) => setTransactionMessageFeePayer(wallet, m),
+      (m) => appendTransactionMessageInstructions([setComputeUnitPriceInstruction(100_000n), ...ixs], m),
+      (m) =>
+        setTransactionMessageLifetimeUsingDurableNonce(
+          { nonce: attempt.nonce.value as never, nonceAccountAddress: attempt.nonce.account, nonceAuthorityAddress: wallet },
+          m,
+        ),
+      (m) => compressTransactionMessageUsingAddressLookupTables(m, tables),
+    );
+    const [signed] = await signTransactionBatch(signer, [compileTransaction(msg)]);
+    const forged = { ...v, tipLamports: 0n, priorityFeeLamports: 0n, tx: toSignedTx(signed as Transaction, wallet) };
+    expect(await codes({ ...order, attempts: [{ ...attempt, variants: [forged] }] })).toContain("priority-mismatch");
+  });
+
+  test("an OCO group whose orders share no nonce is refused at arming", async () => {
+    const a = await stopLossSpec(wallet, 1, { id: "a", ocoGroup: "g" });
+    const b = await stopLossSpec(wallet, 1, { id: "b", ocoGroup: "g", nonces: await nonceRefs(wallet, 1, 5) });
+    await expect(armOrders([a, b], signer)).rejects.toThrow("share no nonce");
   });
 });

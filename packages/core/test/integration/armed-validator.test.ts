@@ -51,6 +51,7 @@ import {
   fetchNonceRent,
   fetchNonceSlots,
   findAssociatedTokenAddress,
+  inspectArmedTransaction,
   JITO_TIP_ACCOUNTS_FALLBACK,
   jitoTipLevels,
   LOOKUP_TABLE_DEACTIVATION_COOLDOWN_SLOTS,
@@ -251,6 +252,14 @@ describe.skipIf(!RUN)("armed orders on a local Agave validator", () => {
     tipAccounts: { jito: [tipAccount] },
     ...(ocoGroup ? { ocoGroup } : {}),
   });
+  /** The event the server derives after seeing `tx` land: nonceValue is the tx's own lifetime token. */
+  const consumed = (tx: SignedTx, nonce: Address, success: boolean) => ({
+    type: "nonce-consumed" as const,
+    nonce,
+    nonceValue: inspectArmedTransaction(tx.wireBase64).lifetimeToken,
+    signature: tx.signature,
+    success,
+  });
   const variantFor = (o: ArmedOrder, attempt: number, minOut: bigint) =>
     o.attempts[attempt]?.variants.find((x) => x.minOut === minOut) as ArmedOrder["attempts"][number]["variants"][number];
 
@@ -372,19 +381,8 @@ describe.skipIf(!RUN)("armed orders on a local Agave validator", () => {
     expect(status.err).toBeNull();
     expect(await tokenBalance(ata)).toBeNull(); // burned and closed
     await expectRejected(variantFor(tp, 0, 500n).tx);
-    slOrder = applyArmedOrderEvent(slOrder, {
-      type: "nonce-consumed",
-      nonce: slots[1] as Address,
-      signature: slVariant.tx.signature,
-      success: true,
-    }).order;
-    const tpOrder = applyArmedOrderEvent(tp, {
-      type: "nonce-consumed",
-      nonce: slots[1] as Address,
-      signature: slVariant.tx.signature,
-      success: true,
-      bySiblingOrderId: "sl",
-    }).order;
+    slOrder = applyArmedOrderEvent(slOrder, consumed(slVariant.tx, slots[1] as Address, true)).order;
+    const tpOrder = applyArmedOrderEvent(tp, { ...consumed(slVariant.tx, slots[1] as Address, true), bySiblingOrderId: "sl" }).order;
     expect(slOrder.status).toBe("filled");
     expect(tpOrder.status).toBe("cancelled");
   }, 60_000);
@@ -404,12 +402,7 @@ describe.skipIf(!RUN)("armed orders on a local Agave validator", () => {
     expect(await tokenBalance(ata)).toBe(1_000n);
     expect(walletBefore - (await balance(wallet.address))).toBe(5_000n + failing.priorityFeeLamports); // tip reverted
     await expectRejected(variantFor(order, 0, 100n).tx);
-    order = applyArmedOrderEvent(order, {
-      type: "nonce-consumed",
-      nonce: slots[2] as Address,
-      signature: failing.tx.signature,
-      success: false,
-    }).order;
+    order = applyArmedOrderEvent(order, consumed(failing.tx, slots[2] as Address, false)).order;
     expect(order.status).toBe("armed");
     expect(order.attempts[0]?.status).toBe("landed-failed");
 
@@ -418,12 +411,7 @@ describe.skipIf(!RUN)("armed orders on a local Agave validator", () => {
     expect(next?.minOut).toBe(100n);
     order = applyArmedOrderEvent(order, { type: "submitted", attempt: 1, variantId: next?.id as string }).order;
     expect((await land(next?.tx as SignedTx)).err).toBeNull();
-    order = applyArmedOrderEvent(order, {
-      type: "nonce-consumed",
-      nonce: slots[3] as Address,
-      signature: next?.tx.signature as string,
-      success: true,
-    }).order;
+    order = applyArmedOrderEvent(order, consumed(next?.tx as SignedTx, slots[3] as Address, true)).order;
     expect(order.status).toBe("filled");
     expect(await tokenBalance(ata)).toBeNull();
   }, 60_000);
@@ -434,12 +422,7 @@ describe.skipIf(!RUN)("armed orders on a local Agave validator", () => {
     const first = variantFor(order, 0, 100n);
     order = applyArmedOrderEvent(order, { type: "submitted", attempt: 0, variantId: first.id }).order;
     expect((await land(first.tx)).err).toBeNull();
-    const filled = applyArmedOrderEvent(order, {
-      type: "nonce-consumed",
-      nonce: slots[4] as Address,
-      signature: first.tx.signature,
-      success: true,
-    });
+    const filled = applyArmedOrderEvent(order, consumed(first.tx, slots[4] as Address, true));
     expect(filled.order.status).toBe("filled");
     const cancels = filled.effects.filter((e) => e.type === "fire-cancel");
     expect(cancels.map((e) => e.type === "fire-cancel" && e.nonce)).toEqual([slots[5], slots[6]]);

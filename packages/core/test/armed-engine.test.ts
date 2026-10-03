@@ -80,10 +80,14 @@ interface SynthArgs {
   ocoGroup?: string;
   amount?: bigint;
   armingQuoteOut?: bigint;
+  /** Nonce value per attempt (default `nonce-<index>`): a re-armed slot has a new value. */
+  nonceValues?: string[];
+  mint?: Address;
 }
 
 function synth(a: SynthArgs = {}): ArmedOrder {
   const id = a.id ?? "o1";
+  const mint = a.mint ?? MINT;
   const side = a.side ?? "sell";
   const minOuts = a.minOuts ?? [1_000n, 900n, 800n];
   const tips = a.tipLevels ?? [0, 1];
@@ -111,8 +115,9 @@ function synth(a: SynthArgs = {}): ArmedOrder {
       nonce: {
         account: nonceAddr(n),
         authority: WALLET,
-        value: `nonce-${n}`,
-        cancel: { wireBase64: "AA==", signature: `cancel-${n}`, size: 200 },
+        value: a.nonceValues?.[index] ?? `nonce-${n}`,
+        // OCO orders share the exact cancel bytes of a nonce generation.
+        cancel: { wireBase64: "AA==", signature: `cancel-${a.nonceValues?.[index] ?? n}`, size: 200 },
       },
       variants,
       status: "live",
@@ -123,7 +128,7 @@ function synth(a: SynthArgs = {}): ArmedOrder {
     wallet: WALLET,
     kind: a.kind ?? (side === "buy" ? "limit-buy" : "stop-loss"),
     side,
-    mint: MINT,
+    mint,
     amount: a.amount ?? 1_000_000n,
     fullExit: a.fullExit ?? side === "sell",
     trigger: a.trigger ?? { type: "quote-at-most", threshold: 1_100n },
@@ -146,7 +151,7 @@ function synth(a: SynthArgs = {}): ArmedOrder {
       lookupTables: [TABLE],
       interfaceVersion: currentInterfaceVersion(),
     },
-    reservation: { lamports: 50_000n, mint: MINT, tokens: side === "sell" ? (a.amount ?? 1_000_000n) : 0n },
+    reservation: { lamports: 50_000n, mint, tokens: side === "sell" ? (a.amount ?? 1_000_000n) : 0n },
     capCost: { buyLamports: 0n, buyQuote: {}, feeLamports: 0n },
     status: "armed",
   };
@@ -285,23 +290,45 @@ describe("trailing stop: high-water tracking bounded by the grid", () => {
   });
 
   test("above the grid the trail is capped where the tightest variant still fills with the margin", () => {
-    const cap = trailingHighWaterCap(1_000n, 1_000, 100); // 1000 / (0.9 * 0.99) = 1122
-    expect(cap).toBe(1_122n);
+    // Lowest quote for the 1,000 variant at a 1% margin: ceil(1000 / 0.99) = 1,011; cap: ceil(1,011 / 0.9) = 1,124.
+    const cap = trailingHighWaterCap(1_000n, 1_000, 100);
+    expect(cap).toBe(1_124n);
     const view = trailingStop(o.attempts[0]?.variants ?? [], { trailBps: 1_000 }, undefined, 5_000n, 100);
-    expect(view).toMatchObject({ highWater: 5_000n, effectiveHighWater: 1_122n, capped: true });
-    expect(view.stopQuote).toBe(1_009n);
-    // Price ran to 5,000 then fell: the stop fires at the capped level with the tightest variant.
-    const d = step({ highWater: 5_000n }, 1_005n);
-    expect(d.fire && d.variant.minOut).toBe(900n);
-    const d2 = step({ highWater: 5_000n }, 1_009n);
+    expect(view).toMatchObject({ highWater: 5_000n, effectiveHighWater: 1_124n, capped: true });
+    expect(view.stopQuote).toBe(1_011n);
+    // Price ran to 5,000 then fell: at the capped stop level the TIGHTEST variant fills...
+    const d = step({ highWater: 5_000n }, 1_011n);
+    expect(d.fire && d.variant.minOut).toBe(1_000n);
+    expect(d.trailing?.capped).toBe(true);
+    // ...and a gap below it takes the next variant down.
+    const d2 = step({ highWater: 5_000n }, 1_005n);
     expect(d2.fire && d2.variant.minOut).toBe(900n);
-    expect(d2.trailing?.capped).toBe(true);
+  });
+
+  test("a single-variant trailing stop always fires at its stop level (no rounding gap), across parameters", () => {
+    for (const [minOut, trailBps, marginBps] of [
+      [1_000_000n, 1_000, 100],
+      [999_999_937n, 1_234, 77],
+      [3n, 500, 50],
+      [123_456_789_012n, 9_999, 0],
+      [10n ** 15n, 1, 9_999],
+    ] as const) {
+      const single = synth({ minOuts: [minOut], tipLevels: [0], trigger: { type: "trailing", trailBps } });
+      const policy = { safetyMarginBps: marginBps };
+      // A high-water mark above the cap: the capped stop level must still pick the (only) variant.
+      const highWater = trailingHighWaterCap(minOut, trailBps, marginBps) * 2n;
+      const capView = trailingStop(single.attempts[0]?.variants ?? [], { trailBps }, highWater, highWater, marginBps);
+      expect(capView.capped).toBe(true);
+      const d = evaluateTrigger(single, { highWater }, { liveQuoteOut: capView.stopQuote, venue: "pump", nowMs: 0 }, policy);
+      expect(d.fire && d.variant.minOut).toBe(minOut);
+    }
   });
 
   test("activation level", () => {
     const view = trailingStop([{ minOut: 1_000n }], { trailBps: 1_000, activationQuoteOut: 2_000n }, 1_500n, 900n, 0);
     expect(view.active).toBe(false);
     expect(() => trailingHighWaterCap(1n, 0, 0)).toThrow();
+    expect(() => trailingHighWaterCap(1n, 100, 10_000)).toThrow();
   });
 });
 
@@ -350,7 +377,13 @@ describe("status machine", () => {
     expect(s1.order.status).toBe("submitted");
     expect(s1.order.attempts[0]).toMatchObject({ status: "submitted", submittedVariantId: v.id, submittedAtSlot: 10n });
     expect(nextLiveAttempt(s1.order)).toBeNull();
-    const s2 = applyArmedOrderEvent(s1.order, { type: "nonce-consumed", nonce: nonceAddr(0), signature: v.tx.signature, success: true });
+    const s2 = applyArmedOrderEvent(s1.order, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
+      signature: v.tx.signature,
+      success: true,
+    });
     expect(s2.order.status).toBe("filled");
     expect(s2.order.attempts.map((a) => a.status)).toEqual(["landed-ok", "cancelling", "cancelling"]);
     expect(s2.effects.filter((e) => e.type === "fire-cancel").map((e) => e.type === "fire-cancel" && e.nonce)).toEqual([
@@ -359,8 +392,20 @@ describe("status machine", () => {
     ]);
     expect(s2.effects.some((e) => e.type === "notify" && e.kind === "filled")).toBe(true);
     expect(reservationHeld(s2.order)).toBe(true); // until those cancels land
-    const s3 = applyArmedOrderEvent(s2.order, { type: "nonce-consumed", nonce: nonceAddr(1), signature: "cancel-1", success: true });
-    const s4 = applyArmedOrderEvent(s3.order, { type: "nonce-consumed", nonce: nonceAddr(2), signature: "cancel-2", success: true });
+    const s3 = applyArmedOrderEvent(s2.order, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(1),
+      nonceValue: "nonce-1",
+      signature: "cancel-1",
+      success: true,
+    });
+    const s4 = applyArmedOrderEvent(s3.order, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(2),
+      nonceValue: "nonce-2",
+      signature: "cancel-2",
+      success: true,
+    });
     expect(s4.order.status).toBe("filled");
     expect(reservationHeld(s4.order)).toBe(false);
   });
@@ -369,7 +414,13 @@ describe("status machine", () => {
     const single = synth();
     const v = variant(single, 0, 0);
     const sub = applyArmedOrderEvent(single, { type: "submitted", attempt: 0, variantId: v.id }).order;
-    const r = applyArmedOrderEvent(sub, { type: "nonce-consumed", nonce: nonceAddr(0), signature: v.tx.signature, success: false });
+    const r = applyArmedOrderEvent(sub, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
+      signature: v.tx.signature,
+      success: false,
+    });
     expect(r.order.status).toBe("failed-consumed");
     expect(r.order.attempts[0]?.status).toBe("landed-failed");
     expect(r.effects).toContainEqual(expect.objectContaining({ type: "notify", kind: "consumed" }));
@@ -379,6 +430,7 @@ describe("status machine", () => {
     const l1 = applyArmedOrderEvent(applyArmedOrderEvent(ladder, { type: "submitted", attempt: 0, variantId: lv.id }).order, {
       type: "nonce-consumed",
       nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
       signature: lv.tx.signature,
       success: false,
     });
@@ -389,6 +441,7 @@ describe("status machine", () => {
     const l2 = applyArmedOrderEvent(applyArmedOrderEvent(l1.order, { type: "submitted", attempt: 1, variantId: lv2.id }).order, {
       type: "nonce-consumed",
       nonce: nonceAddr(1),
+      nonceValue: "nonce-1",
       signature: lv2.tx.signature,
       success: true,
     });
@@ -406,6 +459,7 @@ describe("status machine", () => {
     const burned = applyArmedOrderEvent(missed.order, {
       type: "nonce-consumed",
       nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
       signature: "cancel-0",
       success: true,
     });
@@ -415,6 +469,7 @@ describe("status machine", () => {
     const late = applyArmedOrderEvent(missed.order, {
       type: "nonce-consumed",
       nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
       signature: v.tx.signature,
       success: true,
     });
@@ -427,7 +482,13 @@ describe("status machine", () => {
       attempt: 0,
     });
     expect(
-      applyArmedOrderEvent(sm.order, { type: "nonce-consumed", nonce: nonceAddr(0), signature: "cancel-0", success: true }).order.status,
+      applyArmedOrderEvent(sm.order, {
+        type: "nonce-consumed",
+        nonce: nonceAddr(0),
+        nonceValue: "nonce-0",
+        signature: "cancel-0",
+        success: true,
+      }).order.status,
     ).toBe("failed-consumed");
   });
 
@@ -436,6 +497,7 @@ describe("status machine", () => {
     const r = applyArmedOrderEvent(sl, {
       type: "nonce-consumed",
       nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
       signature: "sig-tp-0-pump-0-0",
       success: true,
       bySiblingOrderId: "tp",
@@ -448,6 +510,7 @@ describe("status machine", () => {
     const f = applyArmedOrderEvent(tp, {
       type: "nonce-consumed",
       nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
       signature: "sig-sl-0-pump-0-0",
       success: false,
       bySiblingOrderId: "sl",
@@ -457,13 +520,20 @@ describe("status machine", () => {
     const slFail = applyArmedOrderEvent(sl, {
       type: "nonce-consumed",
       nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
       signature: "sig-tp-0-pump-0-0",
       success: false,
     });
     expect(slFail.order.status).toBe("armed");
     expect(nextLiveAttempt(slFail.order)?.index).toBe(1);
     // An unknown transaction that EXECUTED on the nonce (sibling not named): burn everything anyway.
-    const foreign = applyArmedOrderEvent(sl, { type: "nonce-consumed", nonce: nonceAddr(0), signature: "someone-else", success: true });
+    const foreign = applyArmedOrderEvent(sl, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
+      signature: "someone-else",
+      success: true,
+    });
     expect(foreign.order.status).toBe("cancelled");
     expect(foreign.effects).toContainEqual(expect.objectContaining({ type: "fire-cancel", nonce: nonceAddr(1) }));
   });
@@ -474,11 +544,23 @@ describe("status machine", () => {
     expect(c.order.status).toBe("cancelled");
     expect(c.effects.filter((e) => e.type === "fire-cancel")).toHaveLength(2);
     const v = variant(o, 0, 2);
-    const filled = applyArmedOrderEvent(c.order, { type: "nonce-consumed", nonce: nonceAddr(0), signature: v.tx.signature, success: true });
+    const filled = applyArmedOrderEvent(c.order, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
+      signature: v.tx.signature,
+      success: true,
+    });
     expect(filled.order.status).toBe("filled");
     // Idempotent: repeating events changes nothing.
     expect(
-      applyArmedOrderEvent(filled.order, { type: "nonce-consumed", nonce: nonceAddr(0), signature: v.tx.signature, success: true }).effects,
+      applyArmedOrderEvent(filled.order, {
+        type: "nonce-consumed",
+        nonce: nonceAddr(0),
+        nonceValue: "nonce-0",
+        signature: v.tx.signature,
+        success: true,
+      }).effects,
     ).toEqual([]);
     expect(applyArmedOrderEvent({ ...o, status: "filled" }, { type: "cancel-requested", reason: "x" }).order.status).toBe("filled");
   });
@@ -498,10 +580,35 @@ describe("status machine", () => {
     expect(() => applyArmedOrderEvent(o, { type: "submitted", attempt: 5, variantId: "nope" })).toThrow(ArmedTransitionError);
   });
 
+  test("a re-armed slot is never touched by events about its previous nonce generation", () => {
+    // Order A armed slot 0 at value v1 and was cancelled; order B re-armed slot 0 at v2 (+ slot 1).
+    const a = applyArmedOrderEvent(synth({ id: "A", nonceValues: ["v1"] }), { type: "cancel-requested", reason: "user" }).order;
+    const b = synth({ id: "B", attempts: 2, nonceValues: ["v2", "v2b"] });
+    // A's cancel landing (or being replayed) is dispatched to every order on slot 0:
+    const ev = { type: "nonce-consumed" as const, nonce: nonceAddr(0), nonceValue: "v1", signature: "cancel-v1", success: true };
+    expect(applyArmedOrderEvent(a, ev).order.attempts[0]?.status).toBe("burned");
+    const bAfter = applyArmedOrderEvent(b, ev);
+    expect(bAfter.order).toEqual(b);
+    expect(bAfter.effects).toEqual([]);
+    // B's own fill on v2 is resolved to B, not to A's old cancel.
+    const fill = variant(b, 0, 0);
+    expect(signaturesOnNonce([a, b], nonceAddr(0), "v2").map((s) => s.orderId)).not.toContain("A");
+    const filled = applyArmedOrderEvent(applyArmedOrderEvent(b, { type: "submitted", attempt: 0, variantId: fill.id }).order, {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      nonceValue: "v2",
+      signature: fill.tx.signature,
+      success: true,
+    });
+    expect(filled.order.status).toBe("filled");
+    expect(filled.effects).toContainEqual(expect.objectContaining({ type: "fire-cancel", nonce: nonceAddr(1) }));
+  });
+
   test("signature indexes for resolving which tx consumed a nonce", () => {
     const tp = synth({ id: "tp", ocoGroup: "g" });
     const sl = synth({ id: "sl", ocoGroup: "g" });
-    const onNonce = signaturesOnNonce([tp, sl], nonceAddr(0));
+    const onNonce = signaturesOnNonce([tp, sl], nonceAddr(0), "nonce-0");
+    expect(signaturesOnNonce([tp, sl], nonceAddr(0), "older-generation")).toEqual([]);
     expect(onNonce.filter((s) => s.kind === "cancel")).toHaveLength(1);
     expect(onNonce.filter((s) => s.kind === "variant")).toHaveLength(12);
     expect(armedSignatures(tp)).toHaveLength(7);
@@ -558,6 +665,29 @@ describe("staleness detection", () => {
     expect(f({ nonces: { [nonceAddr(0)]: { ...(liveNonce[nonceAddr(0)] as never), value: "other" } } })).toEqual(["nonce-advanced"]);
     expect(f({ lookupTables: { [TABLE]: null } })).toEqual(["lookup-table-missing"]);
     expect(f({ lookupTables: { [TABLE]: table(50n) }, currentSlot: 100n })).toEqual(["lookup-table-deactivated"]);
+  });
+
+  test("an advanced nonce is expected for submitted / cancelling attempts: not staleness", () => {
+    const ladder = synth({ attempts: 2 });
+    const sub = applyArmedOrderEvent(ladder, { type: "submitted", attempt: 0, variantId: variant(ladder, 0, 0).id }).order;
+    const advanced = { [nonceAddr(0)]: { account: nonceAddr(0), authority: WALLET, value: "next" as never, lamports: 1n } };
+    expect(detectStaleness(sub, { nonces: advanced })).toEqual([]);
+    const cancelling = applyArmedOrderEvent(ladder, { type: "cancel-requested", reason: "x" }).order;
+    expect(detectStaleness(cancelling, { nonces: advanced })).toEqual([]);
+    expect(detectStaleness(ladder, { nonces: advanced }).map((x) => x.reason)).toEqual(["nonce-advanced"]);
+  });
+
+  test("migration snipe (pool not live): a curve creator change or coin-flag change is caught before migration", () => {
+    const snipe = synth({ side: "buy", kind: "migration-snipe", venues: ["pumpswap"], trigger: { type: "migration" } });
+    snipe.frozen.venues[0] = { ...(snipe.frozen.venues[0] as never), isMayhemMode: false, isCashbackCoin: false };
+    const reasons = (obs: Parameters<typeof detectStaleness>[1]) => detectStaleness(snipe, obs).map((x) => `${x.reason}:${x.definitive}`);
+    expect(reasons({ pool: null, curve: { creator: CREATOR, complete: false } })).toEqual([]);
+    expect(reasons({ pool: null, curve: { creator: WALLET, complete: false } })).toEqual(["creator-changed:true"]);
+    expect(reasons({ curve: { creator: CREATOR, complete: true, isCashbackCoin: true } })).toEqual(["coin-flags-changed:true"]);
+    // Once the pool is live, the pool is what counts.
+    expect(reasons({ pool: { coinCreator: CREATOR, isMayhemMode: true }, curve: { creator: WALLET, complete: true } })).toEqual([
+      "coin-flags-changed:true",
+    ]);
   });
 
   test("IDL watcher: only interfaces the order's venues use; suspect, not definitive", () => {
@@ -630,6 +760,45 @@ describe("safety validators and reservations", () => {
     const big = Array.from({ length: 10 }, (_v, i) => synth({ id: `b${i}`, nonceIdx: [i], ...grid }));
     expect(validateUserArmedOrders(big).map((v) => v.code)).toContain("notional-cap");
     expect(validateUserArmedOrders([tp, tp]).map((v) => v.code)).toContain("duplicate-order");
+  });
+
+  test("exclusivity comes from shared nonces, never from the ocoGroup label", () => {
+    const SOL3 = 3n * 10n ** 9n;
+    // Two independent 3 SOL buys on different nonces claiming one group: both can fill.
+    const b1 = synth({ id: "b1", side: "buy", amount: SOL3, minOuts: [1n], tipLevels: [0], ocoGroup: "g" });
+    const b2 = synth({ id: "b2", side: "buy", amount: SOL3, minOuts: [1n], tipLevels: [0], ocoGroup: "g", nonceIdx: [1] });
+    expect(armedNotional([b1, b2])).toBe(2n * SOL3);
+    expect(aggregateReservations([b1, b2]).lamports).toBe(100_000n);
+    expect(
+      validateUserArmedOrders([b1, b2], { ...DEFAULT_ARMED_SAFETY_POLICY, maxArmedNotionalLamports: 5n * 10n ** 9n }).map((v) => v.code),
+    ).toEqual(expect.arrayContaining(["notional-cap", "oco-without-shared-nonce"]));
+    // Buys sharing a nonce are still counted in full (only same-mint sells are treated as exclusive).
+    const b3 = synth({ id: "b3", side: "buy", amount: SOL3, minOuts: [1n], tipLevels: [0], ocoGroup: "h" });
+    expect(armedNotional([b1, { ...b3, ocoGroup: "g" }])).toBe(2n * SOL3);
+    // A chain X(A) - Z(A,B) - Y(B) has no common nonce: X and Y could both fill.
+    const grid = { minOuts: [SOL3], armingQuoteOut: SOL3 };
+    const x = synth({ id: "x", ocoGroup: "c", fullExit: false, ...grid });
+    const z = synth({ id: "z", ocoGroup: "c", attempts: 2, nonceIdx: [0, 1], ...grid });
+    const y = synth({ id: "y", ocoGroup: "c", fullExit: false, nonceIdx: [1], ...grid });
+    expect(armedNotional([x, z, y])).toBe(3n * SOL3);
+    // Sells of different mints on one nonce are not exclusive either (and each mint keeps its own tokens).
+    const other = synth({ id: "o", ocoGroup: "m", mint: CREATOR, ...grid });
+    const same = synth({ id: "s", ocoGroup: "m", ...grid });
+    expect(armedNotional([other, same])).toBe(2n * SOL3);
+    expect(aggregateReservations([other, same]).tokens).toEqual({ [CREATOR]: 1_000_000n, [MINT]: 1_000_000n });
+  });
+
+  test("re-arming a slot whose previous generation is still being cancelled is not 'shared'", () => {
+    const filledLadder = applyArmedOrderEvent(synth({ id: "old", attempts: 2 }), {
+      type: "nonce-consumed",
+      nonce: nonceAddr(0),
+      nonceValue: "nonce-0",
+      signature: "sig-old-0-pump-0-0",
+      success: true,
+    }).order;
+    expect(filledLadder.attempts[1]?.status).toBe("cancelling");
+    const rearmed = synth({ id: "new", nonceIdx: [1], nonceValues: ["fresh"] });
+    expect(validateUserArmedOrders([filledLadder, rearmed]).map((v) => v.code)).not.toContain("nonce-shared");
   });
 
   test("reserved balances (UI) and the pre-submit balance check", () => {

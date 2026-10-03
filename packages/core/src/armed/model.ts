@@ -118,6 +118,9 @@ export interface FrozenVenueAccounts {
   /** pump fee_recipient / PumpSwap protocol_fee_recipient named by the variants (must stay in the live list). */
   feeRecipient: Address;
   buybackFeeRecipient: Address;
+  /** Coin flags that shape the account list (mayhem: fee recipient list; cashback: PumpSwap remaining accounts). */
+  isMayhemMode?: boolean;
+  isCashbackCoin?: boolean;
 }
 
 /** Account-list facts frozen at signing; any change makes the order stale. */
@@ -175,7 +178,10 @@ export interface ArmedOrder {
   fullExit: boolean;
   trigger: ArmedTrigger;
   attempts: ArmedAttempt[];
-  /** Orders sharing a nonce must share this id. */
+  /**
+   * Orders sharing a nonce must share this id. It declares intent only: exclusivity for caps and
+   * reservations is derived from the nonces the orders actually share (exclusiveGroups).
+   */
   ocoGroup?: string;
   /** Live quote out for `amount` when armed (grid-depth cap reference). */
   armingQuoteOut: bigint;
@@ -226,16 +232,27 @@ export function armedSignatures(
   return out;
 }
 
-/** Signatures that can consume `nonceAccount`, across orders (to resolve which tx advanced a nonce). */
+/** Key of one nonce generation: a slot can be re-armed after it advances, at a new value. */
+export function nonceKey(account: Address, value: string): string {
+  return `${account}:${value}`;
+}
+
+/**
+ * Signatures that can consume the nonce generation (`nonceAccount`, `nonceValue`), across orders:
+ * how the engine resolves which transaction advanced a slot. `nonceValue` is the value the slot
+ * held before it advanced (the consuming transaction's lifetime token); older generations of a
+ * re-armed slot are excluded.
+ */
 export function signaturesOnNonce(
   orders: readonly ArmedOrder[],
   nonceAccount: Address,
+  nonceValue: string,
 ): { signature: string; orderId: string; attempt: number; kind: "variant" | "cancel"; variantId?: string }[] {
   const out: { signature: string; orderId: string; attempt: number; kind: "variant" | "cancel"; variantId?: string }[] = [];
   const seen = new Set<string>();
   for (const o of orders) {
     for (const a of o.attempts) {
-      if (a.nonce.account !== nonceAccount) continue;
+      if (a.nonce.account !== nonceAccount || a.nonce.value !== nonceValue) continue;
       for (const v of a.variants)
         out.push({ signature: v.tx.signature, orderId: o.id, attempt: a.index, kind: "variant", variantId: v.id });
       // OCO orders carry the same cancel bytes; list it once.
@@ -249,19 +266,73 @@ export function signaturesOnNonce(
 }
 
 /**
+ * Groups the orders that still hold reservations by the OPEN nonce generations they share
+ * (transitively). A group is `exclusive` - at most one of its orders can fill, so caps and
+ * reservations count its maximum - only when ONE nonce generation is common to all its orders,
+ * every order is a sell of the same mint by the same wallet, and only full-exit sells have extra
+ * nonces: orders on a common nonce can't both land on it, and a full exit's sell-all-then-close
+ * fails once another sale changed the balance. Anything else (buys, mixed mints, chains without a
+ * common nonce, a declared ocoGroup without shared nonces) counts as independent orders.
+ */
+export function exclusiveGroups(orders: readonly ArmedOrder[]): { orders: ArmedOrder[]; exclusive: boolean }[] {
+  const held = orders.filter(reservationHeld);
+  const parent = held.map((_o, i) => i);
+  const find = (i: number): number => {
+    let r = i;
+    while (parent[r] !== r) r = parent[r] as number;
+    return r;
+  };
+  const owner = new Map<string, number>();
+  held.forEach((o, i) => {
+    for (const a of o.attempts) {
+      if (!isAttemptOpen(a)) continue;
+      const key = nonceKey(a.nonce.account, a.nonce.value);
+      const j = owner.get(key);
+      if (j === undefined) owner.set(key, i);
+      else parent[find(i)] = find(j);
+    }
+  });
+  const byRoot = new Map<number, ArmedOrder[]>();
+  held.forEach((o, i) => {
+    const root = find(i);
+    byRoot.set(root, [...(byRoot.get(root) ?? []), o]);
+  });
+  const openKeys = (o: ArmedOrder) => o.attempts.filter(isAttemptOpen).map((a) => nonceKey(a.nonce.account, a.nonce.value));
+  return [...byRoot.values()].map((group) => {
+    const first = group[0] as ArmedOrder;
+    const common = group.reduce(
+      (acc, o) => {
+        const keys = new Set(openKeys(o));
+        return new Set([...acc].filter((k) => keys.has(k)));
+      },
+      new Set(openKeys(first)),
+    );
+    const exclusive =
+      group.length > 1 &&
+      common.size > 0 &&
+      group.every(
+        (o) =>
+          o.side === "sell" &&
+          o.mint === first.mint &&
+          o.wallet === first.wallet &&
+          (o.fullExit || o.attempts.filter(isAttemptOpen).length <= 1),
+      );
+    return { orders: group, exclusive };
+  });
+}
+
+const maxBig = (a: bigint, b: bigint) => (a > b ? a : b);
+
+/**
  * Notional for the per-user armed cap: buys count their spend, sells the arming quote of their
- * tokens. Orders sharing a nonce (OCO) are mutually exclusive, so a group counts its maximum.
+ * tokens. An exclusive group (see exclusiveGroups) counts its maximum; everything else adds up.
  */
 export function armedNotional(orders: readonly ArmedOrder[]): bigint {
-  const groups = new Map<string, bigint>();
-  for (const o of orders) {
-    if (!reservationHeld(o)) continue;
-    const notional = o.side === "buy" ? o.amount : o.armingQuoteOut;
-    const key = o.ocoGroup ?? `order:${o.id}`;
-    groups.set(key, (groups.get(key) ?? 0n) > notional ? (groups.get(key) as bigint) : notional);
-  }
+  const notional = (o: ArmedOrder) => (o.side === "buy" ? o.amount : o.armingQuoteOut);
   let total = 0n;
-  for (const v of groups.values()) total += v;
+  for (const g of exclusiveGroups(orders)) {
+    total += g.exclusive ? g.orders.reduce((m, o) => maxBig(m, notional(o)), 0n) : g.orders.reduce((s, o) => s + notional(o), 0n);
+  }
   return total;
 }
 
@@ -270,28 +341,23 @@ export interface ReservedBalances {
   tokens: Record<Address, bigint>;
 }
 
-/** Aggregate reserved balances for the UI and the pre-submit check (OCO groups count once, at their maximum). */
+/** Aggregate reserved balances for the UI and the pre-submit check (an exclusive group counts once, at its maximum). */
 export function aggregateReservations(orders: readonly ArmedOrder[]): ReservedBalances {
-  const groups = new Map<string, Reservation>();
-  for (const o of orders) {
-    if (!reservationHeld(o)) continue;
-    const key = o.ocoGroup ?? `order:${o.id}`;
-    const prev = groups.get(key);
-    groups.set(
-      key,
-      prev
-        ? {
-            lamports: prev.lamports > o.reservation.lamports ? prev.lamports : o.reservation.lamports,
-            mint: o.reservation.mint,
-            tokens: prev.tokens > o.reservation.tokens ? prev.tokens : o.reservation.tokens,
-          }
-        : o.reservation,
-    );
-  }
   const out: ReservedBalances = { lamports: 0n, tokens: {} };
-  for (const r of groups.values()) {
-    out.lamports += r.lamports;
-    if (r.tokens > 0n) out.tokens[r.mint] = (out.tokens[r.mint] ?? 0n) + r.tokens;
+  const add = (lamports: bigint, mint: Address, tokens: bigint) => {
+    out.lamports += lamports;
+    if (tokens > 0n) out.tokens[mint] = (out.tokens[mint] ?? 0n) + tokens;
+  };
+  for (const g of exclusiveGroups(orders)) {
+    if (g.exclusive) {
+      add(
+        g.orders.reduce((m, o) => maxBig(m, o.reservation.lamports), 0n),
+        (g.orders[0] as ArmedOrder).reservation.mint,
+        g.orders.reduce((m, o) => maxBig(m, o.reservation.tokens), 0n),
+      );
+    } else {
+      for (const o of g.orders) add(o.reservation.lamports, o.reservation.mint, o.reservation.tokens);
+    }
   }
   return out;
 }

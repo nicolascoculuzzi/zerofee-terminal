@@ -26,6 +26,7 @@ import {
   HELIUS_SENDER_TIP_ACCOUNTS,
   JITO_TIP_ACCOUNTS_FALLBACK,
   LAMPORTS_PER_SOL,
+  MAX_COMPUTE_UNIT_LIMIT,
   PACKET_DATA_SIZE,
   PUMP_AMM_IX,
   PUMP_AMM_PROGRAM_ID,
@@ -36,6 +37,8 @@ import {
   TOKEN_PROGRAM_ID,
   WSOL_MINT,
 } from "../constants";
+import { creatorVaultPda } from "../pump/accounts";
+import { coinCreatorVaultAuthorityPda } from "../pumpswap/accounts";
 import { findAssociatedTokenAddress } from "../token";
 import { priorityFeeLamports } from "../tx/computeBudget";
 import { Reader, startsWith } from "../util/bytes";
@@ -44,8 +47,12 @@ import {
   type ArmedAttempt,
   type ArmedOrder,
   type ArmedVariant,
+  type ArmedVenue,
   armedNotional,
   DEFAULT_MAX_ARMED_BUY_VARIANTS,
+  type FrozenVenueAccounts,
+  isAttemptOpen,
+  nonceKey,
   reservationHeld,
 } from "./model";
 import { FIREWALL_ALL_STATIC_PROGRAMS, FIREWALL_STATIC_VENUE_POSITIONS } from "./staticAccounts";
@@ -112,6 +119,11 @@ export type ArmedViolationCode =
   | "priority-mismatch"
   | "transfer-not-allowed"
   | "lookup-not-allowed"
+  | "account-mismatch"
+  | "unresolved-account"
+  | "full-exit-guard-missing"
+  | "invalid-full-exit"
+  | "oco-without-shared-nonce"
   | "undecodable";
 
 export interface ArmedViolation {
@@ -140,6 +152,7 @@ export function validateArmedOrder(order: ArmedOrder, policy: ArmedSafetyPolicy 
   if (order.attempts.length > 1 && (order.side !== "sell" || !order.fullExit)) {
     add("ladder-not-allowed", "attempt ladders are only allowed for full-exit sells (double-fill risk)");
   }
+  if (order.fullExit && order.side !== "sell") add("invalid-full-exit", "only sells can be full exits");
   if (new Set(order.attempts.map((a) => a.nonce.account)).size !== order.attempts.length)
     add("duplicate-nonce", "a nonce appears in two attempts");
   const sigs = new Set<string>();
@@ -191,24 +204,53 @@ export function validateUserArmedOrders(
   if (notional > policy.maxArmedNotionalLamports) {
     out.push({ code: "notional-cap", orderId: "*", message: `armed notional ${notional} > ${policy.maxArmedNotionalLamports}` });
   }
-  const byNonce = new Map<Address, { order: ArmedOrder; attempt: ArmedAttempt }[]>();
+  // Sharing is judged per OPEN nonce generation: a slot re-armed at a new value is not shared with
+  // the closed (or about-to-close) attempts of its previous generation.
+  const byNonce = new Map<string, { order: ArmedOrder; attempt: ArmedAttempt }[]>();
   for (const o of orders) {
-    if (!reservationHeld(o)) continue;
-    for (const a of o.attempts) byNonce.set(a.nonce.account, [...(byNonce.get(a.nonce.account) ?? []), { order: o, attempt: a }]);
+    for (const a of o.attempts) {
+      if (!isAttemptOpen(a)) continue;
+      const key = nonceKey(a.nonce.account, a.nonce.value);
+      byNonce.set(key, [...(byNonce.get(key) ?? []), { order: o, attempt: a }]);
+    }
   }
-  for (const [nonce, users] of byNonce) {
+  for (const users of byNonce.values()) {
     if (users.length < 2) continue;
     const first = users[0] as { order: ArmedOrder; attempt: ArmedAttempt };
     const ok = users.every(
-      (u) =>
-        u.order.ocoGroup !== undefined &&
-        u.order.ocoGroup === first.order.ocoGroup &&
-        u.order.wallet === first.order.wallet &&
-        u.attempt.nonce.value === first.attempt.nonce.value,
+      (u) => u.order.ocoGroup !== undefined && u.order.ocoGroup === first.order.ocoGroup && u.order.wallet === first.order.wallet,
     );
     if (!ok) {
-      for (const u of users)
-        out.push({ code: "nonce-shared", orderId: u.order.id, message: `nonce ${nonce} is shared outside one OCO group / wallet / value` });
+      for (const u of users) {
+        out.push({
+          code: "nonce-shared",
+          orderId: u.order.id,
+          message: `nonce ${first.attempt.nonce.account} is shared outside one OCO group / wallet`,
+        });
+      }
+    }
+  }
+  // A declared OCO group must really share a live nonce (caps and reservations never trust the label).
+  const groups = new Map<string, ArmedOrder[]>();
+  for (const o of orders) if (o.ocoGroup && reservationHeld(o)) groups.set(o.ocoGroup, [...(groups.get(o.ocoGroup) ?? []), o]);
+  for (const [group, members] of groups) {
+    if (members.length < 2) continue;
+    const keysOf = (o: ArmedOrder) => new Set(o.attempts.filter(isAttemptOpen).map((a) => nonceKey(a.nonce.account, a.nonce.value)));
+    const common = members.reduce(
+      (acc, o) => {
+        const keys = keysOf(o);
+        return new Set([...acc].filter((k) => keys.has(k)));
+      },
+      keysOf(members[0] as ArmedOrder),
+    );
+    if (common.size === 0) {
+      for (const o of members) {
+        out.push({
+          code: "oco-without-shared-nonce",
+          orderId: o.id,
+          message: `OCO group ${group} has no live nonce common to all its orders`,
+        });
+      }
     }
   }
   return out;
@@ -246,6 +288,8 @@ interface Ctx {
   tipAccounts: Set<Address>;
   tables: AddressesByLookupTableAddress;
   policy: ArmedSafetyPolicy;
+  /** Frozen facts per venue, with the creator vault (pump) / coin creator vault authority (PumpSwap) they imply. */
+  venues: Map<ArmedVenue, { frozen: FrozenVenueAccounts; creatorVault: Address }>;
   out: ArmedViolation[];
 }
 
@@ -296,14 +340,20 @@ interface Scan {
   tips: bigint;
   cuLimit: number | null;
   cuPrice: bigint;
-  trades: { program: Address; disc: Uint8Array; amount: bigint; limit: bigint }[];
+  trades: { index: number; program: Address; accounts: (Address | null)[]; disc: Uint8Array; amount: bigint; limit: bigint }[];
+  /** Token CloseAccount instructions: position, closed account, token program. */
+  closes: { index: number; account: Address | null; program: Address }[];
 }
 
-/** Firewall pass over instructions 1..n. */
-function scanInstructions(c: Ctx, insp: ArmedTxInspection, label: string, variantId?: string, allowTrade = true): Scan {
+/**
+ * Firewall pass over instructions 1..n. A cancel may only contain compute budget instructions and
+ * tip transfers after its AdvanceNonceAccount.
+ */
+function scanInstructions(c: Ctx, insp: ArmedTxInspection, label: string, variantId: string | undefined, kind: "variant" | "cancel"): Scan {
   const add = (code: ArmedViolationCode, message: string) =>
     c.out.push({ code, orderId: c.order.id, message: `${label}: ${message}`, ...(variantId ? { variantId } : {}) });
-  const scan: Scan = { tips: 0n, cuLimit: null, cuPrice: 0n, trades: [] };
+  const scan: Scan = { tips: 0n, cuLimit: null, cuPrice: 0n, trades: [], closes: [] };
+  const isCancel = kind === "cancel";
   const staticCount = insp.staticAccounts.length;
   // Lookup-table contents are untrusted (signer firewall): these accounts must be static keys.
   const requireStatic = (ix: ArmedTxInspection["instructions"][number], i: number, positions: readonly number[]) => {
@@ -345,9 +395,13 @@ function scanInstructions(c: Ctx, insp: ArmedTxInspection, label: string, varian
       const [from, to] = ix.accounts;
       if (from !== c.wallet) add("transfer-not-allowed", `instruction ${i}: transfer from ${from}`);
       if (to && c.tipAccounts.has(to)) scan.tips += lamports;
-      else if (to === c.walletWsolAta && c.order.side === "buy" && lamports <= c.order.amount) {
+      else if (!isCancel && to === c.walletWsolAta && c.order.side === "buy" && lamports <= c.order.amount) {
         /* PumpSwap wSOL wrap into the wallet's own account */
       } else add("transfer-not-allowed", `instruction ${i}: ${lamports} lamports to ${to ?? "an unresolved lookup"}`);
+      continue;
+    }
+    if (isCancel) {
+      add("instruction-not-allowed", `instruction ${i}: a cancel may only advance the nonce, set the compute budget and tip`);
       continue;
     }
     if (ix.program === TOKEN_PROGRAM_ID || ix.program === TOKEN_2022_PROGRAM_ID) {
@@ -356,6 +410,7 @@ function scanInstructions(c: Ctx, insp: ArmedTxInspection, label: string, varian
         // CloseAccount: rent must return to the wallet, authority must be the wallet.
         if (ix.accounts[1] !== c.wallet || ix.accounts[2] !== c.wallet)
           add("instruction-not-allowed", `instruction ${i}: CloseAccount not to/by the wallet`);
+        scan.closes.push({ index: i, account: ix.accounts[0] ?? null, program: ix.program });
         continue;
       }
       add("instruction-not-allowed", `instruction ${i}: token op ${d[0]} (Approve/SetAuthority/transfers are refused)`);
@@ -368,19 +423,26 @@ function scanInstructions(c: Ctx, insp: ArmedTxInspection, label: string, varian
       continue;
     }
     // pump / PumpSwap trade
-    if (!allowTrade) {
-      add("instruction-not-allowed", `instruction ${i}: trade instruction in a cancel`);
-      continue;
-    }
     if (d.length < 24) {
       add("trade-mismatch", `instruction ${i}: trade data too short`);
       continue;
     }
     const r = new Reader(d, 8);
-    scan.trades.push({ program: ix.program, disc: d.subarray(0, 8), amount: r.u64(), limit: r.u64() });
+    scan.trades.push({ index: i, program: ix.program, accounts: ix.accounts, disc: d.subarray(0, 8), amount: r.u64(), limit: r.u64() });
   }
   return scan;
 }
+
+/** Priority fee the runtime will charge; without SetComputeUnitLimit it charges on the default (max) limit. */
+function scannedPriorityFee(scan: Scan): bigint {
+  return scan.cuPrice > 0n ? priorityFeeLamports(scan.cuPrice, scan.cuLimit ?? MAX_COMPUTE_UNIT_LIMIT) : 0n;
+}
+
+/** Account positions of the trade instruction (pumpV2AccountMetas / ammSwapAccountMetas). */
+const TRADE_POSITIONS = {
+  pump: { mint: 1, baseTokenProgram: 3, feeRecipient: 6, buyback: 8, market: 10, userBase: 14, creatorVault: 16 },
+  pumpswap: { mint: 3, baseTokenProgram: 11, feeRecipient: 9, buyback: -2, market: 0, userBase: 5, creatorVault: 18 },
+} as const;
 
 function checkTrade(c: Ctx, v: ArmedVariant, scan: Scan, label: string): void {
   const add = (code: ArmedViolationCode, message: string) =>
@@ -403,11 +465,49 @@ function checkTrade(c: Ctx, v: ArmedVariant, scan: Scan, label: string): void {
   if (!startsWith(t.disc, disc)) add("trade-mismatch", `unexpected trade instruction for a ${c.order.side} on ${v.venue}`);
   if (t.amount !== c.order.amount) add("trade-mismatch", `signed amount ${t.amount} != order amount ${c.order.amount}`);
   if (t.limit !== v.minOut) add("trade-mismatch", `signed min-out ${t.limit} != declared ${v.minOut}`);
+
+  // The account facts triggers, staleness checks and reservations rely on must be what was signed.
+  const pos = TRADE_POSITIONS[v.venue];
+  const at = (k: number) => (k < 0 ? t.accounts[t.accounts.length + k] : t.accounts[k]) ?? null;
+  const facts = c.venues.get(v.venue);
+  if (at(pos.mint) !== c.order.mint) add("trade-mismatch", `signed base mint ${at(pos.mint)} != order mint ${c.order.mint}`);
+  if (!facts) add("account-mismatch", `no frozen account facts for venue ${v.venue}`);
+  else {
+    for (const [what, k, expected] of [
+      ["market", pos.market, facts.frozen.market],
+      ["fee recipient", pos.feeRecipient, facts.frozen.feeRecipient],
+      ["buyback recipient", pos.buyback, facts.frozen.buybackFeeRecipient],
+      ["creator vault", pos.creatorVault, facts.creatorVault],
+    ] as const) {
+      const actual = at(k);
+      if (actual === null) add("unresolved-account", `${what} is loaded from a lookup table that was not supplied`);
+      else if (actual !== expected) add("account-mismatch", `signed ${what} ${actual} != frozen ${expected}`);
+    }
+  }
+  // Full exits must close the base token account after the sale: the on-chain guard against a second fill.
+  if (c.order.fullExit) {
+    const userBase = at(pos.userBase);
+    const tokenProgram = at(pos.baseTokenProgram);
+    const guarded = scan.closes.some(
+      (cl) => cl.index > t.index && cl.account !== null && cl.account === userBase && cl.program === tokenProgram,
+    );
+    if (!guarded) add("full-exit-guard-missing", "full exit without CloseAccount of the base token account after the sale");
+  }
+
   if (scan.tips !== v.tipLamports) add("tip-mismatch", `signed tips ${scan.tips} != declared ${v.tipLamports}`);
   if (scan.tips > c.policy.maxTipLamports) add("tip-cap", `signed tips ${scan.tips} > ${c.policy.maxTipLamports}`);
-  const priority = scan.cuLimit === null ? 0n : priorityFeeLamports(scan.cuPrice, scan.cuLimit);
+  if (scan.cuPrice > 0n && scan.cuLimit === null) add("priority-mismatch", "CU price without a CU limit (charged on the runtime default)");
+  const priority = scannedPriorityFee(scan);
   if (priority !== v.priorityFeeLamports) add("priority-mismatch", `signed priority fee ${priority} != declared ${v.priorityFeeLamports}`);
   if (priority > c.policy.maxPriorityFeeLamports) add("priority-cap", `signed priority fee ${priority} > cap`);
+}
+
+/** Cancels pay base fee + priority fee (+ tips) too: keep them under the same caps. */
+function checkCancelFees(c: Ctx, scan: Scan, label: string): void {
+  const add = (code: ArmedViolationCode, message: string) => c.out.push({ code, orderId: c.order.id, message: `${label}: ${message}` });
+  if (scan.tips > c.policy.maxTipLamports) add("tip-cap", `cancel tips ${scan.tips} > ${c.policy.maxTipLamports}`);
+  const priority = scannedPriorityFee(scan);
+  if (priority > c.policy.maxPriorityFeeLamports) add("priority-cap", `cancel priority fee ${priority} > cap`);
 }
 
 /**
@@ -423,6 +523,20 @@ export async function verifyArmedOrderTransactions(order: ArmedOrder, opts: Veri
     tipAccounts: new Set(opts.tipAccounts ?? [...HELIUS_SENDER_TIP_ACCOUNTS, ...JITO_TIP_ACCOUNTS_FALLBACK]),
     tables: opts.lookupTables ?? {},
     policy: opts.policy ?? DEFAULT_ARMED_SAFETY_POLICY,
+    venues: new Map(
+      await Promise.all(
+        order.frozen.venues.map(
+          async (f) =>
+            [
+              f.venue,
+              {
+                frozen: f,
+                creatorVault: f.venue === "pump" ? await creatorVaultPda(f.creator) : await coinCreatorVaultAuthorityPda(f.creator),
+              },
+            ] as const,
+        ),
+      ),
+    ),
     out: [],
   };
   const seen = new Set<string>();
@@ -442,13 +556,13 @@ export async function verifyArmedOrderTransactions(order: ArmedOrder, opts: Veri
     } else {
       const label = `attempt ${a.index} cancel`;
       const insp = await checkCommon(c, a.nonce.cancel, a, label);
-      if (insp) scanInstructions(c, insp, label, undefined, false);
+      if (insp) checkCancelFees(c, scanInstructions(c, insp, label, undefined, "cancel"), label);
       dup(a.nonce.cancel.signature, label);
     }
     for (const v of a.variants) {
       const label = `variant ${v.id}`;
       const insp = await checkCommon(c, v.tx, a, label, v.id);
-      if (insp) checkTrade(c, v, scanInstructions(c, insp, label, v.id), label);
+      if (insp) checkTrade(c, v, scanInstructions(c, insp, label, v.id, "variant"), label);
       dup(v.tx.signature, label, v.id);
     }
   }
