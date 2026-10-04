@@ -1,552 +1,565 @@
-import { Check, LoaderCircle, Pencil, Plus, Trash2 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, Lock, Wallet } from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Button } from "../../components/ui/Button";
-import { Checkbox, NumberInput, Segmented } from "../../components/ui/controls";
-import { Tooltip } from "../../components/ui/Tooltip";
-import { cn, uid } from "../../lib/cn";
-import { fmtPct, fmtPnlPct, fmtPriceText, fmtSignedSol, fmtSol, fmtSolShort, fmtTokens, fmtUsd } from "../../lib/format";
+import { Hotkey, Kbd, Segmented } from "../../components/ui/controls";
+import { cn } from "../../lib/cn";
+import { fmtCompact, fmtPriceText, fmtSol, fmtSolShort, fmtTokens } from "../../lib/format";
+import { compactLabel } from "../../lib/hotkeys";
+import { buyRiskReasons } from "../../lib/metrics";
+import { navigateTo } from "../../lib/nav";
 import { quoteBuy, quoteSell } from "../../lib/quote";
-import { armMigration, armTpSl, buy, placeLimit, sell } from "../../lib/tradeActions";
+import { armMigration, armTpSl, buy, sell } from "../../lib/tradeActions";
 import type { TokenDetail } from "../../protocol";
 import type { TpSlLeg } from "../../services/tradeService";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
 import { useTrades } from "../../state/trades";
+import { useUi } from "../../state/ui";
 import { useActivePosition, useActiveStatus, useWallet } from "../../state/wallet";
-import { useTokenUi } from "../token/tokenUi";
-import { PresetSettingsRow, PresetSwitch } from "./PresetSettings";
+import { useQuote } from "../token/money";
+import { type OrderType, type TradeSide, useTokenUi } from "../token/tokenUi";
+import { AmountField, solStep } from "./AmountField";
+import { CostBreakdown, type CostKind } from "./CostBreakdown";
+import { ExitLadder } from "./ExitLadder";
+import { LimitFields, triggerValue } from "./LimitFields";
+import { armLimitDraft, defaultLimitPrice } from "./orderDraft";
+import { PositionStrip } from "./PositionStrip";
+import { ExecutionSummary } from "./PresetSettings";
+import { buyCost, buyIssue, type CostLines, maxBuySol, sellCost, venueShort } from "./tradeMath";
 
 /*
- * Order form anatomy: Kraken Pro (Buy/Sell switch, order-type tabs, labelled inputs, % slider,
- * TP/SL, fee estimate, full-width coloured CTA) https://mobbin.com/screens/ed2976fc-9aa3-45bd-a5af-5f42f8fb76e0
- * and Coinbase Advanced (label-left / value-right inputs, quick chips, Subtotal/Fee/Total rows)
- * https://mobbin.com/screens/ff785484-4dd2-4fc0-a5f4-658e033b3b08. Field set follows Axiom's
- * Market / Limit / Advanced panel; every cost line is shown, including the 0 platform fee.
+ * Trade panel (DESIGN.md 4.11): side, order type, amount (4.7), limit or exit-ladder fields,
+ * the execution summary, the cost breakdown with "Platform fee 0", the verb CTA and the
+ * position strip. Trade buttons never spin: the transaction toast carries progress (4.13).
+ * Layout after Axiom's panel; Buy/Sell CTAs after OKX and Binance:
+ * https://mobbin.com/screens/f26041bc-ccc7-43f8-b492-2959191e63ae
+ * https://mobbin.com/screens/14a47c59-4122-498b-ab2e-4ff6d611c85c
+ * "Available to trade" and Subtotal / Fee / Total after Coinbase Advanced:
+ * https://mobbin.com/screens/9b76c57a-9ae9-408f-bbd1-f4955a00d544
  */
 
-type Side = "buy" | "sell";
-type Tab = "market" | "limit" | "advanced";
-const NETWORK_FEE_SOL = 0.000005;
+const ORDER_TYPES: { id: OrderType; label: string; action: "token.market" | "token.limit" | "token.advanced" }[] = [
+  { id: "market", label: "Market", action: "token.market" },
+  { id: "limit", label: "Limit", action: "token.limit" },
+  { id: "advanced", label: "Advanced", action: "token.advanced" },
+];
 
-interface LadderRow extends TpSlLeg {
-  id: string;
-}
+const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
 
-function Row({ label, children, tone }: { label: ReactNode; children: ReactNode; tone?: string }) {
+/** Underline tabs for the order type (28 px; roving tabindex, Left/Right, Home/End). */
+function OrderTypeTabs({ value, onChange }: { value: OrderType; onChange: (t: OrderType) => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const bindings = useSettings((s) => s.hotkeys);
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = ORDER_TYPES.findIndex((t) => t.id === value);
+    let next = -1;
+    if (e.key === "ArrowRight") next = (i + 1) % ORDER_TYPES.length;
+    else if (e.key === "ArrowLeft") next = (i - 1 + ORDER_TYPES.length) % ORDER_TYPES.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = ORDER_TYPES.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    const t = ORDER_TYPES[next];
+    if (t) {
+      onChange(t.id);
+      refs.current[next]?.focus();
+    }
+  };
   return (
-    <div className="flex items-center justify-between gap-2 text-label">
-      <span className="text-fg-3">{label}</span>
-      <span className={cn("text-right", tone ?? "text-fg-1")}>{children}</span>
+    <div role="tablist" aria-label="Order type" onKeyDown={onKey} className="flex h-7 items-stretch gap-1 border-b border-hairline">
+      {ORDER_TYPES.map((t, i) => {
+        const active = t.id === value;
+        const key = bindings[t.action]?.[0];
+        return (
+          <button
+            key={t.id}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            title={key ? `${t.label} (${compactLabel(key)})` : t.label}
+            onClick={() => onChange(t.id)}
+            className={cn(
+              "focus-inset relative px-2 text-data font-medium transition-colors",
+              active ? "text-fg-1" : "text-fg-3 hover:text-fg-2",
+            )}
+          >
+            {t.label}
+            {active && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-/** Editable amount presets (pencil toggles edit mode). */
-function AmountPresets({
-  values,
-  unit,
-  onPick,
-  onEdit,
-  activeValue,
-}: {
-  values: number[];
-  unit: "SOL" | "%";
-  onPick: (v: number) => void;
-  onEdit: (values: number[]) => void;
-  activeValue: number | null;
-}) {
-  const [editing, setEditing] = useState(false);
-  return (
-    <div className="flex items-center gap-1">
-      <div className="grid flex-1 grid-cols-4 gap-1">
-        {values.map((v, i) =>
-          editing ? (
-            <NumberInput
-              // biome-ignore lint/suspicious/noArrayIndexKey: fixed four preset slots
-              key={i}
-              value={v}
-              onChange={(n) => {
-                const next = [...values];
-                next[i] = n ?? 0;
-                onEdit(next);
-              }}
-              min={0}
-              className="h-6 px-1"
-              inputClassName="text-center"
-              ariaLabel={`Preset ${i + 1}`}
-            />
-          ) : (
-            <button
-              // biome-ignore lint/suspicious/noArrayIndexKey: fixed four preset slots
-              key={i}
-              type="button"
-              onClick={() => onPick(v)}
-              className={cn(
-                "h-6 rounded-sm border text-label font-medium",
-                activeValue === v ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
-              )}
-            >
-              {unit === "SOL" ? fmtSolShort(v) : `${v}%`}
-            </button>
-          ),
-        )}
-      </div>
-      <button
-        type="button"
-        aria-label={editing ? "Done editing presets" : "Edit amount presets"}
-        title={editing ? "Done" : "Edit presets"}
-        onClick={() => setEditing((e) => !e)}
-        className="flex size-6 items-center justify-center rounded-sm text-fg-3 hover:bg-surface-3 hover:text-fg-1"
-      >
-        {editing ? <Check className="icon-sm" /> : <Pencil className="icon-sm" />}
-      </button>
-    </div>
-  );
+interface Cta {
+  label: string;
+  variant: "buy" | "sell" | "secondary";
+  disabled: boolean;
+  icon?: ReactNode;
+  run?: () => void;
+  note?: string;
 }
 
-function PositionStrip({ detail }: { detail: TokenDetail }) {
-  const position = useActivePosition(detail.summary.mint);
-  const solUsd = useMarket((s) => s.solUsd);
-  const [usd, setUsd] = useState(false);
-  const v = (sol: number) => (usd ? fmtUsd(sol * solUsd) : `${fmtSol(sol)}`);
-  const bought = position?.boughtSol ?? 0;
-  const sold = position?.soldSol ?? 0;
-  const holding = position?.valueSol ?? 0;
-  const pnl = (position?.realizedPnlSol ?? 0) + (position?.unrealizedPnlSol ?? 0);
-  return (
-    <div className="grid grid-cols-4 border-t border-hairline">
-      {[
-        { label: "Bought", value: v(bought), tone: "text-buy" },
-        { label: "Sold", value: v(sold), tone: "text-sell" },
-        { label: "Holding", value: v(holding), tone: "text-fg-1" },
-      ].map((c) => (
-        <div key={c.label} className="flex flex-col items-center justify-center gap-1 border-r border-hairline py-2">
-          <span className="zf-label">{c.label}</span>
-          <span className={cn("text-data font-medium", c.tone)}>{c.value}</span>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => setUsd((u) => !u)}
-        className="flex flex-col items-center justify-center gap-1 py-2 hover:bg-surface-3"
-        title="Toggle SOL / USD"
-      >
-        <span className="zf-label">PnL {usd ? "USD" : "SOL"}</span>
-        <span className={cn("text-data font-medium", pnl >= 0 ? "text-buy" : "text-sell")}>
-          {usd ? fmtUsd(pnl * solUsd) : fmtSignedSol(pnl)}
-          <span className="ml-1 text-micro">{fmtPnlPct(pnl, bought)}</span>
-        </span>
-      </button>
-    </div>
-  );
-}
-
-export function TradePanel({ detail }: { detail: TokenDetail }) {
+export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; layout?: "rail" | "wide" }) {
   const token = detail.summary;
-  const [side, setSide] = useState<Side>("buy");
-  const [tab, setTab] = useState<Tab>("market");
-  const preset = useSettings((s) => s.presets[s.activePreset]);
+  const mint = token.mint;
+  const ui = useTokenUi(
+    useShallow((s) => ({
+      side: s.side,
+      orderType: s.orderType,
+      buySol: s.buySol,
+      sellPct: s.sellPct,
+      sellSol: s.sellSol,
+      sellUnit: s.sellUnit,
+      triggerMetric: s.triggerMetric,
+      limitPriceSol: s.limitPriceSol,
+      ladder: s.ladder,
+      ladderMode: s.ladderMode,
+      oco: s.oco,
+      costOpen: s.costOpen,
+      setSide: s.setSide,
+      setOrderType: s.setOrderType,
+      setBuySol: s.setBuySol,
+      setSellPct: s.setSellPct,
+      setSellSol: s.setSellSol,
+      setSellUnit: s.setSellUnit,
+      setTriggerMetric: s.setTriggerMetric,
+      setLimitPriceSol: s.setLimitPriceSol,
+      setLadder: s.setLadder,
+      setLadderMode: s.setLadderMode,
+      setOco: s.setOco,
+      setCostOpen: s.setCostOpen,
+    })),
+  );
   const presetId = useSettings((s) => s.activePreset);
+  const preset = useSettings((s) => s.presets[s.activePreset]);
   const setPreset = useSettings((s) => s.setPreset);
+  const quickBuy = useSettings((s) => s.quickBuySol);
+  const caps = useSettings((s) => s.caps);
+  const thresholds = useSettings((s) => s.display.riskThresholds);
+  const quickKey = useSettings((s) => s.hotkeys["buy.quick"]?.[0]);
+  const buyKey = useSettings((s) => s.hotkeys["token.sideBuy"]?.[0]);
+  const sellKey = useSettings((s) => s.hotkeys["token.sideSell"]?.[0]);
+  const spentToday = useTrades((s) => s.spentToday());
   const status = useActiveStatus();
-  const position = useActivePosition(token.mint);
+  const position = useActivePosition(mint);
+  const activeAddress = useWallet((s) => s.activeAddress);
   const mode = useWallet((s) => s.mode);
-  const solUsd = useMarket((s) => s.solUsd);
-  const pending = useTrades((s) => s.items.some((t) => t.mint === token.mint && t.side === side && t.status === "pending"));
-  const limit = useTokenUi((s) => s.limit);
-  const setLimit = useTokenUi((s) => s.setLimit);
-
-  const [buySol, setBuySol] = useState<number | null>(preset.buyAmounts[1] ?? 0.25);
-  const [sellPct, setSellPct] = useState<number | null>(preset.sellPcts[3] ?? 100);
-  const [trigger, setTrigger] = useState<"mc" | "price">("mc");
-  const [ladder, setLadder] = useState<LadderRow[]>(() => [
-    { id: uid("leg"), kind: "take_profit", triggerPct: 100, sellPct: 50 },
-    { id: uid("leg"), kind: "take_profit", triggerPct: 300, sellPct: 50 },
-    { id: uid("leg"), kind: "stop_loss", triggerPct: 40, sellPct: 100 },
-  ]);
-  const [oco, setOco] = useState(true);
-  const [migrationSell, setMigrationSell] = useState(false);
-  const [migrationPct, setMigrationPct] = useState<number | null>(25);
+  const locked = useWallet((s) => s.service.locked);
+  const provider = useWallet((s) => s.service.connected?.provider ?? "phantom");
+  const connection = useMarket((s) => s.connection);
+  const requestUnlock = useUi((s) => s.requestUnlock);
+  const openSettings = useUi((s) => s.openSettings);
+  const { quote, solUsd } = useQuote();
+  const [focusWithin, setFocusWithin] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [migrationOn, setMigrationOn] = useState(false);
+  const [migrationPct, setMigrationPct] = useState<number | null>(25);
 
-  const holding = position?.holdingTokens ?? 0;
+  const side = ui.side;
+  const orderType = ui.orderType;
+  const exec = preset[side];
+  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? 125;
+  const venue = venueShort(token.venue);
   const available = status ? Math.max(0, status.solBalance - status.reservedSol) : 0;
-  const onCurve = token.migratedAt === null;
-  const settings = preset[side];
+  const holding = position?.holdingTokens ?? 0;
+  const firstBuy = holding <= 0;
+  const feedOk = connection === "live" || connection === "degraded";
+  const onCurve = token.migratedAt === null && !!detail.curve && !detail.curve.complete;
+  const buySol = ui.buySol ?? quickBuy;
+  const sellPct = ui.sellPct;
+  const sellSol = ui.sellSol;
+  const sellUnit = orderType === "market" ? ui.sellUnit : "pct";
 
-  // The Limit tab drives the chart's draggable target line (seeded from the price when it opens).
+  // Limit draft: seeded when the Limit tab opens; the chart draws and drags it.
   const priceRef = useRef(token.priceSol);
   priceRef.current = token.priceSol;
   useEffect(() => {
-    if (tab === "limit") {
-      const current = useTokenUi.getState().limit;
-      setLimit({ active: true, side, priceSol: current.priceSol ?? priceRef.current * (side === "buy" ? 0.8 : 1.5) });
-    } else setLimit({ active: false });
-  }, [tab, side, setLimit]);
-  useEffect(() => () => setLimit({ active: false, priceSol: null }), [setLimit]);
+    if (orderType === "limit" && useTokenUi.getState().limitPriceSol === null) {
+      useTokenUi.getState().setLimitPriceSol(defaultLimitPrice(useTokenUi.getState().side, priceRef.current));
+    }
+  }, [orderType]);
+  const limitPrice = ui.limitPriceSol ?? defaultLimitPrice(side, token.priceSol);
+
+  const sellTokens =
+    sellUnit === "pct" ? (holding * (sellPct ?? 0)) / 100 : token.priceSol > 0 ? Math.min(holding, (sellSol ?? 0) / token.priceSol) : 0;
 
   const buyQuote = useMemo(
-    () => (side === "buy" && buySol ? quoteBuy(detail.curve, detail.pool, buySol) : null),
+    () => (side === "buy" && buySol > 0 ? quoteBuy(detail.curve, detail.pool, buySol) : null),
     [side, buySol, detail.curve, detail.pool],
   );
-  const sellTokens = (holding * (sellPct ?? 0)) / 100;
   const sellQuote = useMemo(
-    () => (side === "sell" ? quoteSell(detail.curve, detail.pool, sellTokens) : null),
+    () => (side === "sell" && sellTokens > 0 ? quoteSell(detail.curve, detail.pool, sellTokens) : null),
     [side, sellTokens, detail.curve, detail.pool],
   );
-  const extra = settings.priorityFeeSol + settings.tipSol;
 
-  const limitPrice = limit.priceSol ?? token.priceSol;
-  const limitValue = trigger === "mc" ? limitPrice * token.supply * solUsd : limitPrice;
-  const distancePct = token.priceSol > 0 ? (limitPrice / token.priceSol - 1) * 100 : 0;
-  const setLimitFromValue = (v: number | null) => {
-    if (v === null || v <= 0) return;
-    setLimit({ priceSol: trigger === "mc" ? v / (token.supply * solUsd) : v });
-  };
+  const legs: TpSlLeg[] = ui.ladder
+    .filter((l) => l.triggerPct > 0 && l.sellPct > 0)
+    .map(({ kind, triggerPct, sellPct: pct }) => ({ kind, triggerPct, sellPct: pct }));
+  const exitCount = legs.length + (migrationOn && onCurve ? 1 : 0);
 
-  const submitMarket = async () => {
-    if (side === "buy") {
-      if (buySol) await buy({ mint: token.mint, sol: buySol, source: "token" });
-    } else if (sellPct) await sell({ mint: token.mint, pct: sellPct, source: "token" });
+  let costKind: CostKind;
+  let cost: CostLines;
+  if (side === "buy") {
+    costKind = orderType === "limit" ? "limitBuy" : "buy";
+    cost = buyCost(orderType === "limit" ? null : buyQuote, buySol, exec, firstBuy, feeBps);
+  } else {
+    costKind = orderType === "limit" ? "limitSell" : orderType === "advanced" ? "ladder" : "sell";
+    cost = sellCost(sellQuote, exec, feeBps);
+  }
+
+  const issue =
+    side === "buy"
+      ? buyIssue({
+          sol: ui.buySol ?? quickBuy,
+          available,
+          settings: exec,
+          firstBuy,
+          perTradeCap: caps.perTradeSol,
+          dailyCap: caps.dailySol,
+          spentToday,
+        })
+      : null;
+
+  // ---- actions ----
+  const submitMarket = () => {
+    if (side === "buy") void buy({ mint, sol: buySol, source: "token" });
+    else if (sellUnit === "pct" && sellPct) void sell({ mint, pct: sellPct, source: "token" });
+    else if (sellUnit === "sol" && sellSol) void sell({ mint, solValue: sellSol, source: "token" });
   };
 
   const submitLimit = async () => {
     setBusy(true);
-    await placeLimit({
-      mint: token.mint,
-      side,
-      trigger: { metric: trigger, direction: limitPrice < token.priceSol ? "below" : "above", value: limitValue },
-      size: side === "buy" ? { kind: "sol", sol: buySol ?? 0 } : { kind: "pct", pct: sellPct ?? 100 },
-    });
-    setBusy(false);
+    try {
+      await armLimitDraft(token);
+    } finally {
+      setBusy(false);
+    }
   };
-
-  const legs: TpSlLeg[] = ladder
-    .filter((l) => l.triggerPct > 0 && l.sellPct > 0)
-    .map(({ kind, triggerPct, sellPct: pct }) => ({ kind, triggerPct, sellPct: pct }));
 
   const submitAdvanced = async () => {
     setBusy(true);
-    if (side === "buy" && buySol) {
-      const receipts = await buy({ mint: token.mint, sol: buySol, source: "token" });
-      const fill = receipts.find((r) => r.status === "confirmed")?.fill;
-      if (fill) {
-        if (legs.length > 0) await armTpSl({ mint: token.mint, entryPriceSol: fill.priceSol, legs, oco });
-        if (migrationSell && onCurve && migrationPct)
-          await armMigration({ mint: token.mint, side: "sell", size: { kind: "pct", pct: migrationPct } });
+    try {
+      if (side === "buy") {
+        const receipts = await buy({ mint, sol: buySol, source: "token" });
+        const fill = receipts.find((r) => r.status === "confirmed")?.fill;
+        if (fill) {
+          if (legs.length > 0) await armTpSl({ mint, entryPriceSol: fill.priceSol, legs, oco: ui.oco });
+          if (migrationOn && onCurve && migrationPct) await armMigration({ mint, side: "sell", size: { kind: "pct", pct: migrationPct } });
+        }
+      } else if (position && position.avgEntryPriceSol > 0) {
+        if (legs.length > 0) await armTpSl({ mint, entryPriceSol: position.avgEntryPriceSol, legs, oco: ui.oco });
+        if (migrationOn && onCurve && migrationPct) await armMigration({ mint, side: "sell", size: { kind: "pct", pct: migrationPct } });
       }
-    } else if (side === "sell" && migrationSell && onCurve && migrationPct) {
-      await armMigration({ mint: token.mint, side: "sell", size: { kind: "pct", pct: migrationPct } });
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   };
 
-  const armOnPosition = async () => {
-    if (!position || position.avgEntryPriceSol <= 0) return;
-    setBusy(true);
-    await armTpSl({ mint: token.mint, entryPriceSol: position.avgEntryPriceSol, legs, oco });
-    setBusy(false);
+  // ---- CTA ----
+  const sym = token.symbol;
+  const wallet = PROVIDER[provider] ?? "your wallet";
+  const direct = mode === "direct";
+  const limitText = (() => {
+    const v = triggerValue(limitPrice, ui.triggerMetric, quote, token.supply, solUsd);
+    if (ui.triggerMetric === "price") return `${quote === "USD" ? "$" : ""}${fmtPriceText(v)}`;
+    return quote === "USD" ? fmtCompact(v) : `${fmtSol(v)} SOL`;
+  })();
+
+  let cta: Cta;
+  if (!activeAddress) {
+    cta = { label: "Connect wallet", variant: "secondary", disabled: false, icon: <Wallet />, run: () => navigateTo("/onboarding") };
+  } else if (locked && (!direct || orderType !== "market")) {
+    cta = {
+      label: "Unlock to trade",
+      variant: "secondary",
+      disabled: false,
+      icon: <Lock />,
+      run: () => requestUnlock(`Unlock to trade $${sym}`),
+    };
+  } else if (!feedOk) {
+    cta = { label: "Feed offline", variant: side, disabled: true };
+  } else if (side === "buy") {
+    if (!(buySol > 0)) cta = { label: "Enter an amount", variant: "buy", disabled: true };
+    else if (issue) cta = { label: issue.cta, variant: "buy", disabled: true };
+    else if (orderType === "market")
+      cta = {
+        label: direct ? `Buy in ${wallet} · ${fmtSolShort(buySol)} SOL` : `Buy ${sym} · ${fmtSolShort(buySol)} SOL`,
+        variant: "buy",
+        disabled: false,
+        run: submitMarket,
+        note: direct ? "Approve in your wallet" : undefined,
+      };
+    else if (orderType === "limit")
+      cta = {
+        label: `Arm limit buy · ${fmtSolShort(buySol)} SOL @ ${limitText}`,
+        variant: "buy",
+        disabled: busy,
+        run: () => void submitLimit(),
+      };
+    else
+      cta = {
+        label: `Buy ${sym} · ${fmtSolShort(buySol)} SOL${exitCount > 0 ? ` + ${exitCount} exit${exitCount === 1 ? "" : "s"}` : ""}`,
+        variant: "buy",
+        disabled: busy,
+        run: () => void submitAdvanced(),
+        note: direct ? "Approve in your wallet" : undefined,
+      };
+  } else if (holding <= 0) {
+    cta = { label: `No ${sym} to sell`, variant: "sell", disabled: true };
+  } else if (orderType === "advanced") {
+    cta =
+      exitCount === 0
+        ? { label: "Add an exit level", variant: "sell", disabled: true }
+        : {
+            label: `Arm ${exitCount} exit order${exitCount === 1 ? "" : "s"}`,
+            variant: "sell",
+            disabled: busy || !(position && position.avgEntryPriceSol > 0),
+            run: () => void submitAdvanced(),
+          };
+  } else if (sellUnit === "pct" ? !(sellPct && sellPct > 0) : !(sellSol && sellSol > 0)) {
+    cta = { label: "Enter an amount", variant: "sell", disabled: true };
+  } else if (orderType === "limit") {
+    cta = {
+      label: `Arm limit sell · ${fmtSolShort(sellPct ?? 0)}% @ ${limitText}`,
+      variant: "sell",
+      disabled: busy,
+      run: () => void submitLimit(),
+    };
+  } else {
+    const receive = sellQuote ? ` · ~${fmtSol(cost.totalSol)} SOL` : "";
+    const amount = sellUnit === "pct" ? `${fmtSolShort(sellPct ?? 0)}%` : `${fmtSolShort(sellSol ?? 0)} SOL`;
+    cta = {
+      label: direct ? `Sell in ${wallet} · ${amount}` : `Sell ${amount}${receive}`,
+      variant: "sell",
+      disabled: false,
+      run: submitMarket,
+      note: direct ? "Approve in your wallet" : undefined,
+    };
+  }
+  const fire = () => {
+    if (!cta.disabled) cta.run?.();
   };
 
-  const ctaVariant = side === "buy" ? "buy" : "sell";
-  const amountValid = side === "buy" ? (buySol ?? 0) > 0 : (sellPct ?? 0) > 0 && holding > 0;
+  const risk = side === "buy" ? buyRiskReasons(token, thresholds) : [];
+
+  // ---- sections ----
+  const amount =
+    side === "buy" ? (
+      <AmountField
+        inputId="trade-amount"
+        value={ui.buySol ?? quickBuy}
+        onChange={ui.setBuySol}
+        unit="SOL"
+        step={solStep}
+        presets={preset.buyAmounts}
+        presetLabel={fmtSolShort}
+        onSavePresets={(v) => setPreset(presetId, { buyAmounts: v })}
+        issue={issue}
+        onIssueAction={() => openSettings("trading")}
+        onEnter={fire}
+        ariaLabel="Buy amount in SOL"
+        right={
+          <>
+            Bal <span className="zf-num text-fg-2">{fmtSol(available)}</span> SOL ·
+            <button
+              type="button"
+              onClick={() => ui.setBuySol(maxBuySol(available, exec, firstBuy))}
+              className="font-medium text-fg-1 hover:underline"
+              title="Leaves the reserve for fees, tip and rent"
+            >
+              Max
+            </button>
+          </>
+        }
+      />
+    ) : (
+      <AmountField
+        inputId="trade-amount"
+        value={sellUnit === "pct" ? sellPct : sellSol}
+        onChange={sellUnit === "pct" ? ui.setSellPct : ui.setSellSol}
+        unit={sellUnit === "pct" ? "%" : "SOL"}
+        step={sellUnit === "pct" ? 1 : solStep}
+        max={sellUnit === "pct" ? 100 : undefined}
+        presets={sellUnit === "pct" ? preset.sellPcts : preset.instantSellSol}
+        presetLabel={(v) => (sellUnit === "pct" ? `${fmtSolShort(v)}%` : fmtSolShort(v))}
+        onSavePresets={(v) => setPreset(presetId, sellUnit === "pct" ? { sellPcts: v } : { instantSellSol: v })}
+        onEnter={fire}
+        ariaLabel={sellUnit === "pct" ? "Share of the holding to sell" : "SOL value to sell"}
+        right={
+          <>
+            Bal <span className="zf-num text-fg-2">{fmtTokens(holding)}</span> {sym} ·
+            <button
+              type="button"
+              onClick={() => {
+                ui.setSellUnit("pct");
+                ui.setSellPct(100);
+              }}
+              className="font-medium text-fg-1 hover:underline"
+            >
+              Max
+            </button>
+            {orderType === "market" && (
+              <Segmented<"pct" | "sol">
+                size="xs"
+                className="ml-1"
+                value={sellUnit}
+                onChange={ui.setSellUnit}
+                options={[
+                  { value: "pct", label: "%" },
+                  { value: "sol", label: "SOL" },
+                ]}
+                label="Sell amount unit"
+              />
+            )}
+          </>
+        }
+      />
+    );
+
+  const refMcQuote = triggerValue(
+    side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : token.priceSol,
+    "mc",
+    quote,
+    token.supply,
+    solUsd,
+  );
+
+  const fields = (
+    <>
+      {orderType === "limit" && (
+        <LimitFields
+          token={token}
+          priceSol={limitPrice}
+          onPriceSol={ui.setLimitPriceSol}
+          metric={ui.triggerMetric}
+          onMetric={ui.setTriggerMetric}
+          quote={quote}
+          solUsd={solUsd}
+          onEnter={fire}
+        />
+      )}
+      {orderType === "advanced" && (
+        <ExitLadder
+          ladder={ui.ladder}
+          onChange={ui.setLadder}
+          mode={ui.ladderMode}
+          onMode={ui.setLadderMode}
+          oco={ui.oco}
+          onOco={ui.setOco}
+          refMc={refMcQuote}
+          quote={quote}
+          afterBuy={side === "buy"}
+          migration={onCurve ? { on: migrationOn, pct: migrationPct, onToggle: setMigrationOn, onPct: setMigrationPct } : null}
+        />
+      )}
+    </>
+  );
+
+  const summary = (
+    <>
+      <ExecutionSummary side={side} />
+      <CostBreakdown
+        kind={costKind}
+        cost={cost}
+        symbol={sym}
+        venue={venue}
+        landing={exec.landing}
+        slippagePct={exec.slippagePct}
+        open={ui.costOpen}
+        onToggle={() => ui.setCostOpen(!ui.costOpen)}
+      />
+      {risk.length > 0 && (
+        <p className="flex items-start gap-1 text-label text-warn">
+          <AlertTriangle className="icon-xs mt-px shrink-0" />
+          <span>{risk.join(" · ")}. Buys wait on a 3 s confirm.</span>
+        </p>
+      )}
+      <div>
+        <Button
+          variant={cta.variant}
+          size="xl"
+          className="w-full"
+          disabled={cta.disabled}
+          aria-busy={busy || undefined}
+          icon={cta.icon}
+          onClick={fire}
+        >
+          <span className="truncate">{cta.label}</span>
+        </Button>
+        <div className="flex h-4 items-center justify-center gap-1 pt-1 text-label text-fg-3">
+          {cta.note ? (
+            <span>{cta.note}</span>
+          ) : (
+            <span className={cn("flex items-center gap-1", !(focusWithin && !cta.disabled && cta.variant !== "secondary") && "invisible")}>
+              <Kbd>Enter</Kbd>
+              {side === "buy" && orderType === "market" && quickKey && (
+                <>
+                  or <Hotkey binding={quickKey} />
+                </>
+              )}
+            </span>
+          )}
+        </div>
+      </div>
+    </>
+  );
+
+  const head = (
+    <>
+      <Segmented<TradeSide>
+        size="side"
+        className="w-full"
+        value={side}
+        onChange={ui.setSide}
+        tone={(v) => (v === "buy" ? "buy" : "sell")}
+        options={[
+          { value: "buy", label: "Buy", title: `Buy (${compactLabel(buyKey)})` },
+          { value: "sell", label: "Sell", title: `Sell (${compactLabel(sellKey)})` },
+        ]}
+        label="Side"
+      />
+      <OrderTypeTabs value={orderType} onChange={ui.setOrderType} />
+    </>
+  );
 
   return (
-    <div className="flex flex-col">
-      <div className="space-y-3 p-3">
-        <Segmented<Side>
-          className="w-full"
-          value={side}
-          onChange={setSide}
-          tone={(v) => (v === "buy" ? "buy" : "sell")}
-          options={[
-            { value: "buy", label: "Buy" },
-            { value: "sell", label: "Sell" },
-          ]}
-          label="Side"
-        />
-        <div className="flex border-b border-hairline">
-          {(["market", "limit", "advanced"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                "-mb-px border-b-2 px-2 pb-2 text-data font-medium capitalize",
-                tab === t ? "border-fg-1 text-fg-1" : "border-transparent text-fg-2 hover:text-fg-1",
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-
-        {tab === "limit" && (
+    // biome-ignore lint/a11y/noStaticElementInteractions: tracks focus-within for the Enter hint only
+    <div
+      onFocus={() => setFocusWithin(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusWithin(false);
+      }}
+    >
+      {layout === "wide" ? (
+        <div className="grid grid-cols-2 gap-6 p-3">
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="zf-label">Trigger on</span>
-              <Segmented<"mc" | "price">
-                size="xs"
-                value={trigger}
-                onChange={setTrigger}
-                options={[
-                  { value: "mc", label: "Market cap" },
-                  { value: "price", label: "Price" },
-                ]}
-                label="Limit trigger"
-              />
-            </div>
-            <NumberInput
-              value={Number(limitValue.toPrecision(5))}
-              onChange={setLimitFromValue}
-              prefix={<span className="text-label">{trigger === "mc" ? "Target MC $" : "Target price"}</span>}
-              suffix={trigger === "price" ? "SOL" : undefined}
-              alignRight
-              ariaLabel="Limit target"
-            />
-            <input
-              type="range"
-              min={-99}
-              max={100}
-              step={1}
-              value={Math.max(-99, Math.min(100, Math.round(distancePct)))}
-              onChange={(e) => setLimit({ priceSol: token.priceSol * (1 + Number(e.target.value) / 100) })}
-              className="w-full accent-fg"
-              aria-label="Distance from current price"
-            />
-            <Row label="Distance from current">
-              <span className={distancePct >= 0 ? "text-buy" : "text-sell"}>{fmtPct(distancePct, { signed: true })}</span>
-            </Row>
+            {head}
+            {amount}
+            {fields}
           </div>
-        )}
-
-        {side === "buy" ? (
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-label">
-              <span className="zf-label">Amount</span>
-              <span className="text-fg-3">
-                Available <span className="text-fg-1">{fmtSol(available)} SOL</span>
-              </span>
-            </div>
-            <NumberInput
-              value={buySol}
-              onChange={setBuySol}
-              suffix="SOL"
-              min={0}
-              alignRight
-              className="h-8"
-              onEnter={() => tab === "market" && amountValid && void submitMarket()}
-              ariaLabel="Buy amount in SOL"
-            />
-            <AmountPresets
-              values={preset.buyAmounts}
-              unit="SOL"
-              activeValue={buySol}
-              onPick={setBuySol}
-              onEdit={(v) => setPreset(presetId, { buyAmounts: v })}
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-label">
-              <span className="zf-label">Amount</span>
-              <span className="text-fg-3">
-                Holding <span className="text-fg-1">{fmtTokens(holding)}</span>
-                {position && position.valueSol > 0 && <span> · {fmtSol(position.valueSol)} SOL</span>}
-              </span>
-            </div>
-            <NumberInput
-              value={sellPct}
-              onChange={setSellPct}
-              suffix="%"
-              min={0}
-              max={100}
-              alignRight
-              className="h-8"
-              onEnter={() => tab === "market" && amountValid && void submitMarket()}
-              ariaLabel="Sell percentage"
-            />
-            <AmountPresets
-              values={preset.sellPcts}
-              unit="%"
-              activeValue={sellPct}
-              onPick={setSellPct}
-              onEdit={(v) => setPreset(presetId, { sellPcts: v })}
-            />
-          </div>
-        )}
-
-        {tab === "advanced" && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="zf-label">Exit ladder (TP / SL)</span>
-              <button
-                type="button"
-                onClick={() => setLadder((l) => [...l, { id: uid("leg"), kind: "take_profit", triggerPct: 50, sellPct: 25 }])}
-                className="flex items-center gap-1 text-label text-fg-2 hover:text-fg-1"
-              >
-                <Plus className="icon-xs" /> Add level
-              </button>
-            </div>
-            {ladder.map((row) => (
-              <div key={row.id} className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1">
-                <Segmented<"take_profit" | "stop_loss">
-                  size="xs"
-                  value={row.kind}
-                  onChange={(kind) => setLadder((l) => l.map((x) => (x.id === row.id ? { ...x, kind } : x)))}
-                  tone={(v) => (v === "take_profit" ? "buy" : "sell")}
-                  options={[
-                    { value: "take_profit", label: "TP" },
-                    { value: "stop_loss", label: "SL" },
-                  ]}
-                  label="Leg type"
-                />
-                <NumberInput
-                  value={row.triggerPct}
-                  onChange={(v) => setLadder((l) => l.map((x) => (x.id === row.id ? { ...x, triggerPct: v ?? 0 } : x)))}
-                  prefix={<span className="text-micro">{row.kind === "take_profit" ? "+" : "−"}</span>}
-                  suffix="%"
-                  min={0}
-                  alignRight
-                  className="h-6"
-                  ariaLabel="Trigger distance from entry"
-                />
-                <NumberInput
-                  value={row.sellPct}
-                  onChange={(v) => setLadder((l) => l.map((x) => (x.id === row.id ? { ...x, sellPct: v ?? 0 } : x)))}
-                  prefix={<span className="text-micro">sell</span>}
-                  suffix="%"
-                  min={0}
-                  max={100}
-                  alignRight
-                  className="h-6"
-                  ariaLabel="Share of holding to sell"
-                />
-                <button
-                  type="button"
-                  aria-label="Remove level"
-                  onClick={() => setLadder((l) => l.filter((x) => x.id !== row.id))}
-                  className="flex size-6 items-center justify-center text-fg-3 hover:text-sell"
-                >
-                  <Trash2 className="icon-sm" />
-                </button>
-              </div>
-            ))}
-            <Checkbox
-              checked={oco}
-              onChange={setOco}
-              label="Pair each TP with an SL (OCO)"
-              hint="A TP and its SL share one durable nonce: when one lands the other can't."
-            />
-            {onCurve && (
-              <div className="flex items-center gap-2">
-                <Checkbox checked={migrationSell} onChange={setMigrationSell} label="Sell on migration" />
-                <NumberInput
-                  value={migrationPct}
-                  onChange={setMigrationPct}
-                  suffix="%"
-                  min={1}
-                  max={100}
-                  alignRight
-                  className="ml-auto h-6 w-20"
-                  ariaLabel="Migration sell share"
-                />
-              </div>
-            )}
-            <p className="text-micro text-fg-3">Exits are pre-signed on durable nonces and run with this tab closed.</p>
-          </div>
-        )}
-
-        <div className="space-y-1 rounded-sm border border-hairline bg-surface-2 p-2">
-          {side === "buy" ? (
-            <>
-              <Row label="You receive">{buyQuote ? `≈ ${fmtTokens(buyQuote.tokens)} ${token.symbol}` : "–"}</Row>
-              <Row label="Price impact" tone={buyQuote && buyQuote.impactPct > 10 ? "text-warn" : undefined}>
-                {buyQuote ? fmtPct(buyQuote.impactPct) : "–"}
-              </Row>
-              <Row label={`Venue fee (${((detail.pool?.feeBps ?? detail.curve?.feeBps ?? 125) / 100).toFixed(2)}%)`}>
-                {buyQuote ? `${fmtSol(buyQuote.venueFeeSol)} SOL` : "–"}
-              </Row>
-            </>
-          ) : (
-            <>
-              <Row label="You receive">{sellQuote ? `≈ ${fmtSol(sellQuote.sol)} SOL` : "–"}</Row>
-              <Row label="Price impact" tone={sellQuote && sellQuote.impactPct > 10 ? "text-warn" : undefined}>
-                {sellQuote ? fmtPct(sellQuote.impactPct) : "–"}
-              </Row>
-              <Row label="Venue fee">{sellQuote ? `${fmtSol(sellQuote.venueFeeSol)} SOL` : "–"}</Row>
-            </>
-          )}
-          <Row label="Priority + tip">{fmtSol(extra)} SOL</Row>
-          <Row label="Network fee">{fmtSol(NETWORK_FEE_SOL)} SOL</Row>
-          <Row
-            label={
-              <Tooltip content="zerofee charges no platform fee. Venue fees go to the launchpad or AMM; tips and priority fees go to the network.">
-                <span className="cursor-help underline decoration-hairline-strong decoration-dotted underline-offset-2">Platform fee</span>
-              </Tooltip>
-            }
-            tone="text-buy"
-          >
-            0.000 SOL
-          </Row>
-          {tab === "limit" && (
-            <Row label="Reserved while armed">
-              {side === "buy" ? `${fmtSol((buySol ?? 0) + extra + 0.002)} SOL` : `${fmtSol(extra + 0.001)} SOL`}
-            </Row>
-          )}
-        </div>
-
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <PresetSwitch size="xs" />
-            <PresetSettingsRow side={side} className="flex-1" />
+            {summary}
+            <PositionStrip mint={mint} symbol={sym} position={position} />
           </div>
         </div>
-
-        {tab === "market" && (
-          <Button variant={ctaVariant} size="lg" className="w-full" disabled={!amountValid} onClick={() => void submitMarket()}>
-            {pending && <LoaderCircle className="icon-sm animate-spin" />}
-            {side === "buy" ? `Buy ${token.symbol}` : `Sell ${sellPct ?? 0}% ${token.symbol}`}
-          </Button>
-        )}
-        {tab === "limit" && (
-          <Button variant={ctaVariant} size="lg" className="w-full" disabled={!amountValid || busy} onClick={() => void submitLimit()}>
-            {busy && <LoaderCircle className="icon-sm animate-spin" />}
-            {side === "buy" ? "Buy" : "Sell"} @ {trigger === "mc" ? `${fmtUsd(limitValue)} MC` : `${fmtPriceText(limitValue)} SOL`}
-          </Button>
-        )}
-        {tab === "advanced" && (
-          <div className="space-y-2">
-            {side === "buy" ? (
-              <Button variant="buy" size="lg" className="w-full" disabled={!amountValid || busy} onClick={() => void submitAdvanced()}>
-                {busy && <LoaderCircle className="icon-sm animate-spin" />}
-                Buy {buySol ? fmtSolShort(buySol) : 0} SOL + arm {legs.length + (migrationSell && onCurve ? 1 : 0)} exits
-              </Button>
-            ) : (
-              <Button
-                variant="sell"
-                size="lg"
-                className="w-full"
-                disabled={!migrationSell || !onCurve || holding <= 0 || busy}
-                onClick={() => void submitAdvanced()}
-              >
-                Arm migration sell
-              </Button>
-            )}
-            {holding > 0 && legs.length > 0 && (
-              <Button variant="secondary" size="md" className="w-full" disabled={busy} onClick={() => void armOnPosition()}>
-                Arm ladder on current position (entry {fmtPriceText(position?.avgEntryPriceSol ?? 0)} SOL)
-              </Button>
-            )}
+      ) : (
+        <>
+          <div className="space-y-2 p-3">
+            {head}
+            {amount}
+            {fields}
+            {summary}
           </div>
-        )}
-        <p className="text-micro text-fg-3">
-          {mode === "instant"
-            ? "Instant mode: the trading wallet in this browser signs, no popup."
-            : "Direct mode: approve each trade in your connected wallet."}
-        </p>
-      </div>
-      <PositionStrip detail={detail} />
+          <PositionStrip mint={mint} symbol={sym} position={position} />
+        </>
+      )}
     </div>
   );
 }

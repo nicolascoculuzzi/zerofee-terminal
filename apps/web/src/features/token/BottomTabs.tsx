@@ -1,93 +1,121 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router";
-import { Segmented } from "../../components/ui/controls";
+import { type KeyboardEvent, useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
+import { fmtCount } from "../../lib/format";
+import { compactLabel } from "../../lib/hotkeys";
 import type { TokenDetail } from "../../protocol";
-import { useMarket } from "../../state/market";
-import { isOpenOrder, useOrders } from "../../state/orders";
-import { useActiveStatus } from "../../state/wallet";
-import { PositionsTable } from "../portfolio/PositionsTable";
+import { useSettings } from "../../state/settings";
+import { useToken } from "../../state/token";
+import { DevTokens } from "./DevTokens";
 import { HoldersTable, TopTradersTable } from "./HoldersTables";
 import { TokenInfo } from "./TokenInfo";
-import { TokenOrders } from "./TokenOrders";
+import { TokenOrders, useOpenOrderCount } from "./TokenOrders";
+import { TokenPositions, useOpenPositionCount } from "./TokenPositions";
 import { TradesTable } from "./TradesTable";
+import { type BottomTab, useTokenUi } from "./tokenUi";
 
-type Tab = "trades" | "holders" | "traders" | "positions" | "orders" | "info";
-
-/**
- * Bottom panel tabs (Trades, Holders, Top Traders, Positions, Orders), after Kraken Pro's
- * bottom tab strip https://mobbin.com/screens/7cef61a7-167f-4abd-ab8a-effc2538da6f.
- * `withInfo` adds the token-info grid as a tab on narrow screens.
+/*
+ * Bottom panel tabs (DESIGN.md 4.8, 5.2): 32/36 px underline tabs, 12/500 labels, counts in
+ * text-3 after the label ("Trades 1.2K"), the active tab text-1 with a 2 px accent bar. A
+ * tablist with roving tabindex (Left/Right, Home/End); Shift+1…6 switch tabs. "Price chart |
+ * Depth chart" underline tabs after Coinbase Advanced:
+ * https://mobbin.com/screens/f8afc154-e5c8-4587-ab43-93c4799a979a
  */
+
+export const TAB_ORDER: BottomTab[] = ["trades", "positions", "orders", "holders", "traders", "dev"];
+
+const LABEL: Record<BottomTab, string> = {
+  trades: "Trades",
+  positions: "Positions",
+  orders: "Orders",
+  holders: "Holders",
+  traders: "Top traders",
+  dev: "Dev tokens",
+  info: "Info",
+};
+
 export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; withInfo?: boolean }) {
-  const [tab, setTab] = useState<Tab>("trades");
-  const [currency, setCurrency] = useState<"SOL" | "USD">("SOL");
-  const status = useActiveStatus();
-  const solUsd = useMarket((s) => s.solUsd);
-  const byId = useOrders((s) => s.byId);
-  const mint = detail.summary.mint;
-  const openForToken = useMemo(() => Object.values(byId).filter((o) => o.mint === mint && isOpenOrder(o)).length, [byId, mint]);
-  const positions = useMemo(() => {
-    const list = (status?.positions ?? []).filter((p) => !p.closed || p.mint === mint);
-    return [...list].sort((a, b) => (a.mint === mint ? -1 : b.mint === mint ? 1 : b.lastTradeAt - a.lastTradeAt));
-  }, [status, mint]);
+  const tab = useTokenUi((s) => s.tab);
+  const setTab = useTokenUi((s) => s.setTab);
+  const keys = useSettings((s) => s.hotkeys);
+  const trades = useToken((s) => s.trades.length);
+  const orders = useOpenOrderCount(detail.summary.mint);
+  const positions = useOpenPositionCount();
+  const tabs: BottomTab[] = withInfo ? [...TAB_ORDER, "info"] : TAB_ORDER;
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const counts: Partial<Record<BottomTab, number>> = {
+    trades,
+    positions,
+    orders,
+    holders: detail.summary.holders,
+  };
 
-  const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: "trades", label: "Trades" },
-    { id: "holders", label: "Holders", count: detail.summary.holders },
-    { id: "traders", label: "Top Traders" },
-    { id: "positions", label: "Positions", count: positions.filter((p) => !p.closed).length },
-    { id: "orders", label: "Orders", count: openForToken },
-    ...(withInfo ? [{ id: "info" as const, label: "Info" }] : []),
-  ];
+  // The Info tab only exists at 1024–1279 px; fall back when the layout drops it.
+  useEffect(() => {
+    if (!withInfo && tab === "info") setTab("trades");
+  }, [withInfo, tab, setTab]);
 
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.indexOf(tab);
+    let next = -1;
+    if (e.key === "ArrowRight") next = (i + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") next = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    const t = tabs[next];
+    if (t) {
+      setTab(t);
+      refs.current[next]?.focus();
+    }
+  };
+
+  const panelId = `token-tab-${tab}`;
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface-1">
-      <div className="flex h-9 shrink-0 items-end gap-1 overflow-x-auto border-b border-hairline px-2">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "-mb-px flex h-9 shrink-0 items-center gap-1 border-b-2 px-2 text-data font-medium",
-              tab === t.id ? "border-fg-1 text-fg-1" : "border-transparent text-fg-2 hover:text-fg-1",
-            )}
-          >
-            {t.label}
-            {t.count !== undefined && t.count > 0 && <span className="text-label text-fg-3">{t.count.toLocaleString("en-US")}</span>}
-          </button>
-        ))}
-        {tab === "positions" && (
-          <div className="mb-1 ml-auto shrink-0">
-            <Segmented<"SOL" | "USD">
-              size="xs"
-              value={currency}
-              onChange={setCurrency}
-              options={[
-                { value: "SOL", label: "SOL" },
-                { value: "USD", label: "USD" },
-              ]}
-              label="Positions currency"
-            />
-          </div>
-        )}
-        {tab === "orders" && (
-          <Link to="/orders" className="mb-2 ml-auto shrink-0 text-label text-fg-2 hover:text-fg-1">
-            All armed orders
-          </Link>
-        )}
+      <div
+        role="tablist"
+        aria-label="Token tables"
+        onKeyDown={onKey}
+        className="flex h-panel-header shrink-0 items-stretch gap-1 overflow-x-auto border-b border-hairline px-2"
+      >
+        {tabs.map((t, i) => {
+          const active = t === tab;
+          const count = counts[t];
+          const binding = i < 6 ? keys[`token.tab${i + 1}` as "token.tab1"]?.[0] : undefined;
+          return (
+            <button
+              key={t}
+              ref={(el) => {
+                refs.current[i] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`token-tab-btn-${t}`}
+              aria-selected={active}
+              aria-controls={`token-tab-${t}`}
+              tabIndex={active ? 0 : -1}
+              title={binding ? `${LABEL[t]} (${compactLabel(binding)})` : LABEL[t]}
+              onClick={() => setTab(t)}
+              className={cn(
+                "focus-inset relative flex shrink-0 items-center gap-1 px-2 text-data font-medium whitespace-nowrap transition-colors",
+                active ? "text-fg-1" : "text-fg-3 hover:text-fg-2",
+              )}
+            >
+              {LABEL[t]}
+              {count !== undefined && count > 0 && <span className="zf-num text-fg-3">{fmtCount(count)}</span>}
+              {active && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
+            </button>
+          );
+        })}
       </div>
-      <div className="min-h-0 flex-1">
-        {tab === "trades" && <TradesTable />}
+      <div role="tabpanel" id={panelId} aria-labelledby={`token-tab-btn-${tab}`} className="min-h-0 flex-1">
+        {tab === "trades" && <TradesTable supply={detail.summary.supply} />}
+        {tab === "positions" && <TokenPositions mint={detail.summary.mint} />}
+        {tab === "orders" && <TokenOrders token={detail.summary} />}
         {tab === "holders" && <HoldersTable holders={detail.holders} token={detail.summary} />}
-        {tab === "traders" && <TopTradersTable traders={detail.topTraders} />}
-        {tab === "positions" && (
-          <div className="h-full overflow-auto">
-            <PositionsTable positions={positions} solUsd={solUsd} currency={currency} highlightMint={mint} compact ownWallet />
-          </div>
-        )}
-        {tab === "orders" && <TokenOrders mint={mint} />}
+        {tab === "traders" && <TopTradersTable traders={detail.topTraders} holders={detail.holders} />}
+        {tab === "dev" && <DevTokens detail={detail} />}
         {tab === "info" && (
           <div className="h-full overflow-auto">
             <TokenInfo detail={detail} />

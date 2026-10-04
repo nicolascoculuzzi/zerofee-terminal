@@ -1,7 +1,8 @@
-import { ArrowDownToLine, ArrowUpFromLine, Clock, QrCode, Wallet } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Clock, LoaderCircle } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { CopyButton, NumberInput, Segmented } from "../../components/ui/controls";
+import { HoldButton } from "../../components/ui/HoldButton";
 import { Modal } from "../../components/ui/Modal";
 import { cn } from "../../lib/cn";
 import { fmtSol, fmtSolShort, shortAddr } from "../../lib/format";
@@ -10,6 +11,28 @@ import { useSettings } from "../../state/settings";
 import { useToasts } from "../../state/toasts";
 import { type FundTab, useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
+import { PresetChips, solStep } from "./AmountField";
+
+/*
+ * Fund, deposit and withdraw for the trading wallet (DESIGN.md 4.17 forms, 560 px): segmented
+ * tabs, amounts with preset chips, verb-plus-object buttons, and hold-to-confirm for withdrawals
+ * to a non-default destination (1.7). Transfer form with balances after Kraken Pro's simple order
+ * form https://mobbin.com/screens/e7e29a51-ac57-4038-8ad5-fe228df11309; "Use max" after Base
+ * https://mobbin.com/screens/09a5bbe0-2943-4077-9f53-eddf516df513
+ */
+
+const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
+/** Left in the connected wallet for its own network fees. */
+const FEE_RESERVE_SOL = 0.001;
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex h-7 items-center justify-between gap-3 text-data">
+      <span className="text-fg-3">{label}</span>
+      <span className="min-w-0 text-right text-fg-1">{children}</span>
+    </div>
+  );
+}
 
 function FundFromConnected({ address }: { address: string }) {
   const [connectedSol, setConnectedSol] = useState<number | null>(null);
@@ -17,6 +40,7 @@ function FundFromConnected({ address }: { address: string }) {
   const [busy, setBusy] = useState(false);
   const connected = useWallet((s) => s.service.connected);
   const close = useUi((s) => s.closeFund);
+  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "your wallet";
 
   useEffect(() => {
     void getServices()
@@ -24,12 +48,15 @@ function FundFromConnected({ address }: { address: string }) {
       .then((b) => setConnectedSol(b.connectedSol));
   }, []);
 
+  const max = connectedSol === null ? null : Math.max(0, Math.floor((connectedSol - FEE_RESERVE_SOL) * 1000) / 1000);
+  const over = amount !== null && max !== null && amount > max;
+
   const submit = async () => {
-    if (!amount) return;
+    if (!amount || over) return;
     setBusy(true);
     try {
       await getServices().wallet.fundFromConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: "From your connected wallet" });
+      useToasts.getState().push({ kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: `From ${provider}` });
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Funding failed", body: e instanceof Error ? e.message : String(e) });
@@ -40,34 +67,49 @@ function FundFromConnected({ address }: { address: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between rounded-sm bg-surface-2 px-3 py-2 text-data">
-        <span className="flex items-center gap-1 text-fg-2">
-          <Wallet className="icon-md" /> <span className="capitalize">{connected?.provider ?? "Wallet"}</span>{" "}
-          <span className="font-mono">{connected ? shortAddr(connected.address) : ""}</span>
-        </span>
-        <span className="font-semibold">{connectedSol === null ? "…" : `${fmtSol(connectedSol)} SOL`}</span>
+      <div className="rounded-sm border border-hairline px-3">
+        <Row label={`From ${provider}`}>
+          <span className="font-mono text-fg-2">{connected ? shortAddr(connected.address) : "–"}</span>
+          <span className="zf-num ml-2">{connectedSol === null ? "–" : `${fmtSol(connectedSol)} SOL`}</span>
+        </Row>
+        <Row label="To trading wallet">
+          <span className="font-mono text-fg-2">{shortAddr(address)}</span>
+        </Row>
       </div>
-      <NumberInput value={amount} onChange={setAmount} suffix="SOL" min={0} className="h-9" ariaLabel="Amount to fund" />
-      <div className="flex gap-1">
-        {[0.5, 1, 2, 5].map((v) => (
-          <Button key={v} size="xs" variant="secondary" className="flex-1" onClick={() => setAmount(v)}>
-            {v} SOL
-          </Button>
-        ))}
-        <Button
-          size="xs"
-          variant="secondary"
-          className="flex-1"
-          onClick={() => connectedSol !== null && setAmount(Math.max(0, Math.floor((connectedSol - 0.01) * 1000) / 1000))}
-        >
-          Max
-        </Button>
+      <div className="space-y-1">
+        <div className="flex h-4 items-center justify-between text-label">
+          <span className="font-medium text-fg-3">Amount</span>
+          {max !== null && (
+            <button type="button" className="text-fg-3 hover:text-fg-1" onClick={() => setAmount(max)}>
+              Max <span className="zf-num text-fg-1">{fmtSol(max)}</span> SOL
+            </button>
+          )}
+        </div>
+        <NumberInput
+          size="amount"
+          value={amount}
+          onChange={setAmount}
+          suffix="SOL"
+          min={0}
+          step={solStep}
+          invalid={over}
+          ariaLabel="Amount to fund in SOL"
+        />
+        {over && <p className="text-label text-sell">Exceeds the {provider} balance</p>}
+        <PresetChips values={[0.5, 1, 2, 5]} active={amount} label={fmtSolShort} onPick={setAmount} unit="SOL" />
       </div>
       <p className="text-label text-fg-3">
-        One approval in your connected wallet moves SOL into the trading wallet. Keep only what you're willing to lose in it.
+        One approval in {provider} moves SOL into the trading wallet. Keep only what you are willing to lose in it.
       </p>
-      <Button variant="primary" size="lg" className="w-full" disabled={busy || !amount} onClick={() => void submit()}>
-        {busy ? "Waiting for wallet…" : amount ? `Fund ${fmtSolShort(amount)} SOL` : "Fund"}
+      <Button
+        variant="primary"
+        size="lg"
+        className="w-full"
+        disabled={busy || !amount || over}
+        icon={busy ? <LoaderCircle className="animate-spin" /> : undefined}
+        onClick={() => void submit()}
+      >
+        {amount ? `Transfer ${fmtSolShort(amount)} SOL` : "Enter an amount"}
       </Button>
     </div>
   );
@@ -76,25 +118,14 @@ function FundFromConnected({ address }: { address: string }) {
 function Deposit({ address }: { address: string }) {
   return (
     <div className="space-y-3">
-      <div className="flex gap-3">
-        <div className="flex h-28 w-28 shrink-0 flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-hairline-strong text-center text-micro text-fg-3">
-          <QrCode className="icon-lg" />
-          QR code
-          <br />
-          (with real wallet)
-        </div>
-        <div className="min-w-0 space-y-2">
-          <div className="zf-label">Trading wallet address</div>
-          <div className="flex items-start gap-1 break-all rounded-sm bg-surface-2 p-2 font-mono text-label">
-            {address}
-            <CopyButton text={address} label="Copy address" />
-          </div>
+      <div className="space-y-1">
+        <div className="zf-label">Trading wallet address</div>
+        <div className="flex items-start gap-1 rounded-sm border border-hairline bg-surface-2 p-2 font-mono text-data break-all text-fg-1">
+          {address}
+          <CopyButton text={address} label="Copy address" />
         </div>
       </div>
-      <ul className="list-disc space-y-1 pl-4 text-label text-fg-2">
-        <li>Send only SOL on Solana mainnet to this address (for example from an exchange withdrawal).</li>
-        <li>The balance updates when the transfer lands; no memo is needed.</li>
-      </ul>
+      <p className="text-body text-fg-2">Send SOL on Solana only. The balance updates when the transfer lands; no memo is needed.</p>
     </div>
   );
 }
@@ -111,15 +142,19 @@ function Withdraw({ address }: { address: string }) {
   const [dest, setDest] = useState<string>("connected");
   const [busy, setBusy] = useState(false);
   const available = Math.max(0, balance - reserved - 0.00001);
+  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "Connected wallet";
+  const over = amount !== null && amount > available;
+  const other = destinations.find((d) => d.id === dest) ?? null;
 
   const submit = async () => {
-    if (!amount) return;
-    if (dest !== "connected") {
+    if (!amount || over) return;
+    if (other) {
       useToasts.getState().push({
         kind: "info",
-        title: "Queued for the delay window",
-        body: "Withdrawals to other destinations go out after the 24 h delay set when you added the address.",
+        title: `Withdrawal of ${fmtSolShort(amount)} SOL queued`,
+        body: `${other.label} receives it once the 24 h delay for new destinations has passed.`,
       });
+      close();
       return;
     }
     if (useWallet.getState().service.locked) {
@@ -129,7 +164,7 @@ function Withdraw({ address }: { address: string }) {
     setBusy(true);
     try {
       await getServices().wallet.withdrawToConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: "To your connected wallet" });
+      useToasts.getState().push({ kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: `To ${provider}` });
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Withdrawal failed", body: e instanceof Error ? e.message : String(e) });
@@ -140,51 +175,58 @@ function Withdraw({ address }: { address: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-between text-data text-fg-2">
-        <span>Available</span>
-        <span className="text-fg-1">
-          {fmtSol(available)} SOL {reserved > 0 && <span className="text-fg-3">({fmtSol(reserved)} reserved by armed orders)</span>}
-        </span>
-      </div>
-      <NumberInput
-        value={amount}
-        onChange={setAmount}
-        suffix={
-          <button type="button" className="font-semibold text-fg-1" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
-            Max
-          </button>
-        }
-        min={0}
-        max={available}
-        className="h-9"
-        ariaLabel="Amount to withdraw"
-      />
       <div className="space-y-1">
+        <div className="flex h-4 items-center justify-between text-label">
+          <span className="font-medium text-fg-3">Amount</span>
+          <button type="button" className="text-fg-3 hover:text-fg-1" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
+            Available <span className="zf-num text-fg-1">{fmtSol(available)}</span> SOL · Max
+          </button>
+        </div>
+        <NumberInput
+          size="amount"
+          value={amount}
+          onChange={setAmount}
+          suffix="SOL"
+          min={0}
+          step={solStep}
+          invalid={over}
+          ariaLabel="Amount to withdraw in SOL"
+        />
+        {over && <p className="text-label text-sell">Exceeds the available balance by {fmtSol((amount ?? 0) - available)} SOL</p>}
+        {reserved > 0 && <p className="text-label text-fg-3">{fmtSol(reserved)} SOL stays reserved by armed orders.</p>}
+      </div>
+      <div className="space-y-1" role="radiogroup" aria-label="Destination">
         <div className="zf-label">Destination</div>
+        {/* biome-ignore lint/a11y/useSemanticElements: radio rows with an address and status */}
         <button
           type="button"
+          role="radio"
+          aria-checked={dest === "connected"}
           onClick={() => setDest("connected")}
           className={cn(
-            "flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left text-data",
-            dest === "connected" ? "border-fg-1/40 bg-surface-3" : "border-hairline hover:bg-surface-3",
+            "flex h-9 w-full items-center justify-between rounded-sm border px-3 text-left text-data transition-colors",
+            dest === "connected" ? "border-hairline-strong bg-surface-3" : "border-hairline hover:bg-surface-3",
           )}
         >
           <span>
-            Connected wallet <span className="font-mono text-fg-3">{connected ? shortAddr(connected.address) : "—"}</span>
+            {provider} <span className="font-mono text-fg-3">{connected ? shortAddr(connected.address) : "–"}</span>
           </span>
-          <span className="text-buy">Instant</span>
+          <span className="text-fg-2">Instant</span>
         </button>
         {destinations.map((d) => {
           const pending = d.activeAt > Date.now();
           return (
+            // biome-ignore lint/a11y/useSemanticElements: radio rows with an address and status
             <button
               key={d.id}
               type="button"
+              role="radio"
+              aria-checked={dest === d.id}
               disabled={pending}
               onClick={() => setDest(d.id)}
               className={cn(
-                "flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left text-data disabled:opacity-60",
-                dest === d.id ? "border-fg-1/40 bg-surface-3" : "border-hairline hover:bg-surface-3",
+                "flex h-9 w-full items-center justify-between rounded-sm border px-3 text-left text-data transition-colors disabled:text-fg-4",
+                dest === d.id ? "border-hairline-strong bg-surface-3" : "border-hairline hover:bg-surface-3",
               )}
             >
               <span>
@@ -192,25 +234,34 @@ function Withdraw({ address }: { address: string }) {
               </span>
               {pending ? (
                 <span className="flex items-center gap-1 text-warn">
-                  <Clock className="icon-sm" /> active in {Math.ceil((d.activeAt - Date.now()) / 3_600_000)} h
+                  <Clock className="icon-xs" /> Active in {Math.ceil((d.activeAt - Date.now()) / 3_600_000)} h
                 </span>
               ) : (
-                <span className="text-fg-2">Verified</span>
+                <span className="text-fg-2">24 h delay passed</span>
               )}
             </button>
           );
         })}
-        <button
-          type="button"
-          className="text-label text-fg-2 underline decoration-hairline-strong underline-offset-2 hover:text-fg-1"
-          onClick={() => openSettings("withdrawals")}
-        >
-          Manage destinations (new ones need a wallet signature + 24 h delay)
-        </button>
+        <Button variant="ghost" size="xs" onClick={() => openSettings("withdrawals")}>
+          Manage destinations
+        </Button>
       </div>
-      <Button variant="primary" size="lg" className="w-full" disabled={busy || !amount} onClick={() => void submit()}>
-        {busy ? "Signing…" : "Withdraw"}
-      </Button>
+      {other ? (
+        <HoldButton tone="primary" className="w-full" disabled={!amount || over} onConfirm={() => void submit()}>
+          Hold to withdraw {amount ? `${fmtSolShort(amount)} SOL` : ""} to {other.label}
+        </HoldButton>
+      ) : (
+        <Button
+          variant="primary"
+          size="lg"
+          className="w-full"
+          disabled={busy || !amount || over}
+          icon={busy ? <LoaderCircle className="animate-spin" /> : undefined}
+          onClick={() => void submit()}
+        >
+          {amount ? `Withdraw ${fmtSolShort(amount)} SOL` : "Enter an amount"}
+        </Button>
+      )}
     </div>
   );
 }
@@ -223,9 +274,15 @@ export function FundModal() {
   const address = useWallet((s) => s.activeAddress);
   const label = useWallet((s) => s.service.tradingWallets.find((w) => w.address === s.activeAddress)?.label);
   return (
-    <Modal open={open} onClose={close} title={`Trading wallet${label ? ` · ${label}` : ""}`} width={440}>
+    <Modal
+      open={open}
+      onClose={close}
+      title="Trading wallet"
+      description={label ? `${label} · ${address ? shortAddr(address) : ""}` : undefined}
+      width={560}
+    >
       {!address ? (
-        <div className="text-data text-fg-2">Create a trading wallet first.</div>
+        <p className="text-body text-fg-2">Create a trading wallet first.</p>
       ) : (
         <div className="space-y-4">
           <Segmented<FundTab>
@@ -233,31 +290,11 @@ export function FundModal() {
             onChange={(t) => openFund(t)}
             className="w-full"
             options={[
-              {
-                value: "fund",
-                label: (
-                  <span className="flex items-center justify-center gap-1">
-                    <Wallet className="icon-sm" /> From wallet
-                  </span>
-                ),
-              },
-              {
-                value: "deposit",
-                label: (
-                  <span className="flex items-center justify-center gap-1">
-                    <ArrowDownToLine className="icon-sm" /> Deposit
-                  </span>
-                ),
-              },
-              {
-                value: "withdraw",
-                label: (
-                  <span className="flex items-center justify-center gap-1">
-                    <ArrowUpFromLine className="icon-sm" /> Withdraw
-                  </span>
-                ),
-              },
+              { value: "fund", label: "From wallet" },
+              { value: "deposit", label: "Deposit address" },
+              { value: "withdraw", label: "Withdraw" },
             ]}
+            label="Funding method"
           />
           {tab === "fund" && <FundFromConnected address={address} />}
           {tab === "deposit" && <Deposit address={address} />}
