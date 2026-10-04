@@ -120,6 +120,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     funderOf: (w) => enricher?.funderOf(w) ?? null,
     onLaunch: (rec) => enricher?.onLaunch(rec),
     onMigrate: (rec) => enricher?.onMigrate(rec),
+    // Wallet tracker / copy trading: every recorded trade is matched against the tracked wallets.
+    onTrade: o.user ? (t, tx) => o.user?.trackers.onTrade(t, tx) : undefined,
   });
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
@@ -167,6 +169,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const sink: IngestSink = {
     tx: (tx) => {
       m.applyTx(tx);
+      o.user?.trackers.onTx(tx);
       if (reconciler) {
         for (const ev of tx.events) {
           if (ev.kind !== "pumpCreate" && ev.kind !== "pumpMigrate") continue;
@@ -187,7 +190,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     },
     slot: (slot, status) => {
       chain.onSlot(slot, status);
-      if (status === "dead") m.dropSlot(slot);
+      if (status === "dead") {
+        o.user?.trackers.onDeadSlot(slot); // before dropSlot replays parked fork copies
+        m.dropSlot(slot);
+      }
     },
     blockMeta: (meta) => chain.onBlockMeta(meta),
     decodeFailure: (info) => {
@@ -305,6 +311,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     halted: user ? () => user.halt.isHalted() : undefined,
   });
 
+  user?.trackers.attachMarket(m, () => solUsd?.current() ?? null);
   gateway = new Gateway({
     cfg,
     market: m,
@@ -317,7 +324,12 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     health,
     debugStats,
     user,
-    onTokensChanged: user ? (mints) => user.alerts.onTokensChanged(mints) : undefined,
+    onTokensChanged: user
+      ? (mints) => {
+          user.alerts.onTokensChanged(mints);
+          user.trackers.onTokensChanged(mints);
+        }
+      : undefined,
     metrics,
   });
 
@@ -326,6 +338,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   resolver.start();
   gateway.start();
   metrics.start();
+  user?.trackers.attachHub(gateway.hub);
   user?.start();
   solUsd?.start();
   if (o.pollers !== false) {
@@ -349,7 +362,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         pulse.isListed(mint) ||
         pulse.columnOf(mint) !== null ||
         (gateway?.isWatched(mint) ?? false) ||
-        (user?.alerts.watches(mint) ?? false),
+        (user?.alerts.watches(mint) ?? false) ||
+        (user?.trackers.watchesMint(mint) ?? false),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);

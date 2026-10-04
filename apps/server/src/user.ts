@@ -1,7 +1,8 @@
 /**
  * The accounts layer: Postgres user state, SIWS sessions, the account / settings / alert REST API,
- * alert evaluation and delivery, and the WebSocket user topics. `createUserLayer` opens (or takes) the
- * database and builds the services; `createApp(cfg, { user })` wires it into the gateway and market.
+ * alert evaluation and delivery, the wallet tracker and copy trading (src/trackers), and the WebSocket
+ * user topics. `createUserLayer` opens (or takes) the database and builds the services;
+ * `createApp(cfg, { user })` wires it into the gateway and market.
  */
 import type { NonceStore } from "@zerofee/auth";
 import type { OrdersSnapshot, TokenSummary, WalletSnapshot } from "@zerofee/protocol";
@@ -23,7 +24,10 @@ import { SessionService } from "./auth/sessions";
 import { decodeKey32, type ServerConfig } from "./config";
 import { openUserDb, type PgDriver, UserStore } from "./db/pg";
 import { RateLimiter } from "./gateway/rateLimit";
+import type { UserTopicHandler } from "./gateway/server";
 import { logger } from "./log";
+import type { CopyExitHook } from "./trackers/copy";
+import { TrackerService } from "./trackers/service";
 
 const log = logger("user");
 
@@ -49,6 +53,8 @@ export interface UserLayerOverrides {
   alertLimits?: Partial<DispatcherLimits>;
   /** Do not start Telegram long polling (tests drive handleUpdate directly). */
   telegramPolling?: boolean;
+  /** Armed-orders seam for tab-closed copy exits (the orders engine; tests). */
+  copyExits?: CopyExitHook | null;
 }
 
 export interface UserLimits {
@@ -82,6 +88,10 @@ export class UserLayer {
   readonly adminAuth: AdminAuth | null;
   /** Settings / tracked-wallet change notifications from the REST API. */
   readonly settingsHooks: SettingsHooks;
+  /** Wallet tracker matching, the tracked feed and copy trading. */
+  readonly trackers: TrackerService;
+  /** `tracked`, `tracked:<mint>` and `copy` user topics for the gateway. */
+  readonly userTopics: Partial<Record<string, UserTopicHandler>>;
   private timers: ReturnType<typeof setInterval>[] = [];
 
   constructor(
@@ -136,6 +146,15 @@ export class UserLayer {
       limits: o.alertLimits,
     });
     this.alerts = new AlertEngine({ store: this.store, notify: (x) => this.dispatcher.notify(x), appUrl: a.publicOrigin, now: this.now });
+    this.trackers = new TrackerService({
+      cfg: cfg.trackers,
+      db,
+      store: this.store,
+      alerts: this.alerts,
+      now: this.now,
+      exits: o.copyExits ?? null,
+    });
+    this.userTopics = this.trackers.topicHandlers();
     this.telegram = tgApi
       ? new TelegramBot({
           api: tgApi,
@@ -151,10 +170,13 @@ export class UserLayer {
       settingsChanged: (userId, s) => {
         this.alerts.setPrefs(userId, s.notifications);
         this.dispatcher.setDigestSeconds(userId, s.notifications.digestSeconds);
+        this.trackers.settingsChanged(userId, s);
       },
       trackedChanged: (userId) => {
         void this.alerts.reloadTracked(userId).catch((e) => log.warn(`tracked-wallet index reload failed: ${e}`));
+        void this.trackers.reloadTracked(userId).catch((e) => log.warn(`tracker index reload failed: ${e}`));
       },
+      blacklistChanged: (userId) => this.trackers.blacklistChanged(userId),
     };
 
     // kill switch + operator endpoints (every admin call is audited, failed authentication included)
@@ -192,6 +214,7 @@ export class UserLayer {
         testLimiter: this.limits.test,
       }),
     );
+    this.api.add(this.trackers.routes());
     const store = this.store;
     this.topics = {
       canWatchWallet: (userId, address) => store.users.ownsWallet(userId, address),
@@ -204,6 +227,7 @@ export class UserLayer {
   async init(): Promise<void> {
     await this.halt.load();
     await this.alerts.load();
+    await this.trackers.load();
     if (!this.adminAuth) log.info("admin endpoints disabled (set ADMIN_TOKEN to enable /api/admin)");
     const n = this.cfg.notifications;
     log.info(
@@ -234,6 +258,7 @@ export class UserLayer {
     every(3_600_000, "link code purge", () => this.store.notify.purgeExpiredLinks(this.now()));
     every(6 * 3_600_000, "delivery purge", () => this.store.notify.purgeDeliveries(this.now() - n.deliveryRetentionDays * 86_400_000));
     this.dispatcher.start();
+    this.trackers.start();
     if (this.telegram && !n.telegramWebhookSecret && this.o.telegramPolling !== false) this.telegram.startPolling();
   }
 
@@ -242,6 +267,7 @@ export class UserLayer {
     this.timers = [];
     this.telegram?.stopPolling();
     await this.dispatcher.stop();
+    await this.trackers.stop();
     if (this.ownsDb) await this.db.close();
   }
 }

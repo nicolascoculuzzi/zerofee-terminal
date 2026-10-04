@@ -85,6 +85,8 @@ export interface MarketDeps {
   onLaunch?(rec: TokenRecord): void;
   /** A migration was applied. Must not block. */
   onMigrate?(rec: TokenRecord): void;
+  /** Every recorded trade with its transaction (the wallet tracker's firehose matcher). Must not throw. */
+  onTrade?(trade: Trade, tx: IngestTx): void;
 }
 
 /** A launch / migration / trade for the debug feed. */
@@ -827,6 +829,13 @@ export class MarketState {
     this.latency.add(ctx.tx.receivedAt - t.tsMs);
     this.deps.storage?.trade(trade, ctx.evIndex);
     this.changes.feed.push({ ...this.feedItem("trade", rec, ctx, t.tsMs), side: trade.side, amountSol, venue: t.venue });
+    if (this.deps.onTrade) {
+      try {
+        this.deps.onTrade(trade, ctx.tx);
+      } catch {
+        /* a listener must never break the single writer */
+      }
+    }
     this.touch(rec);
     this.persist(rec, false);
   }
