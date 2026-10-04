@@ -140,8 +140,8 @@ export function EmptyState({
     >
       <div className="flex max-w-80 flex-col items-center gap-1">
         {icon && <span className="mb-1 text-fg-3 [&_svg]:size-4">{icon}</span>}
-        <span className="text-body font-medium text-fg-2">{title}</span>
-        {body && <span className="text-data text-fg-3">{body}</span>}
+        <span className="text-body font-medium text-balance text-fg-2">{title}</span>
+        {body && <span className="text-data text-balance text-fg-3">{body}</span>}
         {action && <span className="mt-2">{action}</span>}
       </div>
     </div>
