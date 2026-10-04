@@ -318,6 +318,7 @@ export function buildTradeContext(rec: TokenRecord, pool: PoolInfo | undefined):
       coinCreator: rec.creator ?? pool.coinCreator ?? "",
       coinCreatorVaultAuthority: rec.coinCreatorVaultAuthority,
       canEditCreatorFee: pool.canEditCreatorFee ?? false,
+      poolDataLength: pool.dataLength ?? null,
     };
   }
   if (!rec.bondingCurve || !rec.creator || !rec.creatorVault) return null;

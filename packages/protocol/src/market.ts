@@ -313,6 +313,12 @@ export interface PoolTradeContext extends TradeContextBase {
   /** PumpSwap "creator_vault" PDA of coinCreator. */
   coinCreatorVaultAuthority: string;
   canEditCreatorFee: boolean;
+  /**
+   * Size of the pool account when the server read it; below the current layout size a swap must start
+   * with PumpSwap `extend_account` (@zerofee/core adds it from Pool.dataLength). null = not recorded
+   * (pools read before this field existed): assume the current size.
+   */
+  poolDataLength?: number | null;
 }
 
 export type TradeContext = CurveTradeContext | PoolTradeContext;

@@ -56,6 +56,8 @@ export interface PoolInfo {
   baseTokenProgram: string | null;
   quoteTokenProgram: string | null;
   baseSupply: string | null;
+  /** Size of the pool account when read: below POOL_ACCOUNT_NEW_SIZE a swap must extend it first. */
+  dataLength?: number | null;
   /** True once the pool account itself was read (all fields above known). */
   fromAccount: boolean;
   updatedAt: number;
@@ -291,6 +293,7 @@ export class AccountResolver {
             canEditCreatorFee: p.canEditCreatorFee,
             isHolderReward: p.isHolderReward,
             isCanonical: await isCanonicalPumpPool(p),
+            dataLength: p.dataLength,
             fromAccount: true,
           });
           this.stats.poolsResolved++;
