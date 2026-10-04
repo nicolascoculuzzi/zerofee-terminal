@@ -4,7 +4,7 @@
  * can run the whole thing in-process with a fake source and mocked network.
  */
 import type { Database } from "bun:sqlite";
-import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@zerofee/core";
+import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID } from "@zerofee/core";
 import type { HealthResponse } from "@zerofee/protocol";
 import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
@@ -16,8 +16,9 @@ import { SolUsdFeed } from "./feeds/solUsd";
 import { AnonymousAuth, type AuthProvider } from "./gateway/auth";
 import { type DebugStats, Gateway } from "./gateway/server";
 import { TxHandler } from "./gateway/tx";
+import type { RpcJsonTx } from "./ingest/jsonTx";
 import { PumpPortalSource, Reconciler } from "./ingest/pumpPortal";
-import { RpcLogsSource } from "./ingest/rpcLogs";
+import { PROGRAM_IDS, type RaydiumTxFetchOptions, RpcLogsSource } from "./ingest/rpcLogs";
 import type { IngestSink, Source } from "./ingest/types";
 import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
@@ -78,17 +79,42 @@ export interface App {
   stop(): Promise<void>;
 }
 
-export function createSource(cfg: ServerConfig): Source {
-  const programs = cfg.rpcLogsPrograms.map((p) => (p === "pump" ? PUMP_PROGRAM_ID : PUMP_AMM_PROGRAM_ID));
+export interface SourceDeps {
+  /** The RPC client the logs source re-reads Raydium transactions with (RPC_LOGS_TX_FETCH_RPS). */
+  rpc?: RpcClient;
+  /** Which Raydium notifications are worth a getTransaction (MarketState.wantsRaydiumTx). */
+  wants?: RaydiumTxFetchOptions["wants"];
+}
+
+export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
+  const programs = cfg.rpcLogsPrograms.map((p) => PROGRAM_IDS[p]);
   if (cfg.source === "yellowstone") {
     return new YellowstoneSource({
       endpoint: cfg.yellowstoneEndpoint as string,
       xToken: cfg.yellowstoneXToken,
       commitment: cfg.yellowstoneCommitment,
-      programs: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID],
+      programs: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID],
     });
   }
-  return new RpcLogsSource({ wsUrl: cfg.rpcWsUrl, programs, commitment: cfg.rpcLogsCommitment, queueMax: cfg.rpcLogsQueueMax });
+  const rpc = deps.rpc;
+  return new RpcLogsSource({
+    wsUrl: cfg.rpcWsUrl,
+    programs,
+    commitment: cfg.rpcLogsCommitment,
+    queueMax: cfg.rpcLogsQueueMax,
+    raydiumTx:
+      rpc && cfg.rpcLogsTxFetchPerSec > 0
+        ? {
+            perSec: cfg.rpcLogsTxFetchPerSec,
+            fetch: (signature) =>
+              rpc.call<RpcJsonTx | null>("getTransaction", [
+                signature,
+                { encoding: "json", maxSupportedTransactionVersion: 1, commitment: "confirmed" },
+              ]),
+            ...(deps.wants ? { wants: deps.wants } : {}),
+          }
+        : null,
+  });
 }
 
 export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {

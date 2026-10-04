@@ -1,26 +1,60 @@
 /**
  * RpcLogsSource - the free development feed: Solana RPC WebSocket `logsSubscribe` with one `mentions`
- * filter per program (the filter accepts exactly one address), decoding events from `Program data:`
- * lines. Also subscribes to `slotSubscribe` (chain tip, to measure lag) and tries the unstable
- * `slotsUpdatesSubscribe` for dead-slot notices.
+ * filter per program (the filter accepts exactly one address: pump, PumpSwap, Raydium LaunchLab, Raydium
+ * CPMM), decoding events from `Program data:` lines. Also subscribes to `slotSubscribe` (chain tip, to
+ * measure lag) and tries the unstable `slotsUpdatesSubscribe` for dead-slot notices.
  *
  * Logs carry no account keys, no tx index and no block time, so: ordering inside a slot is arrival
- * order, PumpSwap pools are resolved to mints by an RPC lookup, and holder tracking is trade-based.
+ * order, PumpSwap and LaunchLab pools are resolved to mints by an RPC lookup, and holder tracking is
+ * trade-based.
+ *
+ * Raydium events also lack the trading wallet, and LaunchLab graduations (`migrate_to_cpswap`) emit no
+ * event at all. With `raydiumTx` set, Raydium notifications (LaunchLab events, graduations, and the CPMM
+ * swaps `wants` accepts) are re-read with `getTransaction` at `confirmed` under a calls-per-second cap
+ * (the public RPC allows 40 calls / 10 s per method), and the full transaction (accounts, wallet, token
+ * balances) replaces the logs-only record. A transaction not found after a few tries, or one that does not
+ * fit the queue, falls back to its logs-only record (graduations then become a `hint`).
  *
  * Backpressure: the socket handler only parses and enqueues; a drain loop decodes in time-boxed
  * batches so I/O keeps flowing. The queue is bounded; overflow drops the oldest notifications and is
  * reported. Reconnects use exponential backoff; a silent socket is recycled by a watchdog.
  */
 import type { Address } from "@solana/kit";
-import { decodeLogEvents, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@zerofee/core";
+import {
+  type DecodedEvent,
+  decodeLogEvents,
+  PUMP_AMM_PROGRAM_ID,
+  PUMP_PROGRAM_ID,
+  RAYDIUM_CPMM_PROGRAM_ID,
+  RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+} from "@zerofee/core";
 import type { SourceHealth } from "@zerofee/protocol";
 import { logger } from "../log";
 import { Backoff } from "../util/backoff";
 import { BoundedSet } from "../util/lru";
 import { SampleRing } from "../util/stats";
-import { type IngestSink, RingQueue, type Source } from "./types";
+import { ingestFromJsonTx, type RpcJsonTx } from "./jsonTx";
+import { type IngestSink, type IngestTx, RingQueue, type Source } from "./types";
 
 const log = logger("rpc-logs");
+
+/** Re-reading Raydium transactions (their events lack mints and wallets; graduations emit no event). */
+export interface RaydiumTxFetchOptions {
+  /** getTransaction (json, maxSupportedTransactionVersion 1, confirmed); null when not found (yet). */
+  fetch(signature: string): Promise<RpcJsonTx | null>;
+  /** Max getTransaction calls per second. */
+  perSec: number;
+  /** Max queued transactions; beyond it they keep their logs-only record. Default 500. */
+  maxQueue?: number;
+  /** Wait before the first try (processed -> confirmed). Default 1,200 ms. */
+  firstDelayMs?: number;
+  retryDelayMs?: number;
+  /** Tries before falling back to the logs-only record. Default 4. */
+  maxAttempts?: number;
+  maxConcurrent?: number;
+  /** Which Raydium notifications are worth a call (default all): e.g. CPMM swaps only on tracked pools. */
+  wants?(events: readonly DecodedEvent[], migration: boolean): boolean;
+}
 
 export interface RpcLogsSourceOptions {
   wsUrl: string;
@@ -32,6 +66,16 @@ export interface RpcLogsSourceOptions {
   /** Decode budget per drain tick before yielding to I/O. */
   drainBudgetMs?: number;
   WebSocketImpl?: typeof WebSocket;
+  raydiumTx?: RaydiumTxFetchOptions | null;
+}
+
+interface FetchJob {
+  p: Pending;
+  /** The logs-only record, emitted when the fetch gives up. */
+  fallback: IngestTx | null;
+  migration: boolean;
+  attempts: number;
+  notBefore: number;
 }
 
 interface Pending {
@@ -49,7 +93,32 @@ interface LogsNotification {
   };
 }
 
-export const PROGRAM_IDS = { pump: PUMP_PROGRAM_ID, pumpswap: PUMP_AMM_PROGRAM_ID } as const;
+export const PROGRAM_IDS = {
+  pump: PUMP_PROGRAM_ID,
+  pumpswap: PUMP_AMM_PROGRAM_ID,
+  launchlab: RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+  cpmm: RAYDIUM_CPMM_PROGRAM_ID,
+} as const;
+export type RpcLogsProgram = keyof typeof PROGRAM_IDS;
+
+const PROGRAM_NAMES = new Map<string, string>(Object.entries(PROGRAM_IDS).map(([k, v]) => [v, k]));
+const MIGRATE_LOG = "Program log: Instruction: MigrateToCpswap";
+const RAYDIUM_KINDS = new Set<string>(["launchlabTrade", "launchlabPoolCreate", "cpmmSwap"]);
+
+/** A LaunchLab `migrate_to_cpswap` in the logs (the instruction line under a LaunchLab invoke). */
+export function isLaunchLabMigrationLog(logs: readonly string[]): boolean {
+  for (let i = 0; i < logs.length; i++) {
+    if (logs[i] !== MIGRATE_LOG) continue;
+    for (let j = i - 1; j >= 0; j--) {
+      const m = /^Program (\w{32,44}) invoke \[\d+\]$/.exec(logs[j] as string);
+      if (m) {
+        if (m[1] === RAYDIUM_LAUNCHLAB_PROGRAM_ID) return true;
+        break;
+      }
+    }
+  }
+  return false;
+}
 
 const SLOT_SUB_ID = 1000;
 const SLOT_UPDATES_SUB_ID = 1001;
@@ -73,6 +142,12 @@ export class RpcLogsSource implements Source {
    */
   readonly slotDelay = new SampleRing(50_000);
   private readonly slotSeenAt = new Map<number, number>();
+  private readonly fetchQueue: FetchJob[] = [];
+  private fetchTimer: ReturnType<typeof setInterval> | null = null;
+  private fetchTokens = 1;
+  private fetchInFlight = 0;
+  private fetchLastRefill = 0;
+  readonly fetchStats = { queued: 0, fetched: 0, notFound: 0, errors: 0, fallbacks: 0, overflow: 0, skipped: 0, maxQueue: 0 };
   readonly stats = {
     connected: false,
     reconnects: 0,
@@ -86,6 +161,8 @@ export class RpcLogsSource implements Source {
     decodedTxs: 0,
     decodeFailures: 0,
     truncatedLogs: 0,
+    /** LaunchLab graduations seen in the logs (no event; resolved through a fetch or a hint). */
+    migrations: 0,
     lastMessageAt: null as number | null,
     slot: null as number | null,
     tipSlot: null as number | null,
@@ -102,11 +179,14 @@ export class RpcLogsSource implements Source {
     this.stopped = false;
     this.connect();
     this.watchdog = setInterval(() => this.checkIdle(), 5_000);
+    if (this.opts.raydiumTx && this.opts.raydiumTx.perSec > 0) this.fetchTimer = setInterval(() => this.fetchTick(), 50);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
     if (this.watchdog) clearInterval(this.watchdog);
+    if (this.fetchTimer) clearInterval(this.fetchTimer);
+    this.fetchTimer = null;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.ws?.close();
     this.ws = null;
@@ -198,7 +278,8 @@ export class RpcLogsSource implements Source {
         return;
       }
       const logs = value.logs ?? [];
-      if (!logs.some((l) => l.startsWith("Program data:"))) {
+      // LaunchLab graduations emit no event but must reach the decoder (fetch or hint).
+      if (!logs.some((l) => l.startsWith("Program data:")) && !isLaunchLabMigrationLog(logs)) {
         this.stats.withoutEvents++;
         return;
       }
@@ -237,7 +318,7 @@ export class RpcLogsSource implements Source {
       if (m.id === SLOT_UPDATES_SUB_ID) this.stats.slotUpdates = "ok";
       else if (m.id >= 1 && m.id <= this.opts.programs.length) {
         const program = this.opts.programs[m.id - 1] as string;
-        this.subs.set(m.result as number, program === PUMP_PROGRAM_ID ? "pump" : program === PUMP_AMM_PROGRAM_ID ? "pumpswap" : program);
+        this.subs.set(m.result as number, PROGRAM_NAMES.get(program) ?? program);
       }
     }
   }
@@ -267,25 +348,100 @@ export class RpcLogsSource implements Source {
       this.stats.decodeFailures += r.failures;
       for (const message of r.failureMessages) this.sink?.decodeFailure?.({ source: this.name, signature: p.signature, message });
     }
-    if (!r.events.length) {
-      this.stats.withoutEvents++;
+    const migration = isLaunchLabMigrationLog(p.logs);
+    if (migration) this.stats.migrations++;
+    const fallback: IngestTx | null = r.events.length
+      ? {
+          signature: p.signature,
+          slot: p.slot,
+          txIndex: null,
+          blockTime: null,
+          receivedAt: p.receivedAt,
+          sourceCreatedAt: null,
+          source: this.name,
+          events: r.events,
+          signers: null,
+          accountKeys: null,
+          poolMints: [],
+          tokenBalances: null,
+        }
+      : null;
+    const f = this.opts.raydiumTx;
+    if (f && f.perSec > 0 && (migration || r.events.some((e) => RAYDIUM_KINDS.has(e.kind)))) {
+      if (f.wants && !f.wants(r.events, migration)) this.fetchStats.skipped++;
+      else if (this.fetchQueue.length >= (f.maxQueue ?? 500)) this.fetchStats.overflow++;
+      else {
+        this.fetchQueue.push({ p, fallback, migration, attempts: 0, notBefore: p.receivedAt + (f.firstDelayMs ?? 1_200) });
+        this.fetchStats.queued++;
+        if (this.fetchQueue.length > this.fetchStats.maxQueue) this.fetchStats.maxQueue = this.fetchQueue.length;
+        return;
+      }
+    }
+    this.emitFallback(p, fallback, migration);
+  }
+
+  private emitFallback(p: Pending, fallback: IngestTx | null, migration: boolean): void {
+    if (migration) this.sink?.hint?.({ kind: "launchlabMigration", signature: p.signature, slot: p.slot });
+    if (!fallback) {
+      if (!migration) this.stats.withoutEvents++;
       return;
     }
     this.stats.decodedTxs++;
-    this.sink?.tx({
-      signature: p.signature,
-      slot: p.slot,
-      txIndex: null,
-      blockTime: null,
-      receivedAt: p.receivedAt,
-      sourceCreatedAt: null,
-      source: this.name,
-      events: r.events,
-      signers: null,
-      accountKeys: null,
-      poolMints: [],
-      tokenBalances: null,
-    });
+    this.sink?.tx(fallback);
+  }
+
+  /** Token-bucket scheduler for Raydium getTransaction calls. Exposed for tests. */
+  fetchTick(now = Date.now()): void {
+    const f = this.opts.raydiumTx;
+    if (!f || f.perSec <= 0) return;
+    const elapsed = this.fetchLastRefill ? now - this.fetchLastRefill : 0;
+    this.fetchLastRefill = now;
+    this.fetchTokens = Math.min(Math.max(1, f.perSec), this.fetchTokens + (elapsed * f.perSec) / 1000);
+    while (this.fetchTokens >= 1 && this.fetchInFlight < (f.maxConcurrent ?? 4)) {
+      const i = this.fetchQueue.findIndex((j) => j.notBefore <= now);
+      if (i < 0) return;
+      const job = this.fetchQueue.splice(i, 1)[0] as FetchJob;
+      this.fetchTokens -= 1;
+      this.fetchInFlight++;
+      void this.runFetch(job, f).finally(() => {
+        this.fetchInFlight--;
+      });
+    }
+  }
+
+  private async runFetch(job: FetchJob, f: RaydiumTxFetchOptions): Promise<void> {
+    job.attempts++;
+    let tx: RpcJsonTx | null = null;
+    let failed = false;
+    try {
+      tx = await f.fetch(job.p.signature);
+    } catch (e) {
+      failed = true;
+      this.fetchStats.errors++;
+      this.stats.lastError = e instanceof Error ? e.message : String(e);
+    }
+    if (this.stopped) return;
+    if (tx) {
+      const built = ingestFromJsonTx({ signature: job.p.signature, tx, receivedAt: job.p.receivedAt, source: this.name, slot: job.p.slot });
+      if (built && (built.tx.events.length || built.tx.raydium?.migrations.length)) {
+        this.fetchStats.fetched++;
+        for (const message of built.failures) this.sink?.decodeFailure?.({ source: this.name, signature: job.p.signature, message });
+        this.stats.decodedTxs++;
+        this.sink?.tx(built.tx);
+        return;
+      }
+    } else if (!failed) this.fetchStats.notFound++;
+    if (!tx && job.attempts < (f.maxAttempts ?? 4)) {
+      job.notBefore = Date.now() + (f.retryDelayMs ?? 1_500) * job.attempts;
+      this.fetchQueue.push(job);
+      return;
+    }
+    this.fetchStats.fallbacks++;
+    this.emitFallback(job.p, job.fallback, job.migration);
+  }
+
+  get fetchQueueSize(): number {
+    return this.fetchQueue.length;
   }
 
   health(): SourceHealth {
@@ -307,6 +463,13 @@ export class RpcLogsSource implements Source {
         `decoded txs ${this.stats.decodedTxs}, decode failures ${this.stats.decodeFailures}, truncated logs ${this.stats.truncatedLogs}`,
         `received ${(this.stats.bytes / 1e6).toFixed(1)} MB`,
         `slotsUpdates ${this.stats.slotUpdates}`,
+        ...(this.opts.raydiumTx && this.opts.raydiumTx.perSec > 0
+          ? [
+              `raydium tx fetch: queue ${this.fetchQueue.length} (max ${this.fetchStats.maxQueue}), fetched ${this.fetchStats.fetched}, ` +
+                `not found ${this.fetchStats.notFound}, errors ${this.fetchStats.errors}, logs-only fallbacks ${this.fetchStats.fallbacks}, ` +
+                `overflow ${this.fetchStats.overflow}, skipped ${this.fetchStats.skipped}; graduations in logs ${this.stats.migrations}`,
+            ]
+          : []),
         ...(this.stats.lastError ? [`last error: ${this.stats.lastError}`] : []),
       ],
     };
