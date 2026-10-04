@@ -55,7 +55,7 @@ function setup(o: {
   const dir = o.dir === undefined ? mkdtempSync(join(tmpdir(), "zf-img-")) : o.dir;
   if (dir) dirs.push(dir);
   const cfg: MediaConfig = loadMediaConfig(
-    { IMG_CACHE_DIR: dir ?? "off", IMG_STAGGER_MS: "20", IMG_PUMP_CDN: "off", ...o.env },
+    { IMG_CACHE_DIR: dir ?? "off", IMG_STAGGER_MS: "20", IMG_PUMP_CDN: "off", IMG_WORKERS: "0", ...o.env },
     ":memory:",
   );
   const refs = o.refs ?? { [MINT]: { image: "https://cdn.example.com/a.png", pump: false } };
@@ -190,10 +190,11 @@ describe("image proxy: refusals", () => {
     expect(t.proxy.stats.failures).toMatchObject({ content_type: 1, bad_magic: 1 });
   });
 
-  test("over 2 MB is refused, by Content-Length and while streaming without one", async () => {
+  test("over IMG_MAX_BYTES is refused, by Content-Length and while streaming without one", async () => {
     const big = new Uint8Array(2 * 1024 * 1024 + 1);
     big.set(PNG.subarray(0, 8));
     const t = setup({
+      env: { IMG_MAX_BYTES: String(2 * 1024 * 1024) },
       refs: {
         [MINT]: { image: "https://cdn.example.com/declared", pump: false },
         [OTHER]: { image: "https://cdn.example.com/streamed", pump: false },
@@ -290,12 +291,18 @@ describe("image proxy: caches and limits", () => {
     expect(t.calls).toHaveLength(1);
   });
 
-  test("failures are negative-cached: no new upstream fetch until the back-off passes", async () => {
-    const t = setup({ route: () => new Response("try later", { status: 503 }) });
+  test("transient failures: 404 pending with Retry-After, no new upstream fetch until the back-off passes", async () => {
+    const t = setup({ route: () => new Response("try later", { status: 503 }), env: { IMG_WAIT_MS: "50" } });
     const p = path(MINT, "https://cdn.example.com/a.png", 48);
-    expect((await t.get(p)).status).toBe(404);
-    expect((await t.get(p)).status).toBe(404);
+    const r1 = await t.get(p);
+    expect(r1.status).toBe(404);
+    expect(r1.headers.get("x-zf-image")).toBe("pending");
+    expect(Number(r1.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+    const r2 = await t.get(p);
+    expect(r2.status).toBe(404);
+    expect(r2.headers.get("x-zf-image")).toBe("pending");
     expect(t.calls).toHaveLength(1);
+    t.proxy.stop();
   });
 
   test("per-IP request limit (429 with Retry-After), separate per IP", async () => {

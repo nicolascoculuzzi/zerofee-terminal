@@ -15,13 +15,23 @@
  *
  * Responses:
  *  - 200 `image/webp`, resized so the shorter side equals the size (never upscaled), so `object-fit: cover`
- *    fills a square box. When an image can't be re-encoded the validated original is sent instead
- *    (`image/png`, `image/jpeg`, `image/webp` or `image/gif`, at most 2 MB). Never SVG or anything else.
- *    Strong `ETag`, `If-None-Match` answers 304.
- *  - 404 `not_found`: the token is unknown, has no image, or the image could not be fetched or is not an
- *    allowed raster image. Show the monogram. Failures are retried server-side after a short back-off, so
- *    a later request (a remount, a retry with the same URL) can succeed for a brand-new token.
- *  - 400 `bad_request` (malformed mint or size), 429 `rate_limited` (per-IP limit).
+ *    fills a square box. Upstream PNG, JPEG, WebP, GIF (and AVIF / HEIC where the server can decode them)
+ *    of up to 8 MB are accepted and always re-encoded small; only a small (<= 512 KB) PNG / JPEG / WebP /
+ *    GIF that fails to decode is sent as it is. Never SVG or anything else. Strong `ETag`, `If-None-Match`
+ *    answers 304. `x-zf-image: ok`.
+ *  - 404 `not_found` with `x-zf-image` saying why (on GET and HEAD alike, so a client whose <img> failed
+ *    can ask with a HEAD of the same URL):
+ *      `pending`: the server is still fetching it (queued, or retrying after a 429 / timeout on its own
+ *                 schedule); `Retry-After` says when to look again. Keep the monogram meanwhile.
+ *      `failed`:  it could not be had (wrong type, too large, undecodable, or retries exhausted). Keep the
+ *                 monogram; the server will not try again for a long while, so neither should the client.
+ *      `none`:    the token is unknown or its metadata names no image (yet: `TokenSummary.image` changes
+ *                 when it arrives, and so does the URL).
+ *  - 400 `bad_request` (malformed mint or size), 429 `rate_limited` (per-IP limit), 503 `unavailable`
+ *    (busy; Retry-After).
+ *
+ * A pump.fun coin whose metadata can't be fetched gets `https://images.pump.fun/coin-image/<mint>` as its
+ * `TokenSummary.image` meanwhile (pump's own CDN); the real metadata image replaces it when it arrives.
  *
  * `TokenSummary.imageProxied` carries `imageProxyUrl(mint, image)` (no size): append `&s=<px>`, or call
  * `imageProxyUrl(mint, image, px)` directly.
