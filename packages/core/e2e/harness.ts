@@ -110,6 +110,8 @@ const HINTS: Record<TargetKind, string> = {
   mayhem: "pass a mayhem-mode curve mint to fork:start",
   migration: "pass two Token-2022 curve mints to fork:start",
   pumpswap: "pass a migrated (PumpSwap) mint to fork:start",
+  launchlab: "pass a Raydium LaunchLab (SOL pair) mint to fork:start",
+  cpmm: "pass a graduated Raydium LaunchLab mint to fork:start",
 };
 const announced = new Set<string>();
 

@@ -16,6 +16,8 @@
  *     Global's withdraw authority, the coin-creator vault authority the pool inherits + its quote ATA, pool-v2,
  *     and the PumpSwap protocol / buyback recipients with their quote ATAs
  *   - the 8 Jito + 10 Helius Sender tip accounts (a tip into a missing account fails the rent check)
+ *   - Raydium (optional targets): the LaunchLab / CPMM programs, and per LaunchLab pool its GlobalConfig,
+ *     PlatformConfig, mint, vaults and fee vaults; per CPMM pool its AmmConfig, mints, vaults and observation
  * Accounts that may legitimately not exist go to --maybe-clone. User-side accounts (ATAs, volume
  * accumulators) are created by the trades themselves.
  *
@@ -42,11 +44,18 @@ import {
   bondingCurvePda,
   canonicalPoolPda,
   coinCreatorVaultAuthorityPda,
+  cpmmAuthorityPda,
+  cpmmPoolPda,
+  cpmmVaultAmountsWithoutFees,
   creatorVaultPda,
   DEFAULT_PUBKEY,
   decodeAmmGlobalConfig,
   decodeBondingCurve,
+  decodeCpmmPool,
   decodeEventsFromLogs,
+  decodeLaunchLabGlobalConfig,
+  decodeLaunchLabPlatformConfig,
+  decodeLaunchLabPool,
   decodeMint,
   decodePool,
   decodePumpGlobal,
@@ -57,8 +66,17 @@ import {
   globalMayhemFeeRecipients,
   HELIUS_SENDER_TIP_ACCOUNTS,
   isCanonicalPumpPool,
+  isCpmmSwapEnabled,
   isSolCurve,
   JITO_TIP_ACCOUNTS_FALLBACK,
+  LAUNCHLAB_CURVE_TYPE,
+  LAUNCHLAB_POOL_STATUS,
+  launchLabAuthorityPda,
+  launchLabCreatorFeeVaultPda,
+  launchLabEventAuthorityPda,
+  launchLabPlatformFeeVaultPda,
+  launchLabPoolPda,
+  launchLabProgressBps,
   MAYHEM_FEE_RECIPIENTS,
   MAYHEM_PROGRAM_ID,
   POOL_ACCOUNT_NEW_SIZE,
@@ -75,6 +93,8 @@ import {
   type PumpGlobal,
   poolV2Pda,
   pumpGlobalVolumeAccumulatorPda,
+  RAYDIUM_CPMM_PROGRAM_ID,
+  RAYDIUM_LAUNCHLAB_PROGRAM_ID,
   type RawAccount,
   SYSTEM_PROGRAM_ID,
   sharingConfigPda,
@@ -362,6 +382,134 @@ async function classifyPools(rpc: ReadOnlyRpc, pools: Address[]): Promise<PoolCa
   return out;
 }
 
+/** Token-2022 coins with a transfer fee hold withheld fees after a buy, so a full exit cannot close the account. */
+function transferFeeReject(mintAcc: RawAccount): string | undefined {
+  const info = decodeMint(mintAcc.data, mintAcc.owner);
+  return info.extensions.transferFeeConfig ? "Token-2022 transfer fee" : undefined;
+}
+
+/** LaunchLab pools: funding, SOL-quoted, constant-product, not within 20% of graduation. */
+async function classifyLaunchLabPools(rpc: ReadOnlyRpc, pools: Address[]): Promise<PoolCandidate[]> {
+  const accs = await fetchRawAccounts(rpc, pools);
+  const decoded = pools.flatMap((addr, i) => {
+    const acc = accs[i];
+    if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return [];
+    try {
+      return [{ addr, pool: decodeLaunchLabPool(acc.data) }];
+    } catch {
+      return [];
+    }
+  });
+  const extra = await fetchRawAccounts(
+    rpc,
+    decoded.flatMap(({ pool }) => [pool.baseMint, pool.globalConfig]),
+  );
+  const out: PoolCandidate[] = [];
+  for (const [i, { addr, pool }] of decoded.entries()) {
+    const [mintAcc, globalAcc] = [extra[2 * i], extra[2 * i + 1]];
+    if (!mintAcc || !globalAcc) continue;
+    const mintInfo = decodeMint(mintAcc.data, mintAcc.owner);
+    const progress = launchLabProgressBps(pool) / 100;
+    const target: ForkTarget = {
+      kind: "launchlab",
+      mint: pool.baseMint,
+      venue: "launchlab",
+      tokenProgram: mintInfo.tokenProgram,
+      market: addr,
+      note: `LaunchLab curve, ${mintInfo.tokenProgram === TOKEN_2022_PROGRAM_ID ? "Token-2022" : "SPL Token"}, raised ${fmtSol(pool.realQuote)}, progress ${progress.toFixed(1)}%`,
+    };
+    let reject: string | undefined;
+    if (pool.status !== LAUNCHLAB_POOL_STATUS.fund) reject = "not funding";
+    else if (pool.quoteMint !== WSOL_MINT) reject = `quote ${pool.quoteMint}`;
+    else if (decodeLaunchLabGlobalConfig(globalAcc.data).curveType !== LAUNCHLAB_CURVE_TYPE.constantProduct) reject = "curve type";
+    else if (progress >= 80) reject = "within 20% of graduation";
+    else reject = transferFeeReject(mintAcc);
+    out.push({ target, reject });
+  }
+  return out;
+}
+
+/**
+ * CPMM pools of graduated LaunchLab coins (SOL pair, the pool on PlatformConfig.cpswap_config: how the app
+ * resolves a CPMM coin from its mint), swaps enabled and open, at least 1 SOL of fee-net quote reserve.
+ */
+async function classifyCpmmPools(rpc: ReadOnlyRpc, pools: Address[], nowUnix: bigint): Promise<PoolCandidate[]> {
+  const accs = await fetchRawAccounts(rpc, pools);
+  const decoded = pools.flatMap((addr, i) => {
+    const acc = accs[i];
+    if (!acc || acc.owner !== RAYDIUM_CPMM_PROGRAM_ID) return [];
+    try {
+      return [{ addr, pool: decodeCpmmPool(acc.data) }];
+    } catch {
+      return [];
+    }
+  });
+  const extra = await fetchRawAccounts(
+    rpc,
+    decoded.flatMap(({ pool }) => [pool.token0Mint === WSOL_MINT ? pool.token1Mint : pool.token0Mint, pool.token0Vault, pool.token1Vault]),
+  );
+  const out: PoolCandidate[] = [];
+  for (const [i, { addr, pool }] of decoded.entries()) {
+    const [mintAcc, v0, v1] = [extra[3 * i], extra[3 * i + 1], extra[3 * i + 2]];
+    if (!mintAcc || !v0 || !v1) continue;
+    const baseMint = pool.token0Mint === WSOL_MINT ? pool.token1Mint : pool.token0Mint;
+    const mintInfo = decodeMint(mintAcc.data, mintAcc.owner);
+    let quote = 0n;
+    try {
+      const net = cpmmVaultAmountsWithoutFees(pool, decodeTokenAccount(v0.data).amount, decodeTokenAccount(v1.data).amount);
+      quote = pool.token0Mint === WSOL_MINT ? net.token0 : net.token1;
+    } catch {
+      /* vault below fees owed: rejected below */
+    }
+    const target: ForkTarget = {
+      kind: "cpmm",
+      mint: baseMint,
+      venue: "cpmm",
+      tokenProgram: mintInfo.tokenProgram,
+      market: addr,
+      note: `CPMM pool, ${mintInfo.tokenProgram === TOKEN_2022_PROGRAM_ID ? "Token-2022" : "SPL Token"} base, quote reserve ${fmtSol(quote)}`,
+    };
+    let reject: string | undefined;
+    if (pool.token0Mint !== WSOL_MINT && pool.token1Mint !== WSOL_MINT) reject = "not SOL-paired";
+    else if (!isCpmmSwapEnabled(pool)) reject = "swaps disabled";
+    else if (pool.openTime > nowUnix) reject = "not open yet";
+    else if (quote < 1_000_000_000n) reject = "thin liquidity";
+    else if ((await graduatedFrom(rpc, baseMint)) !== addr) reject = "not a graduated LaunchLab coin";
+    else reject = transferFeeReject(mintAcc);
+    out.push({ target, reject });
+  }
+  return out;
+}
+
+/** The CPMM pool a graduated SOL-paired LaunchLab coin trades on, or null. */
+async function graduatedFrom(rpc: ReadOnlyRpc, mint: Address): Promise<Address | null> {
+  const [acc] = await fetchRawAccounts(rpc, [await launchLabPoolPda(mint, WSOL_MINT)]);
+  if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return null;
+  const pool = decodeLaunchLabPool(acc.data);
+  if (pool.status !== LAUNCHLAB_POOL_STATUS.trade || pool.migrateType !== 1) return null;
+  const [platformAcc] = await fetchRawAccounts(rpc, [pool.platformConfig]);
+  return platformAcc ? cpmmPoolPda(decodeLaunchLabPlatformConfig(platformAcc.data).cpswapConfig, mint, WSOL_MINT) : null;
+}
+
+/** Explicit Raydium mints: the SOL LaunchLab pool while funding, its CPMM graduation pool afterwards. */
+async function classifyRaydiumMint(rpc: ReadOnlyRpc, mint: Address): Promise<ForkTarget | null> {
+  const llPool = await launchLabPoolPda(mint, WSOL_MINT);
+  const [acc] = await fetchRawAccounts(rpc, [llPool]);
+  if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return null;
+  const pool = decodeLaunchLabPool(acc.data);
+  if (pool.status === LAUNCHLAB_POOL_STATUS.fund) {
+    const [c] = await classifyLaunchLabPools(rpc, [llPool]);
+    if (c?.reject) throw new Error(`${mint}: unsupported LaunchLab pool ${llPool} (${c.reject})`);
+    return c?.target ?? null;
+  }
+  const [platformAcc] = await fetchRawAccounts(rpc, [pool.platformConfig]);
+  if (!platformAcc || pool.migrateType !== 1) throw new Error(`${mint}: graduated LaunchLab coin without a CPMM pool`);
+  const cpmm = await cpmmPoolPda(decodeLaunchLabPlatformConfig(platformAcc.data).cpswapConfig, mint, WSOL_MINT);
+  const [c] = await classifyCpmmPools(rpc, [cpmm], BigInt(Math.floor(Date.now() / 1000)));
+  if (c?.reject) throw new Error(`${mint}: unsupported CPMM pool ${cpmm} (${c.reject})`);
+  return c?.target ?? null;
+}
+
 /** A second eligible Token-2022 curve coin becomes the migration target (see TargetKind). */
 function asMigrationTarget(t: ForkTarget): ForkTarget {
   return { ...t, kind: "migration", note: `${t.note}; the armed suite completes and migrates it` };
@@ -390,7 +538,14 @@ export async function classifyMints(rpc: ReadOnlyRpc, mints: Address[]): Promise
       if (c.reject !== "curve complete") throw new Error(`${mint}: unsupported curve (${c.reject})`);
     }
     const [p] = await classifyPools(rpc, [poolAddr]);
-    if (!p) throw new Error(`${mint}: no active bonding curve and no canonical PumpSwap pool`);
+    if (!p) {
+      const raydium = await classifyRaydiumMint(rpc, mint);
+      if (raydium) {
+        out.push(raydium);
+        continue;
+      }
+      throw new Error(`${mint}: no active bonding curve, canonical PumpSwap pool or SOL LaunchLab pool`);
+    }
     if (p.reject) throw new Error(`${mint}: unsupported pool ${poolAddr} (${p.reject})`);
     out.push(p.target);
   }
@@ -566,12 +721,14 @@ export const REQUIRED_KINDS: readonly TargetKind[] = ["curve2022", "pumpswap"];
  *   curveSpl   legacy SPL Token curve coin - optional; only if one shows up along the way (rare since create_v2)
  *   pumpswap   canonical wSOL pool - required; an SPL-base pool is preferred so both token programs are
  *              exercised across venues
+ *   launchlab  SOL-quoted Raydium LaunchLab curve - optional; from recent LaunchLab TradeEvents
+ *   cpmm       SOL-paired Raydium CPMM pool - optional; from recent CPMM SwapEvents
  * Required kinds get up to `rounds` scans with backoff in between (the public endpoint throttles
  * getTransaction); everything stops at the time budget. Missing kinds are simply absent from the result.
  */
 export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = {}): Promise<ForkTarget[]> {
   const log = opts.log ?? (() => {});
-  const want = new Set<TargetKind>(opts.kinds ?? ["curve2022", "curveSpl", "mayhem", "migration", "pumpswap"]);
+  const want = new Set<TargetKind>(opts.kinds ?? ["curve2022", "curveSpl", "mayhem", "migration", "pumpswap", "launchlab", "cpmm"]);
   const batch = opts.batch ?? createReadOnlyBatch();
   const rounds = opts.rounds ?? 3;
   const deadline = Date.now() + (opts.timeoutMs ?? Number(process.env.FORK_DISCOVERY_TIMEOUT_MS ?? 180_000));
@@ -667,10 +824,45 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
     const why = [...poolRejects].map(([reason, n]) => `${n} ${reason}`).join(", ");
     log(`  ${seenPools.size} PumpSwap pools classified${why ? ` (ineligible: ${why})` : ""}`);
   }
+  // Raydium (optional): one scan each; the e2e suite skips a venue it has no target for.
+  const raydiumScans = [
+    {
+      kind: "launchlab" as const,
+      program: RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+      poolsOf: (events: DecodedEvents) => events.flatMap((e) => (e.kind === "launchlabTrade" ? [e.pool] : [])),
+      classify: (pools: Address[]) => classifyLaunchLabPools(rpc, pools),
+    },
+    {
+      kind: "cpmm" as const,
+      program: RAYDIUM_CPMM_PROGRAM_ID,
+      poolsOf: (events: DecodedEvents) => events.flatMap((e) => (e.kind === "cpmmSwap" ? [e.pool] : [])),
+      classify: (pools: Address[]) => classifyCpmmPools(rpc, pools, BigInt(Math.floor(Date.now() / 1000))),
+    },
+  ];
+  for (const scan of raydiumScans) {
+    if (!want.has(scan.kind) || Date.now() >= deadline) continue;
+    const seenPools = new Set<string>();
+    const rejects = new Map<string, number>();
+    // LaunchLab pairs many coins with non-SOL quotes (USD1, ...) and most of its transactions fail: read more.
+    await scanProgram(rpc, batch, scan.program, budget(24, 3), seen, stats, async (events) => {
+      const pools = [...new Set(scan.poolsOf(events).filter((p) => !seenPools.has(p)))] as Address[];
+      for (const p of pools) seenPools.add(p);
+      for (const c of pools.length ? await scan.classify(pools) : []) {
+        if (c.reject) rejects.set(c.reject, (rejects.get(c.reject) ?? 0) + 1);
+        else if (!found.has(scan.kind) && !seenMints.has(c.target.mint)) {
+          found.set(scan.kind, c.target);
+          log(`  picked ${scan.kind.padEnd(9)} ${c.target.mint} (pool ${c.target.market}, ${c.target.note})`);
+        }
+      }
+      return found.has(scan.kind);
+    });
+    const why = [...rejects].map(([reason, n]) => `${n} ${reason}`).join(", ");
+    log(`  ${seenPools.size} ${scan.kind === "launchlab" ? "LaunchLab" : "CPMM"} pools classified${why ? ` (ineligible: ${why})` : ""}`);
+  }
   log(`  discovery read ${describeStats(stats)}`);
   opts.onStats?.(stats);
 
-  const order: TargetKind[] = ["curve2022", "curveSpl", "mayhem", "migration", "pumpswap"];
+  const order: TargetKind[] = ["curve2022", "curveSpl", "mayhem", "migration", "pumpswap", "launchlab", "cpmm"];
   return order.flatMap((k) => {
     const t = found.get(k);
     return t ? [t] : [];
@@ -693,6 +885,15 @@ const TRADE_PROGRAMS: readonly Address[] = [
   ASSOCIATED_TOKEN_PROGRAM_ID,
 ];
 
+/** Raydium programs, cloned only when a target needs them (LaunchLab's binary alone is 2.5 MB). */
+function programsFor(targets: readonly ForkTarget[]): Address[] {
+  return [
+    ...TRADE_PROGRAMS,
+    ...(targets.some((t) => t.venue === "launchlab") ? [RAYDIUM_LAUNCHLAB_PROGRAM_ID] : []),
+    ...(targets.some((t) => t.venue === "cpmm") ? [RAYDIUM_CPMM_PROGRAM_ID] : []),
+  ];
+}
+
 /**
  * Resolves the full clone list for `targets` from LIVE mainnet state (Global / GlobalConfig fee recipient
  * lists, live curve creator, live pool coin creator). Required accounts are verified to exist.
@@ -712,10 +913,11 @@ export async function resolveCloneList(rpc: ReadOnlyRpc, targets: readonly ForkT
   };
 
   // Programs: upgradeable ones are cloned with their programdata; BPFLoader2 ones as plain accounts.
-  const programAccs = await fetchRawAccounts(rpc, TRADE_PROGRAMS);
+  const programs = programsFor(targets);
+  const programAccs = await fetchRawAccounts(rpc, programs);
   const upgradeablePrograms: Address[] = [];
   const programAccounts: Address[] = [];
-  TRADE_PROGRAMS.forEach((p, i) => {
+  programs.forEach((p, i) => {
     const acc = programAccs[i];
     if (!acc) throw new Error(`program ${p} not found on the clone source`);
     if (acc.owner === UPGRADEABLE_LOADER) upgradeablePrograms.push(p);
@@ -761,6 +963,14 @@ export async function resolveCloneList(rpc: ReadOnlyRpc, targets: readonly ForkT
   for (const a of HELIUS_SENDER_TIP_ACCOUNTS) need(a, "Helius Sender tip account");
 
   for (const t of targets) {
+    if (t.venue === "launchlab") {
+      await resolveLaunchLab(rpc, t, need, opt);
+      continue;
+    }
+    if (t.venue === "cpmm") {
+      await resolveCpmm(rpc, t, need, opt);
+      continue;
+    }
     if (t.venue === "pump") {
       const curveAddr = await bondingCurvePda(t.mint);
       const [curveAcc] = await fetchRawAccounts(rpc, [curveAddr]);
@@ -831,6 +1041,52 @@ export async function resolveCloneList(rpc: ReadOnlyRpc, targets: readonly ForkT
     maybeAccounts: [...maybe].filter((a) => !required.has(a)),
     why,
   };
+}
+
+type Collect = (a: Address, reason: string) => void;
+
+/** A LaunchLab buy / sell: pool, configs, mint, vaults; the fee vaults and authorities when they exist. */
+async function resolveLaunchLab(rpc: ReadOnlyRpc, t: ForkTarget, need: Collect, opt: Collect): Promise<void> {
+  const [acc] = await fetchRawAccounts(rpc, [t.market]);
+  if (!acc) throw new Error(`LaunchLab pool ${t.market} missing`);
+  const pool = decodeLaunchLabPool(acc.data);
+  need(t.mint, "launchlab base mint");
+  need(t.market, "launchlab pool");
+  need(pool.globalConfig, "launchlab GlobalConfig (protocol fee, curve type)");
+  need(pool.platformConfig, "launchlab PlatformConfig (platform / creator fee)");
+  need(pool.baseVault, "launchlab base vault");
+  need(pool.quoteVault, "launchlab quote vault");
+  // The program creates a missing fee vault inside the swap (the payer pays the rent).
+  opt(await launchLabPlatformFeeVaultPda(pool.platformConfig, pool.quoteMint), "launchlab platform fee vault");
+  opt(await launchLabCreatorFeeVaultPda(pool.creator, pool.quoteMint), "launchlab creator fee vault");
+  opt(await launchLabAuthorityPda(), "launchlab vault authority");
+  opt(await launchLabEventAuthorityPda(), "launchlab event authority");
+}
+
+/**
+ * A CPMM swap: pool, AmmConfig, mints, vaults, observation; the authority when it exists. Plus the graduated
+ * LaunchLab pool and its configs, through which loadTokenState finds the CPMM pool from the mint.
+ */
+async function resolveCpmm(rpc: ReadOnlyRpc, t: ForkTarget, need: Collect, opt: Collect): Promise<void> {
+  const [acc] = await fetchRawAccounts(rpc, [t.market]);
+  if (!acc) throw new Error(`CPMM pool ${t.market} missing`);
+  const pool = decodeCpmmPool(acc.data);
+  const llPool = await launchLabPoolPda(t.mint, WSOL_MINT);
+  const [llAcc] = await fetchRawAccounts(rpc, [llPool]);
+  if (llAcc) {
+    const ll = decodeLaunchLabPool(llAcc.data);
+    need(llPool, "cpmm coin's graduated LaunchLab pool (venue resolution)");
+    need(ll.globalConfig, "cpmm coin's LaunchLab GlobalConfig (venue resolution)");
+    need(ll.platformConfig, "cpmm coin's LaunchLab PlatformConfig (cpswap_config)");
+  }
+  need(t.market, "cpmm pool");
+  need(pool.ammConfig, "cpmm AmmConfig (fee rates)");
+  need(pool.token0Mint, "cpmm token_0 mint");
+  need(pool.token1Mint, "cpmm token_1 mint");
+  need(pool.token0Vault, "cpmm token_0 vault");
+  need(pool.token1Vault, "cpmm token_1 vault");
+  need(pool.observationKey, "cpmm observation");
+  opt(await cpmmAuthorityPda(), "cpmm vault authority");
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -64,6 +64,8 @@ import {
   addressBytes,
   ammFeeRates,
   applyBuy,
+  applyLaunchLabBuy,
+  applyLaunchLabSell,
   applySell,
   assembleTransaction,
   type BuiltTrade,
@@ -118,6 +120,9 @@ import {
   quoteAmmSell,
   quoteBuyExactQuoteIn,
   quoteBuyExactTokens,
+  quoteCpmmSwapBaseInput,
+  quoteLaunchLabBuyExactIn,
+  quoteLaunchLabSellExactIn,
   quoteSell,
   RpcLane,
   type SignedTx,
@@ -304,7 +309,7 @@ interface LandMeta {
 export async function land(fork: Fork, wireBase64: string, signature: string, m: LandMeta): Promise<Landing> {
   const tracker = new LatencyTracker({
     side: m.side === "buy" ? "buy" : "sell",
-    venue: m.venue === "pumpswap" ? "pumpswap" : "pump",
+    venue: m.venue === "pumpswap" || m.venue === "launchlab" || m.venue === "cpmm" ? m.venue : "pump",
     mint: m.mint,
     dryRun: false,
   });
@@ -624,8 +629,73 @@ export async function plainTx(
   return landing;
 }
 
+/** LaunchLab curve after the trade (TradeEvent real_*_after). */
+function launchLabAfter(market: Extract<LiveMarketState, { venue: "launchlab" }>, side: "buy" | "sell", amount: bigint): LiveMarketState {
+  if (side === "buy") {
+    const q = quoteLaunchLabBuyExactIn(market.pool, amount, market.params, market.transferFees);
+    if (q.capped) throw new RangeError("the market buy would complete the curve");
+    return { ...market, pool: applyLaunchLabBuy(market.pool, q) };
+  }
+  return {
+    ...market,
+    pool: applyLaunchLabSell(market.pool, quoteLaunchLabSellExactIn(market.pool, amount, market.params, market.transferFees)),
+  };
+}
+
+/**
+ * CPMM pool after a swap_base_input, as the program books it: the input vault receives everything that
+ * arrives (fees included), the output vault sends the output, and the protocol / fund / creator fees are
+ * recorded as owed (so the next quote's fee-net reserves keep the LP fee).
+ */
+function cpmmAfter(market: Extract<LiveMarketState, { venue: "cpmm" }>, side: "buy" | "sell", amount: bigint): LiveMarketState {
+  const { pool } = market;
+  const baseIs0 = pool.token0Mint === market.baseMint;
+  const inputIs0 = side === "buy" ? !baseIs0 : baseIs0;
+  const fees = market.transferFees;
+  const q = quoteCpmmSwapBaseInput({
+    pool,
+    vault0Amount: market.vault0Amount,
+    vault1Amount: market.vault1Amount,
+    inputMint: inputIs0 ? pool.token0Mint : pool.token1Mint,
+    rates: market.rates,
+    ...(fees
+      ? {
+          transferFees: {
+            input: side === "buy" ? fees.quote : fees.base,
+            output: side === "buy" ? fees.base : fees.quote,
+            epoch: fees.epoch,
+          },
+        }
+      : {}),
+    amountIn: amount,
+  });
+  const into = q.amountIn - q.inputTransferFee;
+  const creatorIn = q.isCreatorFeeOnInput ? q.creatorFee : 0n;
+  const creatorOut = q.isCreatorFeeOnInput ? 0n : q.creatorFee;
+  const owed = (onInput: boolean) =>
+    onInput ? { protocol: q.protocolFee, fund: q.fundFee, creator: creatorIn } : { protocol: 0n, fund: 0n, creator: creatorOut };
+  const f0 = owed(inputIs0);
+  const f1 = owed(!inputIs0);
+  return {
+    ...market,
+    vault0Amount: market.vault0Amount + (inputIs0 ? into : -q.outputAmount),
+    vault1Amount: market.vault1Amount + (inputIs0 ? -q.outputAmount : into),
+    pool: {
+      ...pool,
+      protocolFeesToken0: pool.protocolFeesToken0 + f0.protocol,
+      protocolFeesToken1: pool.protocolFeesToken1 + f1.protocol,
+      fundFeesToken0: pool.fundFeesToken0 + f0.fund,
+      fundFeesToken1: pool.fundFeesToken1 + f1.fund,
+      creatorFeesToken0: pool.creatorFeesToken0 + f0.creator,
+      creatorFeesToken1: pool.creatorFeesToken1 + f1.creator,
+    },
+  };
+}
+
 /** The market after a trade of `amount` (buy: quote spent incl. fees; sell: base sold), by the venue's own math. */
 export function marketAfter(market: LiveMarketState, side: "buy" | "sell", amount: bigint): LiveMarketState {
+  if (market.venue === "launchlab") return launchLabAfter(market, side, amount);
+  if (market.venue === "cpmm") return cpmmAfter(market, side, amount);
   if (market.venue === "pump") {
     const rates = curveFeeRates({ curve: market.curve, global: market.global, feeConfig: market.feeConfig, mintSupply: market.mintSupply });
     if (side === "buy") {
@@ -635,8 +705,6 @@ export function marketAfter(market: LiveMarketState, side: "buy" | "sell", amoun
     }
     return { ...market, curve: applySell(market.curve, quoteSell(market.curve, amount, rates)) };
   }
-  // The fork suite moves pump and PumpSwap markets only (no Raydium accounts are cloned).
-  if (market.venue !== "pumpswap") throw new Error(`marketAfter does not model venue ${market.venue}`);
   const rates = ammFeeRates({
     pool: market.pool,
     isCanonical: market.isCanonical,

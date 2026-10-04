@@ -401,7 +401,7 @@ async function main() {
     log("");
     log(`fork ready in ${elapsed()}: solana-test-validator ${manifest.validatorVersion} on 127.0.0.1 (pid ${manifest.pid})`);
     log(`  ledger       ${paths.ledgerDir}`);
-    for (const t of targets) log(`  ${t.kind.padEnd(12)} ${t.mint}  ${t.venue === "pumpswap" ? `pool ${t.market}, ` : ""}${t.note}`);
+    for (const t of targets) log(`  ${t.kind.padEnd(12)} ${t.mint}  ${t.venue === "pump" ? "" : `pool ${t.market}, `}${t.note}`);
     log(
       `  cloned       ${programs.length} programs (ELF identical to mainnet), ${clone.accounts.length} accounts, ` +
         `${presentMaybe.length}/${clone.maybeAccounts.length} optional`,
