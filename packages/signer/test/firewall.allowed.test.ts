@@ -504,7 +504,7 @@ describe("firewall: allowed Jupiter routes (real /build responses, our compute b
     const summary = await expectAllowed(compileJupiter(full, tables), makeContext(a, { addressLookupTables: tables }));
     const trade = summary.actions.find((x) => x.kind === "trade");
     expect(trade).toMatchObject({ kind: "trade", venue: "Jupiter" });
-    expect(summary.text).toContain("the hops are not inspected, but the output must reach the trading wallet's own token account");
+    expect(summary.text).toContain("every hop account that touches the trading wallet's funds is checked (the pools are not)");
   });
 });
 

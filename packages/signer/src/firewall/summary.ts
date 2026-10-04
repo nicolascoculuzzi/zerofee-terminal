@@ -14,7 +14,7 @@ export function describeAction(action: SummaryAction, signer: Address, connected
       const note = action.mayPayVenueRent
         ? ` If its platform or creator fee vault does not exist yet, ${action.venue} creates it with the trading wallet paying the rent (not refundable).`
         : action.route?.length
-          ? ` Routed through ${action.route.join(" > ")}; the hops are not inspected, but the output must reach the trading wallet's own token account.`
+          ? ` Routed through ${action.route.join(" > ")}; every hop account that touches the trading wallet's funds is checked (the pools are not), and the output goes to the trading wallet's own token account.`
           : "";
       if (action.side === "buy") {
         const amount =

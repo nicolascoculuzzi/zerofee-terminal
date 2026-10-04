@@ -125,8 +125,8 @@ export interface TradeAction {
    */
   readonly mayPayVenueRent?: boolean;
   /**
-   * Aggregator routes (Jupiter): the venue of each hop, from the decoded route plan. The hops run inside
-   * the aggregator and are not inspected; the rule proves only where the output lands and its minimum.
+   * Aggregator routes (Jupiter): the venue of each hop, from the decoded route plan. The rule checks every
+   * hop account that touches the user's funds; pools and vaults are validated by the venue programs.
    */
   readonly route?: readonly string[];
 }

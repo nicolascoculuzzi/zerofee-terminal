@@ -2,6 +2,17 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: Jupiter hops are not checked by Jupiter (mainnet simulation)
+
+`bun run packages/core/scripts/jupiter-hop-redirect.ts <wallet> <mint> <other holder>` builds a real `/build` route, then points only the hop's output account at another holder's token account. `user_destination_token_account` stays the wallet's ATA. Both versions are simulated (public RPC, unsigned, never sent).
+
+| Route | As built | Hop output redirected |
+|---|---|---|
+| `route_v2`, 0.01 SOL -> 6Vsnb… via Meteora DAMM v2 (run twice) | wallet's ATA credited 10,268,118,068 | **succeeds**: wallet's ATA unchanged (0), other holder credited 10,268,118,068 |
+| `shared_accounts_route_v2`, 0.01 SOL -> BONK via 1DEX > TesseraV | wallet's ATA credited | fails, Jupiter 6021 `InvalidOutputTokenAccount` |
+
+So a `route_v2` hop decides where the output goes (and which user account the input comes from, with the user's signature), and checking the route's own user accounts proves nothing. The signer now pins the hop's user side for single `route_v2` hops through reviewed venues (Meteora DBC, Meteora DAMM v2, Orca Whirlpool). It accepts shared-accounts routes only if no hop names the user. Core re-quotes anything else over the reviewed venues.
+
 ## 2026-10-03: Jupiter `/build` long-tail fallback dry runs (public RPC, keyless Jupiter, laptop)
 
 Setup: `https://api.mainnet-beta.solana.com`, keyless `https://api.jup.ag/swap/v2/build` (0.5 requests/s), `DRY_RUN=true`, unsigned simulation (`SIMULATE_AS`, read-only wallets that hold SOL or the token), `SLIPPAGE_BPS=1500`. Two tools:
