@@ -21,6 +21,8 @@ const PAUSED_WORD_MIN_W = 460;
 export interface ColumnHeaderProps {
   column: PulseColumnId;
   count: number;
+  /** The first snapshot hasn't arrived: the count is left out rather than shown as 0. */
+  loading?: boolean;
   paused: boolean;
   width: number;
   /** "Still loading · feed lag 4.2 s" after 3 s of skeletons (DESIGN.md 4.18). */
@@ -34,7 +36,7 @@ export interface ColumnHeaderProps {
 
 /**
  * Pulse column header (DESIGN.md 4.3), 36 / 40 px with a hairline under it:
- * title 12/600 (definition on hover) and count, a quiet "Paused" chip, then search (24 px, opens
+ * title 12/600 (definition on hover) and count (left out until the column has loaded), a quiet "Paused" chip, then search (24 px, opens
  * to a 160 px input), the column quick-buy amount (76 px), P1–P3 (22 px segments), filters with
  * an active-count badge, and the "..." menu. Per-column controls after Axiom's Pulse header;
  * the quiet paused chip after Canny: https://mobbin.com/screens/8794989c-4116-4894-9684-2fd8f4761652
@@ -62,7 +64,7 @@ export function ColumnHeader(props: ColumnHeaderProps) {
             <h2 className="truncate text-data font-semibold text-fg-1">{title}</h2>
           </Tooltip>
         )}
-        <span className="zf-num min-w-[3ch] shrink-0 text-label font-medium text-fg-3">{count}</span>
+        {!props.loading && <span className="zf-num min-w-[3ch] shrink-0 text-label font-medium text-fg-3">{count}</span>}
         {paused && (
           <span
             role="img"

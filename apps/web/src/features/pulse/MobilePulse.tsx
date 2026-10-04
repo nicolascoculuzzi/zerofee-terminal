@@ -10,6 +10,7 @@ import { ActiveFilters } from "./ActiveFilters";
 import { EmptyColumn, NewBar, SkeletonCards } from "./ColumnStates";
 import { cardView } from "./cardView";
 import { MobileRow } from "./MobileRow";
+import { RiskLegend } from "./RiskChips";
 import { usePulseUi } from "./store";
 import { useTrackedHolding } from "./tracked";
 import { useColumnList, useIncoming } from "./useColumnList";
@@ -20,8 +21,11 @@ const ROW_H = 64;
 const TAB_LABEL: Record<PulseColumnId, string> = { new: "New", final: "Final", migrated: "Migrated" };
 const TABS: PulseColumnId[] = ["new", "final", "migrated"];
 
+/** Left out until the first snapshot has arrived, so a loading tab never reads "0". */
 function TabCount({ column }: { column: PulseColumnId }) {
   const n = useIncoming(column).incoming.length;
+  const loaded = useMarket((s) => s.columns.new.length + s.columns.final.length + s.columns.migrated.length > 0);
+  if (!loaded) return null;
   return <span className="zf-num text-label text-fg-3">{n}</span>;
 }
 
@@ -164,6 +168,8 @@ export function MobilePulse() {
     <div className="flex min-h-0 flex-1 flex-col bg-surface-1">
       <MobileTabs column={column} />
       <ActiveFilters column={column} mobile />
+      {/* Phones under 382 px show risk values without their icons (RiskChips): name them here. */}
+      <RiskLegend className="border-b border-hairline min-[382px]:hidden" />
       <MobileList key={column} column={column} />
     </div>
   );

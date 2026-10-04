@@ -654,7 +654,7 @@ Each component lists anatomy, sizes (compact / comfortable), states, keyboard be
   - "..." menu: sound, sort, show legend, hide column.
 - **Active-filters row** (only when at least one filter is active): 24 px under the header. Segmented chips like Fey's, each 20 px tall, 2 px radius, `surface-2`, 1 px `hairline`: label in `text-3` ("MC"), value in `text-1` ("$5K–$50K"), then an `X` 12 px. Overflow collapses to "+3".
 - **"N new" bar:** sticky at the top of the list while paused with queued items: 24 px, `surface-2`, "↑ 12 new" at 11/500 `text-1`, then "· click or move away to show" in `text-3`. Click applies immediately.
-- **Legend row** (toggle in the menu; forced on for narrow cards): 20 px, micro type in `text-3`: "T Top 10 · D Dev · S Snipers · I Insiders · B Bundlers".
+- **Legend row** (toggle in the menu; forced on wherever cards show risk values without their icons: narrow cards, wide cards whose risk strip is under 20.5em, phones under 382 px): 20 px, micro type in `text-3`, each metric's 12 px glyph and short name, 10 px apart: "[user-star] Top 10 [chef-hat] Dev [crosshair] Snipers [ghost] Insiders [boxes] Bundlers".
 - **Column definitions** (title tooltip):
   - New Pairs: "Tokens on a bonding curve, newest first."
   - Final Stretch: "Bonding progress 60% or more, highest progress first." The threshold is configuration, not copy: the server owns it (default 60%, with a 55% exit so tokens near the line don't flap), and the UI renders the configured value (`FINAL_STRETCH_PROGRESS` in `apps/web/src/config.ts` until the gateway sends it).
@@ -681,7 +681,7 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
 +--------+-------------------------------------------+-----------+--------+
 | [ava]  | WIF  dogwifhat  [copy]                    | MC $11.2K |        |
 | [ring] | 25s  X web tg   holders 505  pro 14  eye 2 | V  $5.04K | [z .25]|
-| [bdg]  | [T 18%][D 2.0%][S 0%][I 0%][B 6.0%] DEX   | TX 52 ==- |        |
+| [bdg]  | *18%  h2.0%  +0%  g0%  b6.0%             | TX 52 ==- |        |
 +--------+-------------------------------------------+-----------+--------+
 ```
 
@@ -693,7 +693,7 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
   - Age (3.7), reserving 4ch.
   - Socials: the X mark, `Globe` (the Discord mark for discord links), the Telegram mark, each 12 px in a 16 × 16 hit area, `text-3`, as links opening in a new tab. Hover shows the handle or URL. A tweet link shows the tweet preview popover.
   - Counters: `Users` 12 px + holders; `BadgeCheck` 12 px + pro traders; `Eye` 12 px + tracked wallets holding (only when above 0, value in `info`). Counter values are 11/500 `text-2`.
-- **Line 3 (18 px):** five risk chips T D S I B (4.5), 4 px apart. Missing data stays quiet: when no chip is computed yet the line is empty, and a single uncomputed chip keeps its slot showing only its letter in `text-4` (no dash). Unknown counters and ages are omitted, never shown as "–".
+- **Line 3 (18 px):** the risk strip: five icon-and-value slots, top 10, dev, snipers, insiders, bundlers (4.5), 4 px apart. Missing data stays quiet: when no metric is computed yet the line is empty, and an uncomputed metric keeps its slot's width but draws nothing, no icon, letter or dash. Unknown counters and ages are omitted, never shown as "–".
 - **Metrics (72 px, right-aligned):**
   - Line 1: "MC" in micro `text-3`, value at 12/600 `text-1`.
   - Line 2: "V" in micro `text-3`, value at 12/400 `text-2`.
@@ -708,9 +708,10 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
   - Stale (New Pairs with no update for 30 s or more): metrics in `text-3`.
   - Blacklisted dev, funder or ticker: the card is removed, not dimmed.
 - **Clicks:** the card body opens the token page; middle-click or ⌘-click opens a new tab. The pill, copy button and social icons never open the page.
-- **Narrow (< 424 px):** avatar 32 px; grid avatar | main | pill. MC moves to the right end of line 1 (value only, 12/600) and V to the right end of line 2. The TX bar hides. Chip letters hide and the legend row is forced on (each chip shrinks to about 30 px).
-- **Wide+ (≥ 600 px):** a second 72 px metrics column with "F 1.24" (fees paid, SOL) and "NB +$3.2K" (net buy, signed colour), plus a 64 × 24 px mini chart between main and metrics: a 1-minute line over the last 30 minutes, 1 px `text-2`, no fill, a 3 px dot on the last point.
+- **Narrow (< 424 px):** avatar 32 px; grid avatar | main | pill. MC moves to the right end of line 1 (value only, 12/600) and V to the right end of line 2. The TX bar hides. The risk icons hide and the legend row is forced on (each slot shrinks to 2.8em, about 31 px).
+- **Wide+ (≥ 600 px):** a second 72 px metrics column with "F 1.24" (fees paid, SOL) and "NB +$3.2K" (net buy, signed colour), decided per column: the track exists only while some card on screen reports fees or net buy (the live feed may report neither), so no column ever shows an empty 72 px gap and all its cards keep one grid. Plus a 64 × 24 px mini chart between main and metrics: a 1-minute line over the last 30 minutes, 1 px `text-2`, no fill, a 3 px dot on the last point.
 - **Comfortable (80 px):** padding 10 px, avatar 48 px, line heights 20 / 18 / 20 px with 2 px gaps.
+- **Avatar image:** requested at 2x the tile inside the ring whatever the screen reports, rounded up to a proxy size (packages/protocol media.ts): the 46 px compact tile asks for 96 (the size the server prefetches for new launches), the 54 px comfortable tile for 128, narrow tiles (38 / 46 px) for 96.
 - Borrowed from:
   - Axiom's card ([docs](https://docs.axiom.trade/axiom/finding-tokens/pulse)): three lines, risk chips on line 3, MC / V / TX on the right, one-click buy.
   - [Binance Meme Rush](https://mobbin.com/screens/2aa0b210-3bdf-44dd-b04a-8fa2556db2f5): square avatar with a status border and launchpad badge; top-10 share turning red when high.
@@ -719,8 +720,24 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
 
 ### 4.5 Risk chips, tags and badges
 
-**Risk chip**
-- 16 px tall, 3 px horizontal padding, 2 px radius, `min-width: 40px` (so chips line up from card to card; the rare "100%" grows to 44 px).
+**Risk slot (Pulse cards and phone rows)**
+- One slot per metric, always in this order, each a lucide glyph at 12 px (1.5 px stroke) in `text-3`, then the value at 11/500, 2 px apart, left-aligned:
+
+| Metric | Glyph |
+|---|---|
+| Top 10 holders | `UserStar` |
+| Dev holdings | `ChefHat` |
+| Snipers | `Crosshair` |
+| Insiders | `Ghost` |
+| Bundlers | `Boxes` |
+
+- The icon never takes a colour; the band (3.11) colours the value only. Low: `risk-low`. Mid: `risk-mid`. High: `risk-high` on a faint 8% `risk-high` tint with a 2 px radius, no border. A value of exactly 0% is `text-3`, never an alert. "DS" (dev sold everything) is `text-2`. With metric colours off, values are `text-2`.
+- Fixed widths so slots line up card to card, in em of the label size: 4.2em (46 px at 11 px; it holds any value up to "100%", only "<0.1%" grows), 2 px padding. A strip too short for five (wide columns near 424 px, phones) steps down and stays aligned: 3.8em slots without padding from 20.5em, below that the value alone in 2.8em slots, with the legend row naming them (4.3).
+- Not computed yet: the slot keeps its width and is empty. No icon, no letter, no dash.
+- One DOM node per slot: the glyph is a `::before` CSS mask (8, "Card icons as CSS masks"). Tooltip through the page tooltip layer (4.14): the full metric name, value and active bands. `aria-label`: "Top 10 holders 18 percent, low".
+
+**Risk chip (token page, trackers)**
+- 16 px tall, 3 px horizontal padding, 2 px radius, `min-width: 40px` (so chips line up from row to row; the rare "100%" grows to 44 px).
 - Letter: micro 10/500 uppercase `text-3`. Value: 11/500 in the band colour, right-aligned inside the chip. 2 px gap between them.
 - Low: no fill, no border. Mid: `warn-tint` fill. High: `sell-tint` fill plus 1 px `sell-edge` border.
 - "DS" and "–": per 3.11.
@@ -742,12 +759,15 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
 **Status dot:** 6 px circle plus a label (4.20).
 
 Borrowed from:
-- Axiom's five percentage chips ([docs](https://docs.axiom.trade/axiom/finding-tokens/pulse)): we replace its icon metaphors with letters.
+- Axiom's five percentage metrics ([docs](https://docs.axiom.trade/axiom/finding-tokens/pulse)): an icon per metric plus its value in a fixed slot, with Axiom's metaphors.
+- [Binance Meme Rush](https://mobbin.com/screens/2aa0b210-3bdf-44dd-b04a-8fa2556db2f5): a grey icon and a value per metric, colour on the value only when it's high.
+- [Binance Meme Rank](https://mobbin.com/screens/55442959-3968-4340-9c27-3efe6dfffeb5): a high value on a faint tint without a border.
+- [Copilot Money](https://mobbin.com/screens/df0a19e8-30c4-4d6a-8855-7060478380ac): a zero change in grey rather than in a signal colour.
 - [Railway](https://mobbin.com/screens/ea8d53dc-8270-430d-bbdd-1df73b4ca531): severity chips (tint + border + matching text) that stay legible on dark.
 - [Xero](https://mobbin.com/screens/faf352c0-6e0c-4bcd-8d48-afd5393107b1): small rectangular status chips.
 - [Vercel](https://mobbin.com/screens/e9576405-bcef-419a-922a-8fb84b044a54): a dot plus a label for status.
 
-Why letters instead of icons (the current `RiskChips` uses Crown, ChefHat, Crosshair, Ghost and Boxes): five unrelated metaphors are slower to learn than T/D/S/I/B, cute icons (a chef hat for "dev") read as gimmicky, and letters fit five chips in 216 px with room for "100%".
+Why icons on Pulse: lettered chips read as a row of stray letters ("D", "S", "I") wherever a metric isn't computed yet, and boxed chips turned every card into a wall of outlines. Traders arriving from Axiom already know its glyphs, an icon is as narrow as a letter plus its gap, and the full name is always one hover away (tooltip and legend). The token page and trackers keep the lettered chip, where there is room for tooltips on every chip and no node budget.
 
 ### 4.6 Buttons
 
@@ -1598,13 +1618,13 @@ Segmented 36: [ New 214 | Final 38 | Migrated 61 ]   (12 px gutters)
 Filter row 32 (chips + [Filters]) when any filter is active
 Rows 64:
  [ava 36] WIF  25s  V $5.04K                 MC $11.2K
-          [T 18%][D 2.0%][S 0%][I 0%][B 6%]  [ z 0.25 ]
+          [top10 18%][dev 2.0%][snp 0%][ins  ][bnd 6%]  [ z 0.25 ]   (risk slots, 4.5: icon + value; unknown slots empty)
 Bottom tabs 56 + safe area
 ```
 
 - Row padding is 10 px top and bottom, 12 px sides.
   - Line 1 (20 px): ticker 14/600, age 12 `text-2`, volume 12 `text-3`; MC at 13/600 on the right.
-  - Line 2 (24 px): risk chips with letters (216 px fits the 223 px available); the quick-buy pill (24 px visual, 44 px hit area) on the right.
+  - Line 2 (24 px): the five risk slots (icon + value, 4.5); under 382 px values only, with the legend row naming them; the quick-buy pill (24 px visual, 44 px hit area) on the right.
 - Visible rows: (812 − 44 safe area − 44 − 36 − 90 tabs) / 64 = 9.
 - Tapping a row opens the token page; tapping the pill buys.
 - Borrowed from [Binance Meme Rush](https://mobbin.com/screens/972c602f-95aa-44ba-9cd3-1f869d9a58c3): New / Finalizing / Migrated tabs and two-line rows with MC and volume on the right.
