@@ -93,8 +93,10 @@ import {
   type PumpGlobal,
   poolV2Pda,
   pumpGlobalVolumeAccumulatorPda,
+  RAYDIUM_CPMM_GRADUATION_AMM_CONFIGS,
   RAYDIUM_CPMM_PROGRAM_ID,
   RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+  RAYDIUM_LAUNCHLAB_SOL_GLOBAL_CONFIG,
   type RawAccount,
   SYSTEM_PROGRAM_ID,
   sharingConfigPda,
@@ -628,7 +630,8 @@ interface TxJson {
 }
 
 /**
- * Reads the program's recent successful transactions (skipping signatures in `seen`) and hands their decoded
+ * Reads the recent successful transactions that reference `program` (a program, or any account such as a
+ * venue config; skipping signatures in `seen`) and hands their decoded
  * events to `onEvents` until it returns true or the budget runs out. Returns true when `onEvents` did.
  */
 export async function scanProgram(
@@ -721,8 +724,8 @@ export const REQUIRED_KINDS: readonly TargetKind[] = ["curve2022", "pumpswap"];
  *   curveSpl   legacy SPL Token curve coin - optional; only if one shows up along the way (rare since create_v2)
  *   pumpswap   canonical wSOL pool - required; an SPL-base pool is preferred so both token programs are
  *              exercised across venues
- *   launchlab  SOL-quoted Raydium LaunchLab curve - optional; from recent LaunchLab TradeEvents
- *   cpmm       SOL-paired Raydium CPMM pool - optional; from recent CPMM SwapEvents
+ *   launchlab  SOL-quoted Raydium LaunchLab curve - optional; from recent trades on the SOL GlobalConfig
+ *   cpmm       CPMM pool of a graduated SOL-pair LaunchLab coin - optional; from swaps on the graduation AmmConfigs
  * Required kinds get up to `rounds` scans with backoff in between (the public endpoint throttles
  * getTransaction); everything stops at the time budget. Missing kinds are simply absent from the result.
  */
@@ -828,13 +831,16 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
   const raydiumScans = [
     {
       kind: "launchlab" as const,
-      program: RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+      // Every SOL-quoted constant-product LaunchLab trade names this GlobalConfig, so its signatures are SOL-pair
+      // trades only (most LaunchLab coins are now quoted in USD1 and other tokens).
+      addresses: [RAYDIUM_LAUNCHLAB_SOL_GLOBAL_CONFIG],
       poolsOf: (events: DecodedEvents) => events.flatMap((e) => (e.kind === "launchlabTrade" ? [e.pool] : [])),
       classify: (pools: Address[]) => classifyLaunchLabPools(rpc, pools),
     },
     {
       kind: "cpmm" as const,
-      program: RAYDIUM_CPMM_PROGRAM_ID,
+      // Swaps on the AmmConfigs LaunchLab coins graduate onto are mostly graduated SOL pairs.
+      addresses: [...RAYDIUM_CPMM_GRADUATION_AMM_CONFIGS],
       poolsOf: (events: DecodedEvents) => events.flatMap((e) => (e.kind === "cpmmSwap" ? [e.pool] : [])),
       classify: (pools: Address[]) => classifyCpmmPools(rpc, pools, BigInt(Math.floor(Date.now() / 1000))),
     },
@@ -843,19 +849,21 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
     if (!want.has(scan.kind) || Date.now() >= deadline) continue;
     const seenPools = new Set<string>();
     const rejects = new Map<string, number>();
-    // LaunchLab pairs many coins with non-SOL quotes (USD1, ...) and most of its transactions fail: read more.
-    await scanProgram(rpc, batch, scan.program, budget(24, 3), seen, stats, async (events) => {
-      const pools = [...new Set(scan.poolsOf(events).filter((p) => !seenPools.has(p)))] as Address[];
-      for (const p of pools) seenPools.add(p);
-      for (const c of pools.length ? await scan.classify(pools) : []) {
-        if (c.reject) rejects.set(c.reject, (rejects.get(c.reject) ?? 0) + 1);
-        else if (!found.has(scan.kind) && !seenMints.has(c.target.mint)) {
-          found.set(scan.kind, c.target);
-          log(`  picked ${scan.kind.padEnd(9)} ${c.target.mint} (pool ${c.target.market}, ${c.target.note})`);
+    for (const address of scan.addresses) {
+      if (found.has(scan.kind) || Date.now() >= deadline) break;
+      await scanProgram(rpc, batch, address, budget(Math.ceil(16 / scan.addresses.length) + 4, 1), seen, stats, async (events) => {
+        const pools = [...new Set(scan.poolsOf(events).filter((p) => !seenPools.has(p)))] as Address[];
+        for (const p of pools) seenPools.add(p);
+        for (const c of pools.length ? await scan.classify(pools) : []) {
+          if (c.reject) rejects.set(c.reject, (rejects.get(c.reject) ?? 0) + 1);
+          else if (!found.has(scan.kind) && !seenMints.has(c.target.mint)) {
+            found.set(scan.kind, c.target);
+            log(`  picked ${scan.kind.padEnd(9)} ${c.target.mint} (pool ${c.target.market}, ${c.target.note})`);
+          }
         }
-      }
-      return found.has(scan.kind);
-    });
+        return found.has(scan.kind);
+      });
+    }
     const why = [...rejects].map(([reason, n]) => `${n} ${reason}`).join(", ");
     log(`  ${seenPools.size} ${scan.kind === "launchlab" ? "LaunchLab" : "CPMM"} pools classified${why ? ` (ineligible: ${why})` : ""}`);
   }
