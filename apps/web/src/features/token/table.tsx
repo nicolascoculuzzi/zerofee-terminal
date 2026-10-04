@@ -54,6 +54,26 @@ export const ALIGN: Record<Align, string> = {
   center: "justify-center text-center",
 };
 
+/**
+ * The 28 px strip above a table (trades toolbar, holders summary, top-traders summary), so every
+ * bottom tab puts its header row at the same y: tabs 32, strip 28, header 28/32, rows.
+ */
+export function TableStrip({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "flex h-7 shrink-0 items-center gap-3 overflow-hidden border-b border-hairline px-2 text-label whitespace-nowrap text-fg-3",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Your own row in a data grid: a faint neutral tint (the YOU tag names it), not a selected fill. */
+export const YOU_ROW = "bg-[color-mix(in_srgb,var(--zf-text-1)_4%,transparent)]";
+
 export interface SortState<K extends string = string> {
   key: K;
   dir: "asc" | "desc";
@@ -120,7 +140,9 @@ export function TableHeader<K extends string>({
     <div
       role="row"
       className={cn(
-        "sticky top-0 z-sticky grid h-header-row items-center border-b border-hairline bg-surface-1 text-label font-medium text-fg-3",
+        // The grid stays at data size: ch tracks resolve against the container's font, so a label-size
+        // header row would get narrower columns than the rows under it. Cells take the label size.
+        "sticky top-0 z-sticky grid h-header-row items-center border-b border-hairline bg-surface-1 font-medium text-fg-3",
         className,
       )}
       style={{ gridTemplateColumns: template(cols) }}
@@ -133,7 +155,7 @@ export function TableHeader<K extends string>({
           role="columnheader"
           aria-sort={ariaSort(c, sort)}
           title={c.sortable && onSort ? undefined : c.title}
-          className={cn("flex min-w-0 items-center truncate px-2", ALIGN[c.align ?? "left"])}
+          className={cn("flex min-w-0 items-center truncate px-2 text-label", ALIGN[c.align ?? "left"])}
         >
           {c.sortable && onSort ? <SortButton col={c} sort={sort} onSort={onSort} /> : c.label}
         </span>
@@ -142,9 +164,16 @@ export function TableHeader<K extends string>({
   );
 }
 
-/** A column's width for <col>: fixed ch columns keep theirs, the flexible one takes the rest. */
+/**
+ * A column's width for <col>. Every column gets a length (the label column 1.6x its minimum), so a
+ * wide panel spreads its slack across all columns in proportion (fixed table layout) instead of
+ * handing it all to the label column: numbers stay near their headers at 1920 px, like Axiom's
+ * grids, and names still get the largest share. (A percentage here would take all the slack.)
+ */
 function colWidth(c: Col): string | undefined {
-  return c.width.startsWith("minmax(") ? undefined : c.width;
+  if (!c.width.startsWith("minmax(")) return c.width;
+  const min = Number(/^minmax\(calc\((\d+(?:\.\d+)?)ch/.exec(c.width)?.[1]);
+  return Number.isFinite(min) ? `calc(${Math.round(min * 1.6)}ch + 16px)` : undefined;
 }
 
 /**
