@@ -5,29 +5,45 @@
  *   bun run trade sell <mint> <percent>  [pool]
  * Venues: pump.fun curve, PumpSwap, Raydium LaunchLab (BONK.fun, StonkFun, ...) and Raydium CPMM
  * (graduated LaunchLab coins). `pool` forces a PumpSwap / LaunchLab / CPMM pool (e.g. a LaunchLab
- * coin paired with something other than SOL).
+ * coin paired with something other than SOL). Any other token goes through Jupiter Swap API V2
+ * `/build` (the long-tail fallback: raw instructions, no Jupiter fee, our compute budget and tips;
+ * JUPITER_API_KEY optional), with the CU limit sized by a simulation.
  *
  * DRY_RUN=true (default): build, sign (if a dev key is set), simulateTransaction, NEVER send.
  * With SIMULATE_AS=<address> (dry run only) the tx is built for that read-only fee payer and
  * simulated unsigned (sigVerify:false, replaceRecentBlockhash:true) - no key needed.
  */
-import { type Address, address, createSolanaRpc, createSolanaRpcSubscriptions, type Signature, type Transaction } from "@solana/kit";
+import {
+  type Address,
+  address,
+  createSolanaRpc,
+  createSolanaRpcSubscriptions,
+  getBase58Encoder,
+  getCompiledTransactionMessageDecoder,
+  type Signature,
+  type Transaction,
+} from "@solana/kit";
 import {
   assembleTransaction,
   buildTrade,
   confirmSignature,
   type DecodedEvent,
   decodeEventsFromLogs,
+  decodeJupiterSwapEvents,
   feePayerSignature,
   fetchHeliusPriorityFeeEstimate,
   fetchJitoTipAccounts,
   fetchJitoTipFloor,
   fetchPriorityFeeSamples,
   formatUnits,
+  JUPITER_ERRORS,
+  JUPITER_PROGRAM_ID,
+  jupiterCuLimitFromSimulation,
   LatencyTracker,
   lanesForPlan,
   launchLabProgressBps,
   loadTokenState,
+  MAX_COMPUTE_UNIT_LIMIT,
   PUMP_AMM_ERRORS,
   PUMP_ERRORS,
   parseUiAmount,
@@ -64,6 +80,7 @@ const ERRORS_BY_PROGRAM: Record<string, Record<number, string>> = {
   pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA: PUMP_AMM_ERRORS,
   [RAYDIUM_LAUNCHLAB_PROGRAM_ID]: RAYDIUM_LAUNCHLAB_ERRORS,
   [RAYDIUM_CPMM_PROGRAM_ID]: RAYDIUM_CPMM_ERRORS,
+  [JUPITER_PROGRAM_ID]: JUPITER_ERRORS,
 };
 
 function explainError(err: unknown, logs: readonly string[] | null | undefined): string {
@@ -151,7 +168,10 @@ async function main() {
   }
 
   // --- quote + instructions -----------------------------------------------------------------
-  const trade = await buildTrade(state, { side, amount, slippageBps: cfg.slippageBps });
+  // Jupiter fallback only: /build quotes and routes (no Jupiter fee). Protected landing is Jito
+  // bundle-only, so ask for venues that work inside a bundle.
+  const jupiter = { apiKey: cfg.jupiterApiKey, baseUrl: cfg.jupiterBaseUrl, forJitoBundle: cfg.landingMode === "protected" };
+  const trade = await buildTrade(state, { side, amount, slippageBps: cfg.slippageBps }, { jupiter });
   tracker.mark("quoted");
   printQuote(state, trade.quote);
 
@@ -161,17 +181,40 @@ async function main() {
         .then((v) => [v])
         .catch(() => [])
     : await fetchPriorityFeeSamples(rpc, [trade.hotAccount]).catch(() => [] as number[]);
-  const cuLimit = cfg.cuLimitOverride ?? trade.defaultCuLimit;
-  const plan = planFees({
-    mode: cfg.landingMode,
-    preset: cfg.speedPreset,
-    cuLimit,
-    prioritySamples,
-    tipFloor,
-    caps: { maxPriorityFeeLamports: cfg.maxPriorityFeeLamports, maxTipLamports: cfg.maxTipLamports },
-    heliusSwqosTipLamports: cfg.heliusSwqosTipLamports,
-    minCuPriceMicroLamports: cfg.minCuPriceMicroLamports,
-  });
+  const planFor = (cuLimit: number) =>
+    planFees({
+      mode: cfg.landingMode,
+      preset: cfg.speedPreset,
+      cuLimit,
+      prioritySamples,
+      tipFloor,
+      caps: { maxPriorityFeeLamports: cfg.maxPriorityFeeLamports, maxTipLamports: cfg.maxTipLamports },
+      heliusSwqosTipLamports: cfg.heliusSwqosTipLamports,
+      minCuPriceMicroLamports: cfg.minCuPriceMicroLamports,
+    });
+  const build = (p: ReturnType<typeof planFor>) =>
+    assembleTransaction({
+      feePayer: user,
+      instructions: trade.instructions,
+      blockhash,
+      fees: p,
+      tipAccounts: { jito: tipAccounts.accounts },
+      lookupTables: trade.lookupTables,
+    });
+  const unsignedSim = { encoding: "base64", commitment: "confirmed", sigVerify: false, replaceRecentBlockhash: true } as const;
+  let plan = planFor(cfg.cuLimitOverride ?? trade.defaultCuLimit);
+  if (state.venue === "jupiter" && cfg.cuLimitOverride === undefined) {
+    // Jupiter routes vary too much for a static limit: size it from an unsigned simulation at the
+    // runtime maximum (as Jupiter's docs do), then use simulated x 1.2.
+    const probe = await rpc.simulateTransaction(toWireBase64(build(planFor(MAX_COMPUTE_UNIT_LIMIT))) as never, unsignedSim).send();
+    const used = probe.value.unitsConsumed;
+    if (!probe.value.err && used) {
+      plan = planFor(jupiterCuLimitFromSimulation(used));
+      console.log(`cu sizing ${used} CU simulated -> limit ${plan.cuLimit} (x1.2)`);
+    } else {
+      console.warn(`warn: CU sizing simulation failed (${explainError(probe.value.err, probe.value.logs)}); keeping ${plan.cuLimit}`);
+    }
+  }
   console.log(
     `fees      mode=${plan.mode} cuLimit=${plan.cuLimit} cuPrice=${plan.cuPriceMicroLamports}µL ` +
       `priority=${plan.priorityFeeLamports} lamports tips=${plan.tips.map((t) => `${t.lane}:${t.lamports}`).join(",")} ` +
@@ -179,15 +222,15 @@ async function main() {
   );
   for (const w of plan.warnings) console.warn(`warn: ${w}`);
 
-  const tx = assembleTransaction({
-    feePayer: user,
-    instructions: trade.instructions,
-    blockhash,
-    fees: plan,
-    tipAccounts: { jito: tipAccounts.accounts },
-  });
+  const tx = build(plan);
   tracker.mark("built");
-  console.log(`tx        v0, ${transactionSize(tx)} bytes, ${trade.instructions.length} trade ixs + ${plan.tips.length} tip(s)`);
+  const lookups = getCompiledTransactionMessageDecoder().decode(tx.messageBytes);
+  const loaded = "addressTableLookups" in lookups ? (lookups.addressTableLookups ?? []) : [];
+  const loadedCount = loaded.reduce((n, l) => n + l.writableIndexes.length + l.readonlyIndexes.length, 0);
+  console.log(
+    `tx        v0, ${transactionSize(tx)} bytes, ${trade.instructions.length} trade ixs + ${plan.tips.length} tip(s), ` +
+      `${lookups.staticAccounts.length} static keys${loaded.length ? ` + ${loadedCount} from ${loaded.length} lookup table(s)` : ""}`,
+  );
 
   let finalTx: Transaction = tx;
   if (signer) {
@@ -198,17 +241,22 @@ async function main() {
 
   // --- simulate (always) --------------------------------------------------------------------
   // Signed: verify signatures against the real blockhash. Unsigned (SIMULATE_AS): skip sig checks.
-  const simConfig = signer
-    ? ({ encoding: "base64", commitment: "confirmed", sigVerify: true } as const)
-    : ({ encoding: "base64", commitment: "confirmed", sigVerify: false, replaceRecentBlockhash: true } as const);
-  const sim = await rpc.simulateTransaction(wire as never, simConfig).send();
+  // Jupiter: also return inner instructions (its swap events) and the bought token's account.
+  const simConfig = {
+    ...(signer ? ({ encoding: "base64", commitment: "confirmed", sigVerify: true } as const) : unsignedSim),
+    ...(state.venue === "jupiter"
+      ? { innerInstructions: true, accounts: { encoding: "base64", addresses: side === "buy" ? [state.userBaseAta] : [] } }
+      : {}),
+  };
+  const sim = await rpc.simulateTransaction(wire as never, simConfig as typeof unsignedSim).send();
   tracker.mark("simulated");
   const v = sim.value;
   console.log(`\nsimulation (slot ${sim.context.slot}): ${v.err ? `FAILED ${explainError(v.err, v.logs)}` : "OK"}`);
   console.log(`unitsConsumed ${v.unitsConsumed ?? "?"} / limit ${plan.cuLimit}`);
   console.log("logs:");
   for (const l of v.logs ?? []) console.log(`  ${l}`);
-  printSimulatedFill(trade.quote, decodeEventsFromLogs(v.logs ?? []));
+  if (state.venue === "jupiter") printJupiterFill(state, trade.quote, lookups.staticAccounts, v as unknown as JupiterSimulation);
+  else printSimulatedFill(trade.quote, decodeEventsFromLogs(v.logs ?? []));
 
   if (cfg.dryRun) {
     tracker.record.outcome = v.err ? "simulation failed" : "simulated ok (dry run, not sent)";
@@ -345,6 +393,20 @@ function printQuote(s: TokenState, q: Awaited<ReturnType<typeof buildTrade>>["qu
       `quote     sell ${formatUnits(q.amountIn, d)} tokens -> ~${formatUnits(q.expectedOut, qd)} ${unit} (min ${formatUnits(q.minOut, qd)})`,
     );
   }
+  if (q.jupiter) {
+    const impact = q.jupiter.priceImpactPct === null ? "?" : `${(Number(q.jupiter.priceImpactPct) * 100).toFixed(3)}%`;
+    console.log(
+      `          Jupiter ${q.jupiter.instruction} via ${q.jupiter.labels.join(" > ")} (price impact ${impact}); ` +
+        "venue fees are inside Jupiter's quote, no Jupiter or platform fee",
+    );
+    if (q.jupiter.maxAccounts !== undefined || q.jupiter.droppedAtaCreate) {
+      console.log(
+        `          fitted to one packet:${q.jupiter.maxAccounts !== undefined ? ` route re-quoted with maxAccounts=${q.jupiter.maxAccounts}` : ""}` +
+          `${q.jupiter.droppedAtaCreate ? " (existing token account: Jupiter's ATA creation left out)" : ""}`,
+      );
+    }
+    return;
+  }
   const f = q.feesQuote;
   console.log(
     `          fees protocol=${f.protocol} (${pct(q.feePpm.protocol)}, buyback ${f.buyback}) platform=${f.platform} (${pct(q.feePpm.platform)}) ` +
@@ -353,6 +415,41 @@ function printQuote(s: TokenState, q: Awaited<ReturnType<typeof buildTrade>>["qu
   const b = q.feesBase;
   if (b.trade || b.creator || b.transfer) {
     console.log(`          base-token fees: trade=${b.trade} creator=${b.creator} Token-2022 transfer=${b.transfer}`);
+  }
+}
+
+/** What simulateTransaction returns with innerInstructions (jsonParsed-style: programId + base58 data) and accounts. */
+interface JupiterSimulation {
+  err: unknown;
+  innerInstructions?: { index: number; instructions: { programId?: string; programIdIndex?: number; data?: string }[] }[] | null;
+  accounts?: ({ data: [string, string] } | null)[] | null;
+}
+
+/** Jupiter's own swap events (event-CPI inner instructions) and, for buys, the token account's balance after. */
+function printJupiterFill(
+  s: Extract<TokenState, { venue: "jupiter" }>,
+  q: Awaited<ReturnType<typeof buildTrade>>["quote"],
+  staticAccounts: readonly Address[],
+  v: JupiterSimulation,
+) {
+  const b58 = getBase58Encoder();
+  const events = (v.innerInstructions ?? [])
+    .flatMap((group) => group.instructions)
+    .filter((ix) => (ix.programId ?? staticAccounts[ix.programIdIndex ?? -1]) === JUPITER_PROGRAM_ID && typeof ix.data === "string")
+    .flatMap((ix) => decodeJupiterSwapEvents(new Uint8Array(b58.encode(ix.data!))) ?? []);
+  for (const e of events) console.log(`hop       ${e.amm}: ${e.inputAmount} ${e.inputMint} -> ${e.outputAmount} ${e.outputMint}`);
+  const outputMint = q.side === "buy" ? s.mint : s.quoteMint;
+  const routed = events.filter((e) => e.outputMint === outputMint).reduce((sum, e) => sum + e.outputAmount, 0n);
+  const vsQuote = (got: bigint) =>
+    `quoted ${q.expectedOut}, min ${q.minOut}: ${got >= q.minOut ? "above the minimum" : "BELOW the minimum"} (${(
+      (Number(got - q.expectedOut) / Number(q.expectedOut)) * 100
+    ).toFixed(3)}% vs quote)`;
+  if (events.length) console.log(`simulated fill: route output ${routed} -> ${vsQuote(routed)}`);
+  else console.log("simulated fill: no Jupiter swap event in the inner instructions");
+  const account = q.side === "buy" ? v.accounts?.[0] : undefined;
+  if (account) {
+    const after = new DataView(new Uint8Array(Buffer.from(account.data[0], "base64")).buffer).getBigUint64(64, true);
+    console.log(`                received in ${s.userBaseAta}: ${after - s.userBaseBalance} -> ${vsQuote(after - s.userBaseBalance)}`);
   }
 }
 
