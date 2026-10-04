@@ -22,6 +22,7 @@ import {
 import type { ChainDelta, ChainState, HaltState, SolUsdPrice } from "@zerofee/protocol";
 import type { BlockMeta, SlotStatus } from "../ingest/types";
 import { logger } from "../log";
+import { perf } from "../perf";
 import type { RpcClient } from "../util/rpc";
 
 const log = logger("chain");
@@ -133,6 +134,9 @@ export class ChainPublisher {
     try {
       const r = await this.opts.rpc.getLatestBlockhash("confirmed");
       this.stats.blockhashPolls++;
+      // How far the streamed tip (processed) trails the HTTP node's confirmed slot: <= 0 is healthy (confirmed
+      // runs 1-2 slots behind processed); a positive value is a backlog on the stream (public RPC throttling).
+      if (this.state.slot !== null) perf.stage("rpc.streamBehindSlots", r.context.slot - this.state.slot);
       if (r.value.blockhash !== this.state.blockhash) {
         this.set({
           blockhash: r.value.blockhash,

@@ -6,6 +6,7 @@ import { useCssPx } from "../../lib/cssVar";
 import { activeFilterCount, emptyFilter } from "../../lib/filters";
 import { fmtMs, isKnown } from "../../lib/format";
 import { isTypingTarget, registerHotkey } from "../../lib/hotkeys";
+import { mark, trackFrames } from "../../lib/perf";
 import { useYoungerThan } from "../../lib/useNow";
 import type { PulseColumnId } from "../../protocol";
 import { useMarket } from "../../state/market";
@@ -75,6 +76,12 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
   useEffect(() => {
     virtualizer.measure();
   }, [rowH, virtualizer]);
+  // perf marks (lib/perf.ts): first rows with data on screen; frame pacing while Pulse is open
+  const hasRows = list.shown.length > 0;
+  useEffect(() => {
+    if (hasRows) mark("zf:pulse-data");
+  }, [hasRows]);
+  useEffect(() => trackFrames(), []);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;

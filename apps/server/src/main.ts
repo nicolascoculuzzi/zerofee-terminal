@@ -8,6 +8,7 @@
 import { createApp } from "./app";
 import { loadConfig, redactUrl } from "./config";
 import { logger, setLogLevel } from "./log";
+import { perf } from "./perf";
 import { createUserLayer } from "./user";
 
 const log = logger("main");
@@ -37,6 +38,7 @@ const statsTimer = setInterval(() => {
       `pending pool events ${h.ingest.pendingPoolEvents} db pending ${h.storage.pendingRows} SOL ${h.solUsd.price ?? "-"}`,
   );
   log.info(user.trackers.summary());
+  log.info(`perf: ${perf.summary()}`);
 }, 60_000);
 
 let stopping = false;

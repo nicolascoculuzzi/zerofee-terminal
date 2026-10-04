@@ -13,11 +13,12 @@ import { assembleTransaction, HELIUS_SENDER_SWQOS_MIN_TIP_LAMPORTS, systemTransf
 import type { ChainState, LandingPreset, TxSubmitRequest, TxSubmitResponse } from "@zerofee/protocol";
 import { api } from "./api";
 import { toBase64 } from "./bytes";
+import { TransferError } from "./transferError";
 
 /** Two System transfers and two compute-budget instructions use well under 1,000 CU. */
 const TRANSFER_CU_LIMIT = 3_000;
 
-export class TransferError extends Error {}
+export { TransferError };
 
 export function recentBlockhash(chain: ChainState | null): { blockhash: Blockhash; lastValidBlockHeight: bigint } {
   if (!chain?.blockhash || chain.lastValidBlockHeight === null) {

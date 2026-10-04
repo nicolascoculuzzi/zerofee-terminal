@@ -19,6 +19,7 @@ import type { Address } from "@solana/kit";
 import Client, { type ChannelOptions, CommitmentLevel, type SubscribeRequest, type SubscribeUpdate } from "@triton-one/yellowstone-grpc";
 import type { SourceHealth } from "@zerofee/protocol";
 import { logger } from "../log";
+import { perf } from "../perf";
 import { Backoff, sleep } from "../util/backoff";
 import type { IngestSink, Source } from "./types";
 import { parseSubscribeUpdate } from "./yellowstoneParse";
@@ -175,9 +176,11 @@ export class YellowstoneSource implements Source {
     const now = Date.now();
     this.stats.updates++;
     this.stats.lastMessageAt = now;
+    const t0 = performance.now();
     const p = parseSubscribeUpdate(u, now);
     switch (p.kind) {
       case "tx": {
+        perf.stage("ingest.decode", performance.now() - t0);
         this.stats.txs++;
         if (this.lastSlot === null || p.tx.slot > this.lastSlot) this.lastSlot = p.tx.slot;
         for (const message of p.failures) {

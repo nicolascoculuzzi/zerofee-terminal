@@ -3,6 +3,8 @@
  *
  * Market (public):
  *   GET  /api/health                         HealthResponse
+ *   GET  /api/perf                           PerfResponse             (latency breakdown, event-loop lag)
+ *   GET  /api/pulse                          PulseBootstrapResponse   (all three Pulse lists, for the first paint)
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
  *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
  *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
@@ -87,6 +89,48 @@ export interface HealthResponse {
   tokens: { inMemory: number; pulse: { new: number; final: number; migrated: number } };
   storage: { pendingRows: number; lastFlushMs: number | null; flushes: number; errors: number };
   gateway: { connections: number; subscriptions: number; topics: number };
+}
+
+/** Percentiles of one latency stage or work span (ms). */
+export interface PerfStat {
+  count: number;
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
+  max: number | null;
+}
+
+/**
+ * GET /api/perf: the server's latency breakdown (apps/server/src/perf.ts). `loop` is the event-loop lag
+ * (how late a 20 ms timer fires); `stages` are per-event pipeline hops; `spans` are named pieces of
+ * synchronous work, busiest first (`perSecMs`: average ms of each second spent in it).
+ */
+export interface PerfResponse {
+  at: number;
+  uptimeSec: number;
+  loop: {
+    intervalMs: number;
+    samples: number;
+    p50: number | null;
+    p90: number | null;
+    p99: number | null;
+    max: number | null;
+    stallsOver50ms: number;
+    stallsOver100ms: number;
+    stallsOver500ms: number;
+    worstAt: number | null;
+  };
+  stages: Record<string, PerfStat>;
+  spans: Record<string, PerfStat & { totalMs: number; perSecMs: number }>;
+}
+
+/**
+ * GET /api/pulse: the three Pulse lists as the WebSocket snapshots would send them right now (display order).
+ * A bootstrap for the first paint; the `pulse:<column>` topics are the source of truth after that.
+ */
+export interface PulseBootstrapResponse {
+  at: number;
+  columns: { new: TokenSummary[]; final: TokenSummary[]; migrated: TokenSummary[] };
 }
 
 export interface TokenResponse {

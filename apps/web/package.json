@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:live": "bun scripts/preview-live.ts",
+    "perf:load": "bun scripts/perf-load.ts",
+    "bundle:report": "bun scripts/bundle-report.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check ."
   },
@@ -25,7 +28,6 @@
     "lucide-react": "1.51.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-router": "8.4.0",
     "simple-icons": "16.34.0",
     "zustand": "5.0.15"
   },

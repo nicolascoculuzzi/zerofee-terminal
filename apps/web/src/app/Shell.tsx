@@ -5,7 +5,7 @@ import { isBase58Address } from "../lib/address";
 import { isTypingTarget, registerHotkey } from "../lib/hotkeys";
 import { navigateTo, setNavigator } from "../lib/nav";
 import { closeTopOverlay } from "../lib/overlayStack";
-import { buy } from "../lib/tradeActions";
+import { buy } from "../lib/tradeActionsLazy";
 import { getServices } from "../services";
 import { useMarket } from "../state/market";
 import { PRESET_IDS, useSettings } from "../state/settings";

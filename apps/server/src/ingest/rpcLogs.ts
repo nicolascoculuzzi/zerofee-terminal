@@ -30,6 +30,7 @@ import {
 } from "@zerofee/core";
 import type { SourceHealth } from "@zerofee/protocol";
 import { logger } from "../log";
+import { perf } from "../perf";
 import { Backoff } from "../util/backoff";
 import { BoundedSet } from "../util/lru";
 import { SampleRing } from "../util/stats";
@@ -126,6 +127,7 @@ export function isLaunchLabMigrationLog(logs: readonly string[]): boolean {
   return false;
 }
 
+const LOGS_NOTIFICATION_PREFIX = '{"jsonrpc":"2.0","method":"logsNotification"';
 const SLOT_SUB_ID = 1000;
 const SLOT_UPDATES_SUB_ID = 1001;
 
@@ -224,7 +226,11 @@ export class RpcLogsSource implements Source {
         ws.send(JSON.stringify({ jsonrpc: "2.0", id: SLOT_UPDATES_SUB_ID, method: "slotsUpdatesSubscribe" }));
       }
     };
-    ws.onmessage = (ev) => this.onMessage(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer));
+    ws.onmessage = (ev) => {
+      const t0 = performance.now();
+      this.onMessage(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer));
+      perf.span("ingest.onMessage", performance.now() - t0);
+    };
     ws.onerror = (ev) => {
       this.stats.lastError = (ev as ErrorEvent).message ?? "websocket error";
     };
@@ -258,6 +264,13 @@ export class RpcLogsSource implements Source {
     this.stats.messages++;
     this.stats.bytes += raw.length;
     this.stats.lastMessageAt = now;
+    // ~40% of notifications are failed transactions we drop anyway: skip parsing them (`"err":null` only
+    // occurs unescaped as the value's own field; inside a log string the quotes would be escaped).
+    if (raw.startsWith(LOGS_NOTIFICATION_PREFIX) && !raw.includes('"err":null')) {
+      this.stats.notifications++;
+      this.stats.failedTxs++;
+      return;
+    }
     let m: { id?: number; result?: unknown; error?: { message: string }; method?: string; params?: unknown };
     try {
       m = JSON.parse(raw);
@@ -343,12 +356,16 @@ export class RpcLogsSource implements Source {
       this.process(item);
       if (performance.now() - t0 > budget) break;
     }
+    perf.span("ingest.drain", performance.now() - t0);
     if (this.queue.size > 0) setImmediate(() => this.drain());
     else this.draining = false;
   }
 
   private process(p: Pending): void {
+    perf.stage("ingest.queue", Date.now() - p.receivedAt);
+    const t0 = performance.now();
     const r = decodeLogEvents(p.logs);
+    perf.stage("ingest.decode", performance.now() - t0);
     if (r.truncated) this.stats.truncatedLogs++;
     if (r.failures) {
       this.stats.decodeFailures += r.failures;

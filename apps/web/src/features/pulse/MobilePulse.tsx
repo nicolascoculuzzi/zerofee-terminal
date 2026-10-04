@@ -1,8 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { SlidersHorizontal } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
 import { activeFilterCount, emptyFilter } from "../../lib/filters";
+import { mark, trackFrames } from "../../lib/perf";
 import type { PulseColumnId } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
@@ -145,6 +146,12 @@ function MobileList({ column }: { column: PulseColumnId }) {
     getItemKey: (i) => list.shown[i] ?? i,
   });
   const ctx = { quote: display.quote, solUsd, showRing: display.showProgressRing, thresholds: display.riskThresholds };
+  // perf marks (lib/perf.ts): first rows with data on screen; frame pacing while Pulse is open
+  const hasRows = list.shown.length > 0;
+  useEffect(() => {
+    if (hasRows) mark("zf:pulse-data");
+  }, [hasRows]);
+  useEffect(() => trackFrames(), []);
 
   return (
     <section ref={pause.ref} aria-label={TAB_LABEL[column]} className="relative flex min-h-0 flex-1 flex-col" {...pause.handlers}>

@@ -81,6 +81,23 @@ bun run --cwd apps/web dev
 
 `bun run --cwd apps/web build` writes `apps/web/dist`. Set `VITE_BUILD_HASH` to the commit at build time (`VITE_BUILD_HASH=$(git rev-parse --short HEAD) bun run --cwd apps/web build`) and Settings > About shows which build is running; without it About reads "unversioned". CI doesn't set it yet.
 
+To run the live build the way production serves it (precompressed brotli/gzip, immutable caching for hashed assets, `/api` and `/ws` proxied to the server on 8787; `GATEWAY=` points elsewhere):
+
+```bash
+VITE_DATA_SOURCE=live bun run --cwd apps/web build && bun run preview:live
+```
+
+### Performance
+
+Measured numbers and what changed them are in [NOTES.md](NOTES.md). The tools:
+
+- `bun run perf` starts the server against public RPC (`DRY_RUN`) for `--minutes N` (default 3), connects WebSocket clients like the web app does and prints the latency breakdown (block time → RPC notification → queue → decode → MarketState → publish → client), the event-loop lag and the busiest synchronous work. `--db <file>` starts from a copy of a database (startup restore), `--save-db` keeps the one a run built, `--clients N`, `--json`, `--profile` (CPU profile).
+- `bun apps/server/scripts/perf-feed.ts record feed.jsonl.gz --seconds 120`, then `bun run perf --replay feed.jsonl.gz --speed 4`: the same recorded input on every run, for comparing server builds (`--entry <path to another checkout's main.ts>`), independent of what the public RPC is doing that minute.
+- `GET /api/perf` on a running server serves the same breakdown; the server logs a one-line summary every minute.
+- `bun run --cwd apps/web bundle:report` (after a live build) sums the first screen's JavaScript (budget 170 KB gzip, `--check` fails over it) and lists the lazy chunks.
+- `bun run perf:web` loads the production build in headless Chrome over the DevTools protocol (Playwright's headless shell or Chrome; `CHROME_PATH` overrides) and reports first paint, FCP, LCP, the app's marks (`zf:boot`, `zf:ws-first-snapshot`, `zf:pulse-data`...), bytes by type and long tasks: `--runs 5 --throttle none|fast4g|slow4g --cpu 4 --warm --soak 20000` (the last samples fps and receive→paint under the live feed). It serves `apps/web/dist` itself and proxies to `GATEWAY` (default 127.0.0.1:8787).
+- In the browser, `zfPerf()` in the console prints the marks, gateway→browser latency, receive→paint and frame times; `?perf` logs them every 10 s.
+
 ## Docs
 
 - [SPEC.md](SPEC.md): architecture, security rules, stack, feature checklist, phases

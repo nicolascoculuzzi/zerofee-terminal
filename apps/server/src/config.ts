@@ -32,6 +32,11 @@ export interface ServerConfig {
    * trader and graduations are found by pool checks).
    */
   rpcLogsTxFetchPerSec: number;
+  /**
+   * Concurrent HTTP reads on RPC_URL (pool / mint / curve bootstraps, blockhash, fees). On the public endpoint every
+   * HTTP read shares the per-IP allowance with the logs stream; keep this low there, or point RPC_URL elsewhere.
+   */
+  rpcMaxConcurrent: number;
   blockhashPollMs: number;
 
   yellowstoneEndpoint: string | null;
@@ -316,6 +321,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcLogsPrograms: programs as ServerConfig["rpcLogsPrograms"],
     rpcLogsQueueMax: int(env, "RPC_LOGS_QUEUE_MAX", 50_000, 100, 10_000_000),
     rpcLogsTxFetchPerSec: int(env, "RPC_LOGS_TX_FETCH_RPS", 2, 0, 1_000),
+    rpcMaxConcurrent: int(env, "RPC_MAX_CONCURRENT", 4, 1, 256),
     blockhashPollMs: int(env, "BLOCKHASH_POLL_MS", 2_000, 250, 60_000),
     yellowstoneEndpoint: optional(env, "YELLOWSTONE_ENDPOINT"),
     yellowstoneXToken: optional(env, "YELLOWSTONE_X_TOKEN"),

@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type {
   HealthResponse,
   LookupTablesResponse,
+  PerfResponse,
+  PulseBootstrapResponse,
   SearchResponse,
   SourceHealth,
   TokenResponse,
@@ -199,6 +201,22 @@ describe("REST", () => {
     const h = (await (await fetch(`${base}/api/health`)).json()) as HealthResponse;
     expect(h).toMatchObject({ ok: true, dryRun: true, sources: [{ name: "test" }] });
     expect(h.ingest.launches).toBeGreaterThanOrEqual(1);
+  });
+
+  test("GET /api/pulse: the three lists as the WebSocket snapshots send them; GET /api/perf", async () => {
+    const r = await fetch(`${base}/api/pulse`);
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    const b = (await r.json()) as PulseBootstrapResponse;
+    expect(b.columns.new.some((t) => t.mint === mint)).toBe(true);
+    expect(Object.keys(b.columns)).toEqual(["new", "final", "migrated"]);
+    const c = await Client.connect(`${base.replace("http", "ws")}/ws`);
+    c.send({ type: "subscribe", topic: "pulse:new" });
+    const snap = await c.next((m) => m.topic === "pulse:new" && m.type === "snapshot");
+    expect(snap.data.tokens.map((t: { mint: string }) => t.mint)).toEqual(b.columns.new.map((t) => t.mint));
+    c.ws.close();
+    const p = (await (await fetch(`${base}/api/perf`)).json()) as PerfResponse;
+    expect(p.loop.samples).toBeGreaterThanOrEqual(0);
+    expect(p.stages["detect.trade"]?.count).toBeGreaterThan(0);
   });
 
   test("GET /api/tokens/:mint (known, unknown, invalid)", async () => {
