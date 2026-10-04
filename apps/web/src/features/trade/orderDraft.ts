@@ -10,9 +10,9 @@ import { type TradeSide, type TriggerMetric, useTokenUi } from "../token/tokenUi
  * Enter on the line's handle chip.
  */
 
-/** Default draft for a fresh limit: buy the dip (−20%) or sell the pump (+50%). */
-export function defaultLimitPrice(side: TradeSide, current: number): number {
-  return current * (side === "buy" ? 0.8 : 1.5);
+/** Default draft for a fresh limit: buy the dip (−20%) or sell the pump (+50%); null while the price is unknown. */
+export function defaultLimitPrice(side: TradeSide, current: number | null): number | null {
+  return current === null ? null : current * (side === "buy" ? 0.8 : 1.5);
 }
 
 /** Order trigger for a draft: market-cap triggers are in USD (protocol), price triggers in SOL. */
@@ -31,6 +31,8 @@ export async function armLimitDraft(token: TokenSummary): Promise<Order | null> 
   const solUsd = useMarket.getState().solUsd;
   const current = token.priceSol;
   const priceSol = ui.limitPriceSol ?? defaultLimitPrice(ui.side, current);
+  // Unknown price (null: the quote has no known SOL value): no trigger direction or level to arm.
+  if (current === null || priceSol === null) return null;
   const sol = ui.buySol ?? settings.quickBuySol;
   const order = await placeLimit({
     mint: token.mint,

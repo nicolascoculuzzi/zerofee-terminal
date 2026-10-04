@@ -52,11 +52,11 @@ export function sizeText(order: Order): string {
 }
 
 /** Signed % from the live value to the trigger (a distance, not PnL), or null. */
-export function distanceToTrigger(order: Order, current: { mcUsd: number; priceSol: number }): number | null {
+export function distanceToTrigger(order: Order, current: { mcUsd: number | null; priceSol: number | null }): number | null {
   const t = order.trigger;
   if (t.value === null) return null;
-  if (t.metric === "mc") return current.mcUsd > 0 ? (t.value / current.mcUsd - 1) * 100 : null;
-  if (t.metric === "price") return current.priceSol > 0 ? (t.value / current.priceSol - 1) * 100 : null;
+  if (t.metric === "mc") return current.mcUsd !== null && current.mcUsd > 0 ? (t.value / current.mcUsd - 1) * 100 : null;
+  if (t.metric === "price") return current.priceSol !== null && current.priceSol > 0 ? (t.value / current.priceSol - 1) * 100 : null;
   return null;
 }
 

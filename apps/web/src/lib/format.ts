@@ -10,7 +10,17 @@ export const MINUS = "−";
 /** Unknown or missing value (render it in text-4). */
 export const DASH = "–";
 
-const finite = (n: number | null | undefined): n is number => typeof n === "number" && Number.isFinite(n);
+/**
+ * A value that may be unknown. The live server sends `null` for "not known" (a token quoted in a mint
+ * with no SOL value, an audit metric not computed yet): every formatter renders it as the dash, never
+ * as 0 (packages/protocol market.ts).
+ */
+export type Maybe = number | null | undefined;
+
+const finite = (n: Maybe): n is number => typeof n === "number" && Number.isFinite(n);
+
+/** True for a known, finite number (null, undefined, NaN and infinities are unknown). */
+export const isKnown = finite;
 
 function group(n: number, decimals: number): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -37,7 +47,7 @@ const UNITS: [number, string][] = [
  * The suffix is chosen from the rounded value, so 999,950 reads "1.00M", never "1000K".
  * Values below 1,000 go through `small`.
  */
-export function fmtCompact(n: number, small: (abs: number) => string = (a) => trimTo(a.toPrecision(3), 0)): string {
+export function fmtCompact(n: Maybe, small: (abs: number) => string = (a) => trimTo(a.toPrecision(3), 0)): string {
   if (!finite(n)) return DASH;
   const abs = Math.abs(n);
   const sign = n < 0 ? MINUS : "";
@@ -53,7 +63,7 @@ export function fmtCompact(n: number, small: (abs: number) => string = (a) => tr
 // ---------------------------------------------------------------------------
 
 /** Compact USD for market cap, liquidity, volume, fees: "$12.3K", "$842", "$8.42", "<$0.01". */
-export function fmtUsd(n: number): string {
+export function fmtUsd(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (n === 0) return "$0";
   const abs = Math.abs(n);
@@ -69,7 +79,7 @@ export function fmtUsd(n: number): string {
 }
 
 /** Exact USD for balances, PnL and totals: 2 decimals with separators, compact from $100K. */
-export function fmtUsdExact(n: number): string {
+export function fmtUsdExact(n: Maybe): string {
   if (!finite(n)) return DASH;
   const abs = Math.abs(n);
   const sign = n < 0 && abs >= 0.005 ? MINUS : "";
@@ -78,7 +88,7 @@ export function fmtUsdExact(n: number): string {
 }
 
 /** Signed exact USD for changes and PnL: "+$12.08", "−$3.10", "$0.00". */
-export function fmtSignedUsd(n: number): string {
+export function fmtSignedUsd(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (Math.abs(n) < 0.005) return "$0.00";
   return `${n > 0 ? "+" : MINUS}${fmtUsdExact(Math.abs(n))}`;
@@ -94,7 +104,7 @@ export type PriceParts =
   | { kind: "sub"; sign: string; zeros: number; digits: string };
 
 /** Price parts: subscript-zero notation from 4 zeros after the decimal point (p < 0.0001). */
-export function priceParts(n: number): PriceParts {
+export function priceParts(n: Maybe): PriceParts {
   if (!finite(n)) return { kind: "plain", sign: "", text: DASH };
   if (n === 0) return { kind: "plain", sign: "", text: "0" };
   const sign = n < 0 ? MINUS : "";
@@ -113,7 +123,7 @@ export function priceParts(n: number): PriceParts {
 }
 
 /** Full-precision decimal for aria-label, title and the clipboard: no suffix, no subscript. */
-export function plainDecimal(n: number): string {
+export function plainDecimal(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (n === 0) return "0";
   const abs = Math.abs(n);
@@ -130,10 +140,10 @@ const CANVAS_SUB = String.fromCharCode(...Array.from({ length: 10 }, (_, i) => 0
  * may use Unicode subscript digits (DESIGN.md 4.10 exception); everything else passes
  * `canvas = false` and gets the full decimal.
  */
-export function fmtPriceText(n: number, canvas = false): string {
+export function fmtPriceText(n: Maybe, canvas = false): string {
   const p = priceParts(n);
   if (p.kind === "plain") return p.sign + p.text;
-  if (!canvas) return p.sign + plainDecimal(Math.abs(n));
+  if (!canvas) return p.sign + plainDecimal(Math.abs(n as number));
   const sub = String(p.zeros)
     .split("")
     .map((d) => CANVAS_SUB[Number(d)] ?? d)
@@ -142,13 +152,13 @@ export function fmtPriceText(n: number, canvas = false): string {
 }
 
 /** USD price as plain text (titles, aria). Visible prices render with <Num kind="price">. */
-export function fmtUsdPrice(n: number): string {
+export function fmtUsdPrice(n: Maybe): string {
   if (!finite(n)) return DASH;
   return `$${fmtPriceText(n)}`;
 }
 
 /** SOL price as plain text (titles, aria). */
-export function fmtSolPrice(n: number): string {
+export function fmtSolPrice(n: Maybe): string {
   return fmtPriceText(n);
 }
 
@@ -157,7 +167,7 @@ export function fmtSolPrice(n: number): string {
 // ---------------------------------------------------------------------------
 
 /** SOL amount by magnitude: 12.3K · 1,234.5 · 123.45 · 12.346 · 0.50 · 0.000312 · <0.0001. */
-export function fmtSol(n: number): string {
+export function fmtSol(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (n === 0) return "0";
   const abs = Math.abs(n);
@@ -172,14 +182,14 @@ export function fmtSol(n: number): string {
 }
 
 /** Signed SOL change or PnL: "+0.12", "−1.25". */
-export function fmtSignedSol(n: number): string {
+export function fmtSignedSol(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (n === 0) return "0";
   return `${n > 0 ? "+" : MINUS}${fmtSol(Math.abs(n))}`;
 }
 
 /** Tape cells: exactly 3 decimals, trailing zeros split off for text-3 ("0.5" + "00"). */
-export function solTapeParts(n: number): { main: string; dim: string } {
+export function solTapeParts(n: Maybe): { main: string; dim: string } {
   if (!finite(n)) return { main: DASH, dim: "" };
   const abs = Math.abs(n);
   if (abs > 0 && abs < 0.0005) return { main: "<0.001", dim: "" };
@@ -191,20 +201,20 @@ export function solTapeParts(n: number): { main: string; dim: string } {
 }
 
 /** Fees, tips and rent: up to 9 decimals, trimmed, never compact: "0.000005", "0.00106". */
-export function fmtFee(n: number): string {
+export function fmtFee(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (n === 0) return "0";
   return trimTo(Math.abs(n).toFixed(9), 0);
 }
 
 /** Lamports for fee tooltips: "5,000 lamports". */
-export function fmtLamports(sol: number): string {
+export function fmtLamports(sol: Maybe): string {
   if (!finite(sol)) return DASH;
   return `${Math.round(sol * 1e9).toLocaleString("en-US")} lamports`;
 }
 
 /** User-entered amounts (presets, quick-buy): exactly as entered, normalised ("0.25", "1"). */
-export function fmtSolShort(n: number): string {
+export function fmtSolShort(n: Maybe): string {
   if (!finite(n)) return DASH;
   return String(Number(n.toPrecision(6)));
 }
@@ -223,7 +233,7 @@ function pctBody(abs: number): string {
 }
 
 /** Percent: 0.42% · 12.3% · 248% · 1,234% · 12.3K%. Signed for changes and PnL; zero is "0.00%". */
-export function fmtPct(n: number, opts: { signed?: boolean } = {}): string {
+export function fmtPct(n: Maybe, opts: { signed?: boolean } = {}): string {
   if (!finite(n)) return DASH;
   const abs = Math.abs(n);
   if (abs < 0.005) return "0.00%";
@@ -233,7 +243,7 @@ export function fmtPct(n: number, opts: { signed?: boolean } = {}): string {
 }
 
 /** Risk chip values: integers from 10, 1 decimal below, "<0.1%" for tiny, "0%" for zero. */
-export function fmtRiskPct(n: number): string {
+export function fmtRiskPct(n: Maybe): string {
   if (!finite(n)) return DASH;
   const abs = Math.abs(n);
   if (abs === 0) return "0%";
@@ -243,20 +253,20 @@ export function fmtRiskPct(n: number): string {
 }
 
 /** Bonding progress (0..1): an integer percent; "Migrating" at 100% until the pool exists. */
-export function fmtProgress(p: number): string {
+export function fmtProgress(p: Maybe): string {
   if (!finite(p)) return DASH;
   if (p >= 1) return "Migrating";
   return `${Math.min(99, Math.floor(p * 100))}%`;
 }
 
 /** PnL % that never shows "+Infinity%" (zero or unknown cost basis, e.g. airdrops). */
-export function fmtPnlPct(pnl: number, cost: number): string {
-  if (!(cost > 0) || !finite(pnl)) return DASH;
+export function fmtPnlPct(pnl: Maybe, cost: Maybe): string {
+  if (!finite(cost) || !(cost > 0) || !finite(pnl)) return DASH;
   return fmtPct((pnl / cost) * 100, { signed: true });
 }
 
 /** Counts: "1,234", then "12.3K" from 10,000. */
-export function fmtCount(n: number): string {
+export function fmtCount(n: Maybe): string {
   if (!finite(n)) return DASH;
   if (Math.abs(n) >= 10_000) return fmtCompact(n);
   return group(Math.round(n), 0);
@@ -269,7 +279,7 @@ export function fmtInt(n: number | null | undefined): string {
 }
 
 /** Token amounts: compact with 3 significant digits ("1.24M", "620K", "842"). */
-export function fmtTokens(n: number): string {
+export function fmtTokens(n: Maybe): string {
   if (!finite(n)) return DASH;
   return fmtCompact(n, (a) => (a >= 1 ? group(Math.round(a), 0) : trimTo(a.toPrecision(3), 0)));
 }
@@ -279,7 +289,8 @@ export function fmtTokens(n: number): string {
 // ---------------------------------------------------------------------------
 
 /** Relative age: "12s", "4m", "3h", "2d", "5mo", "1y". */
-export function fmtAge(fromMs: number, nowMs = Date.now()): string {
+export function fmtAge(fromMs: Maybe, nowMs = Date.now()): string {
+  if (!finite(fromMs)) return DASH;
   const s = Math.max(0, Math.floor((nowMs - fromMs) / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);

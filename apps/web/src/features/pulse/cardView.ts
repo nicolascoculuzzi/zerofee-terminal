@@ -1,4 +1,4 @@
-import { fmtCount, fmtRiskPct, fmtSignedSol, fmtSol, fmtUsd, MINUS } from "../../lib/format";
+import { DASH, fmtCount, fmtRiskPct, fmtSignedSol, fmtSol, fmtUsd, isKnown, MINUS } from "../../lib/format";
 import { type RiskThresholds, token2022Danger } from "../../lib/metrics";
 import type { Launchpad, TokenSummary } from "../../protocol";
 import type { QuoteCurrency } from "../../state/settings";
@@ -53,7 +53,7 @@ export interface CardView {
   fees: string;
   /** Net buy since creation, signed, in the global quote ("+$3.20K", "−1.25"). */
   nb: string;
-  nbTone: "buy" | "sell" | "zero";
+  nbTone: "buy" | "sell" | "zero" | "unknown";
   /** Values are in SOL (the global quote), so MC and V get the SOL glyph. */
   sol: boolean;
 }
@@ -73,11 +73,16 @@ function lpFlag(t: TokenSummary): { lp: string; lpTone: CardView["lpTone"] } {
   return { lp: `LP ${fmtRiskPct(pct)}`, lpTone: pct >= 100 ? "neutral" : pct <= 0 ? "bad" : "warn" };
 }
 
-/** Signed compact net buy (DESIGN.md 4.4 "NB +$3.2K"): USD, or SOL when `solUsd` is given. */
-export function netBuy(usd: number, solUsd: number | null): { nb: string; nbTone: CardView["nbTone"] } {
+/**
+ * Signed compact net buy (DESIGN.md 4.4 "NB +$3.2K"): USD, or SOL when `solUsd` is given. Unknown
+ * (null from the live server) is the dash, never "$0".
+ */
+export function netBuy(usd: number | null, solUsd: number | null): { nb: string; nbTone: CardView["nbTone"] } {
+  if (!isKnown(usd)) return { nb: DASH, nbTone: "unknown" };
   const v = solUsd ? usd / solUsd : usd;
   const text = solUsd ? fmtSignedSol(v) : fmtUsd(Math.abs(v));
-  if (text === "0" || text === "$0" || !Number.isFinite(v) || Math.abs(usd) < 0.005) return { nb: solUsd ? "0" : "$0", nbTone: "zero" };
+  if (!Number.isFinite(v)) return { nb: DASH, nbTone: "unknown" };
+  if (text === "0" || text === "$0" || Math.abs(usd) < 0.005) return { nb: solUsd ? "0" : "$0", nbTone: "zero" };
   if (solUsd) return { nb: text, nbTone: v > 0 ? "buy" : "sell" };
   return { nb: `${v > 0 ? "+" : MINUS}${text}`, nbTone: v > 0 ? "buy" : "sell" };
 }
@@ -107,7 +112,7 @@ export function cardView(t: TokenSummary, ctx: CardContext): CardView {
     lp,
     lpTone,
     mc: sol ? fmtSol(t.marketCapSol) : fmtUsd(t.marketCapUsd),
-    v: sol ? fmtSol(t.volumeUsd / ctx.solUsd) : fmtUsd(t.volumeUsd),
+    v: sol ? fmtSol(isKnown(t.volumeUsd) ? t.volumeUsd / ctx.solUsd : null) : fmtUsd(t.volumeUsd),
     tx: fmtCount(t.txns),
     buyPct: t.txns > 0 ? Math.round((t.buys / t.txns) * 100) : -1,
     fees: fmtSol(t.feesPaidSol),

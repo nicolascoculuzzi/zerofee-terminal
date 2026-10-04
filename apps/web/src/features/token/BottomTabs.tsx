@@ -46,7 +46,7 @@ export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; 
     trades,
     positions,
     orders,
-    holders: detail.summary.holders,
+    holders: detail.summary.holders ?? undefined,
   };
 
   // The Info tab only exists at 1024–1279 px; fall back when the layout drops it.

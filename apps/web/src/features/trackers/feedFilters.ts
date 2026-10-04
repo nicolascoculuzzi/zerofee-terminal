@@ -7,14 +7,16 @@ import type { FeedScope, TradeFilters } from "./prefs";
 const HOUR_MS = 3_600_000;
 
 /** Trade-size bar width in % of the row (DESIGN.md 4.9): 60 × min(1, log10(1 + sol) / log10(11)); 10 SOL fills it. */
-export function sizeBarPct(sol: number): number {
-  if (!(sol > 0)) return 0;
+/** Size-bar width; an unknown size (null) draws no bar. */
+export function sizeBarPct(sol: number | null): number {
+  if (sol === null || !(sol > 0)) return 0;
   return 60 * Math.min(1, Math.log10(1 + sol) / Math.log10(11));
 }
 
 /** Market cap at trade time in SOL, exact from the trade's own SOL and USD prices. */
 export function mcSol(trade: Pick<Trade, "marketCapUsd" | "priceSol" | "priceUsd">): number | null {
-  return trade.priceUsd > 0 ? (trade.marketCapUsd * trade.priceSol) / trade.priceUsd : null;
+  const { marketCapUsd: mc, priceSol, priceUsd } = trade;
+  return mc !== null && priceSol !== null && priceUsd !== null && priceUsd > 0 ? (mc * priceSol) / priceUsd : null;
 }
 
 /**
@@ -63,9 +65,12 @@ export function filterTrades(
   const pads = f.launchpads.length > 0 ? new Set(f.launchpads) : null;
   return items.filter(({ trade, token }) => {
     if (f.side !== "all" && trade.side !== f.side) return false;
-    if (f.minSol !== null && trade.solAmount < f.minSol) return false;
-    if (f.mcMin !== null && trade.marketCapUsd < f.mcMin) return false;
-    if (f.mcMax !== null && trade.marketCapUsd > f.mcMax) return false;
+    // Unknown (null) fails a min or a max: unknown is not zero (DESIGN.md 4.16).
+    const sol = trade.solAmount;
+    const mc = trade.marketCapUsd;
+    if (f.minSol !== null && (sol === null || sol < f.minSol)) return false;
+    if (f.mcMin !== null && (mc === null || mc < f.mcMin)) return false;
+    if (f.mcMax !== null && (mc === null || mc > f.mcMax)) return false;
     if (pads && !pads.has(token.launchpad)) return false;
     if (f.under1h && now - token.createdAt >= HOUR_MS) return false;
     if (q) {

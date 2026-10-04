@@ -31,9 +31,9 @@ function trim(s: Spark, minute: number): void {
   for (const m of s.closes.keys()) if (m <= minute - SPARK_MINUTES) s.closes.delete(m);
 }
 
-function record(mint: string, priceSol: number, now: number): boolean {
+function record(mint: string, priceSol: number | null, now: number): boolean {
   const s = sparks.get(mint);
-  if (!s || !(priceSol > 0)) return false;
+  if (!s || priceSol === null || !(priceSol > 0)) return false;
   const minute = Math.floor(now / 60_000);
   if (s.closes.get(minute) === priceSol) return false;
   s.closes.set(minute, priceSol);

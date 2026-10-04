@@ -16,7 +16,7 @@ import { adaptOrder, impliedPriceSol } from "./orderAdapter";
 import { WalletModel } from "./walletModel";
 
 describe("token summary", () => {
-  test("maps names, nesting and units; unknown values become NaN, never zero", () => {
+  test("maps names, nesting and units; unknown values stay null, never zero", () => {
     const t = adaptToken(wireToken(), { solUsd: 119.5, column: "new" });
     expect(t).toMatchObject({
       mint: MINT,
@@ -36,20 +36,48 @@ describe("token summary", () => {
       lpBurnedPct: null,
     });
     expect(t.risk).toMatchObject({ top10Pct: 41.2, devPct: 3.1, devSold: false, snipersPct: 4.4, bundlersPct: 0 });
-    expect(t.risk.insidersPct).toBeNaN(); // null on the wire: not computed
-    expect(t.proTraders).toBeNaN();
-    expect(t.feesPaidSol).toBeNaN();
-    expect(t.netBuyUsd).toBeNaN();
-    expect(t.change5mPct).toBeNaN();
+    expect(t.risk.insidersPct).toBeNull(); // null on the wire: not computed
+    expect(t.proTraders).toBeNull();
+    expect(t.feesPaidSol).toBeNull(); // not published by the gateway
+    expect(t.netBuyUsd).toBeNull();
+    expect(t.change5mPct).toBeNull();
     expect(t.volumeUsd).toBeCloseTo(2.5 * 119.5);
     expect(t.socials).not.toHaveProperty("telegram");
   });
 
   test("unknown SOL/USD leaves USD values unknown", () => {
     const t = adaptToken(wireToken({ priceUsd: null, mcUsd: null, liquidityUsd: null }), { solUsd: Number.NaN });
-    expect(t.priceUsd).toBeNaN();
-    expect(t.marketCapUsd).toBeNaN();
-    expect(t.volumeUsd).toBeNaN();
+    expect(t.priceUsd).toBeNull();
+    expect(t.marketCapUsd).toBeNull();
+    expect(t.volumeUsd).toBeNull();
+  });
+
+  test("a quote with no known SOL value: SOL values are null, never 0 (main b6d6f91 semantics)", () => {
+    const exotic = wireToken({
+      quoteMint: "Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu",
+      priceSol: null,
+      priceUsd: null,
+      mcSol: null,
+      mcUsd: null,
+      liquidity: null,
+      liquidityUsd: null,
+      volume5m: null,
+      volume1h: null,
+      volume24h: null,
+      athMcSol: null,
+      priceQuote: 0.0042,
+      mcQuote: 4_200_000,
+    });
+    const t = adaptToken(exotic, { solUsd: 119.5 });
+    expect(t.quote).toBe("OTHER");
+    expect([t.priceSol, t.priceUsd, t.marketCapSol, t.marketCapUsd, t.liquidityUsd, t.volumeUsd]).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 
   test("venue, launchpad and column", () => {
@@ -82,6 +110,25 @@ describe("trades, candles, venue state", () => {
     const anon = adaptTrade(wireTrade({ amountUsd: null, tags: [] }), { decimals: 6, solUsd: 100 });
     expect(anon.marketCapUsd).toBeCloseTo(3_300);
     expect(anon.tags).toEqual([]);
+  });
+
+  test("trade with unknown SOL values: null sizes and prices; a USDC trade keeps its USD price", () => {
+    const usdc = adaptTrade(wireTrade({ amountSol: null, priceSol: null, mcSol: null, amountUsd: 30 }), {
+      decimals: 6,
+      solUsd: null,
+      supply: 1_000_000_000,
+    });
+    expect(usdc.solAmount).toBeNull();
+    expect(usdc.priceSol).toBeNull();
+    expect(usdc.priceUsd).toBeCloseTo(30 / 15_000_000); // the USDC amount is the USD amount
+    expect(usdc.marketCapUsd).toBeCloseTo((30 / 15_000_000) * 1_000_000_000);
+    const exotic = adaptTrade(wireTrade({ amountSol: null, priceSol: null, mcSol: null, amountUsd: null }), { decimals: 6, solUsd: 119.5 });
+    expect([exotic.solAmount, exotic.priceSol, exotic.priceUsd, exotic.marketCapUsd]).toEqual([null, null, null, null]);
+    const row = adaptTrackedRow(trackedRow({ amountSol: null, priceSol: null, mcSol: null, mcUsd: null, amountUsd: null }), {
+      decimals: 6,
+      solUsd: 119.5,
+    });
+    expect([row.trade.solAmount, row.trade.marketCapUsd, row.token.marketCapUsd]).toEqual([null, null, null]);
   });
 
   test("candle: ms to s, trade split unknown, missing SOL/USD falls back to the current rate", () => {

@@ -135,7 +135,8 @@ function Deposit({ address, label }: { address: string; label: string }) {
 }
 
 function Withdraw({ address }: { address: string }) {
-  const balance = useWallet((s) => s.status[address]?.solBalance ?? 0);
+  // null until the wallet feed reports the balance: shown as "–", never as 0.
+  const balance = useWallet((s) => s.status[address]?.solBalance ?? null);
   const reserved = useWallet((s) => s.status[address]?.reservedSol ?? 0);
   const connected = useWallet((s) => s.service.connected);
   const destinations = useSettings((s) => s.withdrawalDestinations);
@@ -145,9 +146,9 @@ function Withdraw({ address }: { address: string }) {
   const [amount, setAmount] = useState<number | null>(null);
   const [dest, setDest] = useState<string>("connected");
   const [busy, setBusy] = useState(false);
-  const available = Math.max(0, balance - reserved - 0.00001);
+  const available = balance === null ? null : Math.max(0, balance - reserved - 0.00001);
   const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "Connected wallet";
-  const over = amount !== null && amount > available;
+  const over = amount !== null && available !== null && amount > available;
   const other = destinations.find((d) => d.id === dest) ?? null;
 
   const submit = async () => {
@@ -182,7 +183,12 @@ function Withdraw({ address }: { address: string }) {
       <div className="space-y-1">
         <div className="flex h-4 items-center justify-between text-label">
           <span className="font-medium text-fg-3">Amount</span>
-          <button type="button" className="text-fg-3 hover:text-fg-1" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
+          <button
+            type="button"
+            className="text-fg-3 hover:text-fg-1"
+            disabled={available === null}
+            onClick={() => available !== null && setAmount(Math.floor(available * 10_000) / 10_000)}
+          >
             Available <span className="zf-num text-fg-1">{fmtSol(available)}</span> SOL · Max
           </button>
         </div>
@@ -196,7 +202,9 @@ function Withdraw({ address }: { address: string }) {
           invalid={over}
           ariaLabel="Amount to withdraw in SOL"
         />
-        {over && <p className="text-label text-sell">Exceeds the available balance by {fmtSol((amount ?? 0) - available)} SOL</p>}
+        {over && available !== null && (
+          <p className="text-label text-sell">Exceeds the available balance by {fmtSol((amount ?? 0) - available)} SOL</p>
+        )}
         {reserved > 0 && <p className="text-label text-fg-3">{fmtSol(reserved)} SOL stays reserved by armed orders.</p>}
       </div>
       <div className="space-y-1" role="radiogroup" aria-label="Destination">

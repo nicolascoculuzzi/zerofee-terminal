@@ -7,7 +7,7 @@ import { subscribeSequenced } from "../../state/subscribe";
  * launch for younger tokens, like the 5m change). Candles land in a ref, so live deltas don't
  * re-render the header; the header's own price ticks do.
  */
-export function useWindowChanges(mint: string, priceSol: number): { h1: number | null; h24: number | null } {
+export function useWindowChanges(mint: string, priceSol: number | null): { h1: number | null; h24: number | null } {
   const candles = useRef<Candle[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -31,7 +31,7 @@ export function useWindowChanges(mint: string, priceSol: number): { h1: number |
     );
   }, [mint]);
 
-  if (!loaded || candles.current.length === 0 || !(priceSol > 0)) return { h1: null, h24: null };
+  if (!loaded || candles.current.length === 0 || priceSol === null || !(priceSol > 0)) return { h1: null, h24: null };
   const now = Date.now() / 1000;
   const change = (windowSec: number): number | null => {
     const from = now - windowSec;

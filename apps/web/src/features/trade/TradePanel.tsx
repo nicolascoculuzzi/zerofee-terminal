@@ -182,13 +182,19 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
   priceRef.current = token.priceSol;
   useEffect(() => {
     if (orderType === "limit" && useTokenUi.getState().limitPriceSol === null) {
-      useTokenUi.getState().setLimitPriceSol(defaultLimitPrice(useTokenUi.getState().side, priceRef.current));
+      const seed = defaultLimitPrice(useTokenUi.getState().side, priceRef.current);
+      if (seed !== null) useTokenUi.getState().setLimitPriceSol(seed);
     }
   }, [orderType]);
-  const limitPrice = ui.limitPriceSol ?? defaultLimitPrice(side, token.priceSol);
+  // NaN while the price is unknown: the limit fields read "–" and arming refuses (armLimitDraft).
+  const limitPrice = ui.limitPriceSol ?? defaultLimitPrice(side, token.priceSol) ?? Number.NaN;
 
   const sellTokens =
-    sellUnit === "pct" ? (holding * (sellPct ?? 0)) / 100 : token.priceSol > 0 ? Math.min(holding, (sellSol ?? 0) / token.priceSol) : 0;
+    sellUnit === "pct"
+      ? (holding * (sellPct ?? 0)) / 100
+      : token.priceSol !== null && token.priceSol > 0
+        ? Math.min(holding, (sellSol ?? 0) / token.priceSol)
+        : 0;
 
   const buyQuote = useMemo(
     () => (side === "buy" && buySol > 0 ? quoteBuy(detail.curve, detail.pool, buySol) : null),
@@ -423,13 +429,8 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
       />
     );
 
-  const refMcQuote = triggerValue(
-    side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : token.priceSol,
-    "mc",
-    quote,
-    token.supply,
-    solUsd,
-  );
+  const refPrice = side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : token.priceSol;
+  const refMcQuote = refPrice === null ? Number.NaN : triggerValue(refPrice, "mc", quote, token.supply, solUsd);
 
   const fields = (
     <>

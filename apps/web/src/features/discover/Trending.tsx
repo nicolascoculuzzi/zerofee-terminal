@@ -105,7 +105,7 @@ function DexChip({ paid }: { paid: boolean }) {
   );
 }
 
-function Top10({ pct }: { pct: number }) {
+function Top10({ pct }: { pct: number | null }) {
   const thresholds = useSettings((s) => s.display.riskThresholds);
   return <span className={cn("zf-num", TONE_TEXT[riskTone("top10", pct, thresholds)])}>{fmtRiskPct(pct)}</span>;
 }

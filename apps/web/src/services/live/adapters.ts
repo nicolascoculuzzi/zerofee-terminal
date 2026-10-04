@@ -2,9 +2,12 @@
  * Thin adapters from the gateway's wire shapes (@zerofee/protocol, the source of truth) to the UI's
  * view models (src/protocol.ts). Pure functions, unit-tested in adapters.test.ts.
  *
- * Unknown values: the wire uses `null` for "not known / not computed by this deployment". Numeric view
- * fields the server does not publish become NaN, which every formatter renders as "–" (DESIGN.md 3.12)
- * and every risk band reads as "unknown". Nothing here invents a number.
+ * Unknown values: the wire uses `null` for "not known / not computed by this deployment", and SOL values
+ * are null when the token's quote has no known SOL value (packages/protocol market.ts). They stay null in
+ * the view models (every formatter renders "–", every filter treats them as failing a min or max), never
+ * 0. View fields the server does not publish at all are null too; the few view fields typed as plain
+ * numbers (token creation time, curve totals the display quote does not use) get NaN, which renders the
+ * same way. Nothing here invents a number.
  */
 import { USDC_MINT, WSOL_MINT } from "@zerofee/core";
 import type {
@@ -35,7 +38,16 @@ import type {
 } from "../../protocol";
 
 const NaN_ = Number.NaN;
+/** For view fields typed as plain numbers: unknown becomes NaN (rendered "–"). */
 const num = (v: number | null | undefined): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN_);
+/** A known finite number, else null. */
+export const known = (v: number | null | undefined): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** a × b when both are known, else null. */
+export const mul = (a: number | null | undefined, b: number | null | undefined): number | null => {
+  const x = known(a);
+  const y = known(b);
+  return x === null || y === null ? null : x * y;
+};
 
 /** Base units (decimal string) to UI units. */
 export function uiAmount(raw: string | bigint, decimals: number): number {
@@ -83,14 +95,13 @@ export function isFullSummary(p: Partial<WireToken>): p is WireToken {
 }
 
 export interface TokenAdaptContext {
-  /** SOL/USD from the `chain` topic (NaN while unknown). */
-  solUsd: number;
+  /** SOL/USD from the `chain` topic (NaN or null while unknown). */
+  solUsd: number | null;
   /** Pulse column when the summary came from a column topic. */
   column?: PulseColumnId;
 }
 
 export function adaptToken(t: WireToken, ctx: TokenAdaptContext): TokenSummary {
-  const solUsd = num(ctx.solUsd);
   return {
     mint: t.mint,
     name: t.name,
@@ -110,35 +121,35 @@ export function adaptToken(t: WireToken, ctx: TokenAdaptContext): TokenSummary {
     },
     supply: t.supply,
     decimals: t.decimals,
-    priceSol: t.priceSol,
-    priceUsd: num(t.priceUsd),
-    marketCapSol: t.mcSol,
-    marketCapUsd: num(t.mcUsd),
-    liquidityUsd: num(t.liquidityUsd),
-    volumeUsd: t.volume24h * solUsd,
+    priceSol: known(t.priceSol),
+    priceUsd: known(t.priceUsd),
+    marketCapSol: known(t.mcSol),
+    marketCapUsd: known(t.mcUsd),
+    liquidityUsd: known(t.liquidityUsd),
+    volumeUsd: mul(t.volume24h, ctx.solUsd),
     txns: t.txns,
     buys: t.buys,
     sells: t.sells,
-    holders: num(t.holders),
-    proTraders: num(t.proTraders),
+    holders: known(t.holders),
+    proTraders: known(t.proTraders),
     bondingProgress: t.migrated || t.complete ? 1 : t.bondingProgressBps / 10_000,
     migratedAt: t.migratedAt,
     risk: {
-      top10Pct: num(t.top10Pct),
-      devPct: num(t.devPct),
+      top10Pct: known(t.top10Pct),
+      devPct: known(t.devPct),
       devSold: t.devSoldAll === true,
-      snipersPct: num(t.snipersPct),
-      insidersPct: num(t.insidersPct),
-      bundlersPct: num(t.bundlersPct),
+      snipersPct: known(t.snipersPct),
+      insidersPct: known(t.insidersPct),
+      bundlersPct: known(t.bundlersPct),
     },
     dexPaid: t.dexPaid === true,
     dexPaidAt: t.dexPaidAt,
     lpBurnedPct: null,
     token2022: null,
-    feesPaidSol: NaN_,
-    netBuyUsd: NaN_,
+    feesPaidSol: null,
+    netBuyUsd: null,
     lastTradeAt: num(t.lastTradeAt),
-    change5mPct: NaN_,
+    change5mPct: null,
   };
 }
 
@@ -158,14 +169,23 @@ export function tokenRefOf(t: TokenSummary): TokenRef {
 export interface TradeAdaptContext {
   decimals: number;
   /** SOL/USD now, used when the trade itself carries no USD amount. */
-  solUsd: number;
+  solUsd: number | null;
+  /** Token supply (UI units), for a USD market cap when only the USD price is known. */
+  supply?: number | null;
   /** The user's own wallets (trading wallets and the connected wallet): their trades get "you". */
   own?: ReadonlySet<string>;
 }
 
+/** SOL/USD at a trade: from its own SOL and USD amounts when both are known, else the current rate. */
+function rateAt(amountUsd: number | null, amountSol: number | null, solUsdNow: number | null): number | null {
+  return amountUsd !== null && amountSol !== null && amountSol > 0 ? amountUsd / amountSol : known(solUsdNow);
+}
+
 export function adaptTrade(t: WireTrade, ctx: TradeAdaptContext): Trade {
-  // The rate at the trade when the server priced it in USD, else the current one.
-  const rate = t.amountUsd !== null && t.amountSol > 0 ? t.amountUsd / t.amountSol : num(ctx.solUsd);
+  const tokens = uiAmount(t.tokenAmount, ctx.decimals);
+  const rate = rateAt(t.amountUsd, t.amountSol, ctx.solUsd);
+  // A USDC trade's amountUsd is its USDC amount: its USD price is known even when its SOL values are not.
+  const priceUsd = mul(t.priceSol, rate) ?? (t.amountUsd !== null && tokens > 0 ? t.amountUsd / tokens : null);
   // The wire's market badges (dev, sniper, bundler, pro) are a subset of the UI's wallet tags.
   const tags: WalletTag[] = [...t.tags];
   if (ctx.own?.has(t.trader)) tags.unshift("you");
@@ -176,11 +196,11 @@ export function adaptTrade(t: WireTrade, ctx: TradeAdaptContext): Trade {
     ts: t.blockTime,
     slot: t.slot,
     side: t.side,
-    solAmount: t.amountSol,
-    tokenAmount: uiAmount(t.tokenAmount, ctx.decimals),
-    priceSol: t.priceSol,
-    priceUsd: t.priceSol * rate,
-    marketCapUsd: t.mcSol * rate,
+    solAmount: known(t.amountSol),
+    tokenAmount: tokens,
+    priceSol: known(t.priceSol),
+    priceUsd,
+    marketCapUsd: mul(t.mcSol, rate) ?? mul(priceUsd, ctx.supply),
     maker: t.trader,
     tags,
   };
@@ -190,7 +210,7 @@ export function adaptTrade(t: WireTrade, ctx: TradeAdaptContext): Trade {
  * OHLCV bucket. The wire counts trades (`n`) without splitting buys and sells, so those view fields are
  * unknown. A bucket without a recorded SOL/USD takes the current rate (USD charts stay continuous).
  */
-export function adaptCandle(c: WireCandle, solUsdNow: number): Candle {
+export function adaptCandle(c: WireCandle, solUsdNow: number | null): Candle {
   return {
     time: Math.floor(c.t / 1000),
     open: c.o,
@@ -250,8 +270,13 @@ export function poolStateOf(ctx: TradeContext, feeBps: number): PoolState | null
 }
 
 /** A tracked-wallet row as the live feed and its token reference. */
-export function adaptTrackedRow(r: TrackedTradeRow, ctx: { decimals: number; solUsd: number; token?: TokenSummary | null }): TrackedTrade {
-  const rate = r.mcUsd !== null && r.mcSol > 0 ? r.mcUsd / r.mcSol : num(ctx.solUsd);
+export function adaptTrackedRow(
+  r: TrackedTradeRow,
+  ctx: { decimals: number; solUsd: number | null; token?: TokenSummary | null },
+): TrackedTrade {
+  const tokens = uiAmount(r.tokenAmount, ctx.decimals);
+  const rate = rateAt(r.amountUsd, r.amountSol, ctx.solUsd);
+  const priceUsd = mul(r.priceSol, rate) ?? (r.amountUsd !== null && tokens > 0 ? r.amountUsd / tokens : null);
   const t = ctx.token;
   return {
     trade: {
@@ -262,11 +287,11 @@ export function adaptTrackedRow(r: TrackedTradeRow, ctx: { decimals: number; sol
       slot: r.slot,
       // Launches show as the wallet's own create; the feed renders them like a buy of 0 SOL.
       side: r.kind === "sell" ? "sell" : "buy",
-      solAmount: r.amountSol,
-      tokenAmount: uiAmount(r.tokenAmount, ctx.decimals),
-      priceSol: r.priceSol,
-      priceUsd: r.priceSol * rate,
-      marketCapUsd: r.mcSol * rate,
+      solAmount: known(r.amountSol),
+      tokenAmount: tokens,
+      priceSol: known(r.priceSol),
+      priceUsd,
+      marketCapUsd: r.mcUsd ?? mul(r.mcSol, rate),
       maker: r.wallet,
       tags: ["tracked", ...r.marketTags],
     },
@@ -277,7 +302,7 @@ export function adaptTrackedRow(r: TrackedTradeRow, ctx: { decimals: number; sol
       imageUri: r.image ?? t?.imageUri ?? null,
       launchpad: r.launchpad === "pump" ? "pump" : "other",
       createdAt: t?.createdAt ?? NaN_,
-      marketCapUsd: r.mcUsd ?? r.mcSol * rate,
+      marketCapUsd: r.mcUsd ?? mul(r.mcSol, rate),
     },
   };
 }

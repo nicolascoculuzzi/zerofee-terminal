@@ -88,6 +88,10 @@ export class MockTradeService implements TradeService {
           return;
         }
         const signature = fakeSignature(rng);
+        if (request.expectedPriceSol === null) {
+          fail("Price unknown");
+          return;
+        }
         const res = this.engine.executeUserSwap({
           wallet: request.wallet,
           mint: request.mint,

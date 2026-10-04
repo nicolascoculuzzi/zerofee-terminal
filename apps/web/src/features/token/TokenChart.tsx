@@ -546,8 +546,10 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
         onArm: () => void armLimitDraft(token),
       });
     }
-    if (full && ui.orderType === "advanced") {
-      const ref = ui.side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : current;
+    // TP/SL legs are drawn from the entry (or the current price): nothing to draw while both are unknown.
+    const ladderRef = ui.side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : current;
+    if (full && ui.orderType === "advanced" && ladderRef !== null) {
+      const ref = ladderRef;
       let tpIndex = 0;
       for (const leg of ui.ladder) {
         const tp = leg.kind === "take_profit";
@@ -834,7 +836,7 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
                   tabIndex={0}
                   aria-label={chip.label}
                   aria-valuetext={`${fmtPct(dist, { signed: true })} vs now`}
-                  aria-valuenow={Math.round(dist * 10) / 10}
+                  aria-valuenow={dist === null ? undefined : Math.round(dist * 10) / 10}
                   title={`Drag or use Up/Down to move (Shift for 5%)${m.onArm ? ", Enter to arm" : ""}, Delete to remove. Alt while dragging skips snapping.`}
                   onKeyDown={(e) => onChipKey(m, e)}
                   onPointerDown={(e) => {
@@ -907,7 +909,8 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
               <MenuItem
                 hint={<Hotkey binding={alertKey} />}
                 onSelect={() => {
-                  useTokenUi.getState().addAlert(mint, menu.priceSol, token.priceSol);
+                  // An unknown current price gives the alert no direction to cross from.
+                  if (token.priceSol !== null) useTokenUi.getState().addAlert(mint, menu.priceSol, token.priceSol);
                   setMenu(null);
                 }}
               >

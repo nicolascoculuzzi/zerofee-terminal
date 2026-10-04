@@ -56,6 +56,43 @@ function token(patch: Partial<TokenSummary> = {}): TokenSummary {
 }
 
 describe("pulse filters", () => {
+  test("unknown is not zero: a null metric fails any min or max set on it, and passes when none is set", () => {
+    const unknown = token({
+      marketCapUsd: null,
+      marketCapSol: null,
+      liquidityUsd: null,
+      volumeUsd: null,
+      holders: null,
+      risk: { top10Pct: null, devPct: null, devSold: false, snipersPct: null, insidersPct: null, bundlersPct: null },
+    });
+    expect(matchesFilter(unknown, compileFilter(emptyFilter()), NOW)).toBe(true);
+    const cases: [string, (f: ReturnType<typeof emptyFilter>) => void][] = [
+      ["max MC", (f) => (f.metrics.marketCap.max = 50_000)],
+      ["min MC", (f) => (f.metrics.marketCap.min = 1)],
+      ["min liquidity", (f) => (f.metrics.liquidity.min = 1)],
+      ["max volume", (f) => (f.metrics.volume.max = 1e12)],
+      ["max top 10", (f) => (f.audit.top10.max = 100)],
+      ["min holders", (f) => (f.audit.holders.min = 0)],
+      ["max insiders", (f) => (f.audit.insiders.max = 50)],
+    ];
+    for (const [label, set] of cases) {
+      const f = emptyFilter();
+      set(f);
+      expect([label, matchesFilter(unknown, compileFilter(f), NOW)]).toEqual([label, false]);
+      expect([label, matchesFilter(token(), compileFilter(f), NOW)]).toEqual([label, true]);
+    }
+  });
+
+  test("an unobserved creation time passes a minimum age and fails a maximum", () => {
+    const old = token({ createdAt: Number.NaN });
+    const min = emptyFilter();
+    min.audit.ageMin.min = 10;
+    const max = emptyFilter();
+    max.audit.ageMin.max = 10;
+    expect(matchesFilter(old, compileFilter(min), NOW)).toBe(true);
+    expect(matchesFilter(old, compileFilter(max), NOW)).toBe(false);
+  });
+
   test("the empty filter matches everything and counts zero conditions", () => {
     const f = emptyFilter();
     expect(activeFilterCount(f)).toBe(0);

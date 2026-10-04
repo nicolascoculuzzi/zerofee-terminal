@@ -16,12 +16,13 @@ import type { PaletteAction } from "./actions";
 import type { DevHit } from "./devs";
 
 /** MC / liquidity in the global quote (DESIGN.md 3.9): USD compact, or a SolGlyph and SOL. */
-export function QuoteValue({ usd, sol, strong }: { usd: number; sol: number | null; strong?: boolean }) {
+/** A value in the global quote. `sol` null = derive it from USD; either unknown (null) reads as the dash. */
+export function QuoteValue({ usd, sol, strong }: { usd: number | null; sol: number | null; strong?: boolean }) {
   const quote = useSettings((s) => s.display.quote);
   const solUsd = useMarket((s) => s.solUsd);
   const tone = strong ? "text-fg-1" : "text-fg-2";
   if (quote === "SOL") {
-    const value = sol ?? (solUsd > 0 ? usd / solUsd : Number.NaN);
+    const value = sol ?? (usd !== null && solUsd > 0 ? usd / solUsd : null);
     return (
       <span className={cn("zf-num inline-flex items-center justify-end gap-0.5 text-data", tone)}>
         <SolGlyph className="text-fg-3" />

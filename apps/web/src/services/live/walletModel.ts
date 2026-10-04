@@ -113,15 +113,16 @@ export class WalletModel {
 
   private activity(f: WireTrade): ActivityItem {
     const t = this.host.token(f.mint);
-    const rate = f.amountUsd !== null && f.amountSol > 0 ? f.amountUsd / f.amountSol : Number.NaN;
+    const rate = f.amountUsd !== null && f.amountSol !== null && f.amountSol > 0 ? f.amountUsd / f.amountSol : null;
     return {
       id: f.id,
       kind: f.side,
       mint: f.mint,
       symbol: t?.symbol ?? null,
-      solAmount: f.amountSol,
+      // Unknown SOL size (a quote with no known SOL value): NaN, rendered "–".
+      solAmount: f.amountSol ?? Number.NaN,
       tokenAmount: uiAmount(f.tokenAmount, this.tokens.get(f.mint)?.decimals ?? t?.decimals ?? 6),
-      marketCapUsd: Number.isFinite(rate) ? f.mcSol * rate : null,
+      marketCapUsd: rate !== null && f.mcSol !== null ? f.mcSol * rate : null,
       ts: f.blockTime,
       signature: f.signature,
     };
@@ -138,24 +139,26 @@ export class WalletModel {
     let soldSol = 0;
     let boughtTokens = 0;
     let soldTokens = 0;
-    // Weighted-average cost over the observed fills, oldest first.
+    // Weighted-average cost over the observed fills, oldest first. A fill whose SOL size is unknown (null:
+    // a quote with no known SOL value) makes every SOL figure it touches unknown (NaN propagates, never 0).
     let costTokens = 0;
     let costSol = 0;
     let realized = 0;
     for (const f of [...fills].reverse()) {
       const tokens = uiAmount(f.tokenAmount, decimals);
+      const sol = f.amountSol ?? Number.NaN;
       if (f.side === "buy") {
-        boughtSol += f.amountSol;
+        boughtSol += sol;
         boughtTokens += tokens;
         costTokens += tokens;
-        costSol += f.amountSol;
+        costSol += sol;
       } else {
-        soldSol += f.amountSol;
+        soldSol += sol;
         soldTokens += tokens;
         if (costTokens > 0) {
           const avg = costSol / costTokens;
           const n = Math.min(tokens, costTokens);
-          realized += f.amountSol * (n / tokens) - avg * n;
+          realized += sol * (n / tokens) - avg * n;
           costSol -= avg * n;
           costTokens -= n;
         }

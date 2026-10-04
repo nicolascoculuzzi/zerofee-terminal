@@ -1,3 +1,4 @@
+import { isKnown } from "../../lib/format";
 import type { TokenSummary } from "../../protocol";
 
 export type TrendWindow = "5m" | "1h" | "6h" | "24h";
@@ -37,21 +38,25 @@ const WINDOW_MS: Record<TrendWindow, number> = {
  *            txnsInWindow   = txns × share
  *
  * A tiny log-volume term breaks ties. When the gateway serves real windowed stats this module
- * is the only thing to replace.
+ * is the only thing to replace. Unknown inputs (null from the live server) contribute nothing: a coin
+ * with an unknown volume or 5-minute change cannot trend on it.
  */
 export function trendScore(t: TokenSummary, window: TrendWindow, now: number): number {
-  const tieBreak = Math.log10(1 + Math.max(0, t.volumeUsd)) * 1e-4;
+  const knownVolume = isKnown(t.volumeUsd) ? Math.max(0, t.volumeUsd) : 0;
+  const tieBreak = Math.log10(1 + knownVolume) * 1e-4;
   const sinceTrade = Math.max(0, now - t.lastTradeAt);
   if (window === "5m") {
+    if (!isKnown(t.change5mPct)) return tieBreak;
     const activity = Math.exp(-sinceTrade / 90_000);
     const confidence = Math.min(1, t.txns / 25);
     return t.change5mPct * activity * confidence + tieBreak;
   }
   const span = WINDOW_MS[window];
   if (sinceTrade > span) return tieBreak;
-  const age = Math.max(MINUTE, now - t.createdAt);
+  // A creation the server did not observe is older than its window: treat it as a day old.
+  const age = isKnown(t.createdAt) ? Math.max(MINUTE, now - t.createdAt) : 24 * HOUR;
   const share = Math.min(1, span / Math.min(age, 24 * HOUR));
-  const volume = Math.max(0, t.volumeUsd) * share;
+  const volume = knownVolume * share;
   const txns = Math.max(0, t.txns) * share;
   return Math.log10(1 + volume) + 0.6 * Math.log10(1 + txns) + tieBreak;
 }
@@ -66,7 +71,7 @@ export const TREND_EXPLAINER: Record<TrendWindow, string> = {
 export type SortKey = "rank" | "price" | "change" | "mc" | "liq" | "vol" | "txns" | "holders" | "top10";
 export type SortDir = "asc" | "desc";
 
-const SORT_VALUE: Record<Exclude<SortKey, "rank">, (t: TokenSummary) => number> = {
+const SORT_VALUE: Record<Exclude<SortKey, "rank">, (t: TokenSummary) => number | null> = {
   price: (t) => t.priceUsd,
   change: (t) => t.change5mPct,
   mc: (t) => t.marketCapUsd,
@@ -98,9 +103,10 @@ export interface TrendFilters {
 
 export function matchesTrendFilters(t: TokenSummary, f: TrendFilters): boolean {
   if (f.dexPaid && !t.dexPaid) return false;
-  if (f.minLiq !== null && t.liquidityUsd < f.minLiq) return false;
-  if (f.minVol !== null && t.volumeUsd < f.minVol) return false;
-  if (f.maxTop10 !== null && t.risk.top10Pct > f.maxTop10) return false;
+  // Unknown is not zero: an unknown value fails a min or a max (DESIGN.md 4.16).
+  if (f.minLiq !== null && !(isKnown(t.liquidityUsd) && t.liquidityUsd >= f.minLiq)) return false;
+  if (f.minVol !== null && !(isKnown(t.volumeUsd) && t.volumeUsd >= f.minVol)) return false;
+  if (f.maxTop10 !== null && !(isKnown(t.risk.top10Pct) && t.risk.top10Pct <= f.maxTop10)) return false;
   const q = f.query.trim().toLowerCase().replace(/^\$/, "");
   if (q) {
     const hay = `${t.symbol} ${t.name}`.toLowerCase();
@@ -122,5 +128,11 @@ export function sortRanked(rows: RankedToken[], key: SortKey, dir: SortDir): Ran
   const sign = dir === "asc" ? 1 : -1;
   if (key === "rank") return dir === "asc" ? rows : [...rows].reverse();
   const value = SORT_VALUE[key];
-  return [...rows].sort((a, b) => (value(a.token) - value(b.token)) * sign || a.rank - b.rank);
+  return [...rows].sort((a, b) => {
+    const x = value(a.token);
+    const y = value(b.token);
+    // Unknown values sort last in either direction.
+    if (!isKnown(x) || !isKnown(y)) return (isKnown(x) ? 0 : 1) - (isKnown(y) ? 0 : 1) || a.rank - b.rank;
+    return (x - y) * sign || a.rank - b.rank;
+  });
 }

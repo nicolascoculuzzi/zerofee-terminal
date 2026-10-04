@@ -146,17 +146,17 @@ export interface TokenSocials {
 /** Holder-composition metrics; definitions are published in-app (SPEC "Token metric definitions"). */
 export interface TokenRisk {
   /** Top 10 holders' share of supply; excludes curve PDA, AMM vaults, burn addresses, lockers. */
-  top10Pct: number;
+  top10Pct: number | null;
   /** Creator wallet balance (live `bonding_curve.creator`) as % of supply. */
-  devPct: number;
+  devPct: number | null;
   /** True once the creator sold their whole position ("DS" on cards). */
   devSold: boolean;
   /** Non-dev buyers whose first buy landed within 3 slots of creation. */
-  snipersPct: number;
+  snipersPct: number | null;
   /** Transfer-only receivers plus wallets the creator funded within two hops. */
-  insidersPct: number;
+  insidersPct: number | null;
   /** Creation-slot co-buyers, same-slot funder/size clusters, multi-wallet txs. */
-  bundlersPct: number;
+  bundlersPct: number | null;
 }
 
 /** Token-2022 extensions that let someone else move, freeze or block your tokens. */
@@ -186,18 +186,18 @@ export interface TokenSummary {
   socials: TokenSocials;
   supply: number;
   decimals: number;
-  priceSol: number;
-  priceUsd: number;
-  marketCapSol: number;
-  marketCapUsd: number;
-  liquidityUsd: number;
+  priceSol: number | null;
+  priceUsd: number | null;
+  marketCapSol: number | null;
+  marketCapUsd: number | null;
+  liquidityUsd: number | null;
   /** Volume in USD since creation (rolling 24 h for tokens older than a day). */
-  volumeUsd: number;
+  volumeUsd: number | null;
   txns: number;
   buys: number;
   sells: number;
-  holders: number;
-  proTraders: number;
+  holders: number | null;
+  proTraders: number | null;
   /** 0..1, `1 − real_token_reserves_now / real_token_reserves_initial`; 1 once migrated. */
   bondingProgress: number;
   migratedAt: number | null;
@@ -210,12 +210,12 @@ export interface TokenSummary {
   /** Null for legacy SPL Token mints. */
   token2022: Token2022Flags | null;
   /** Total fees traders paid on this token: venue fees + priority fees + tips, in SOL. */
-  feesPaidSol: number;
+  feesPaidSol: number | null;
   /** Net buy since creation: SOL bought minus SOL sold, in USD (Pulse "NB", signed). */
-  netBuyUsd: number;
+  netBuyUsd: number | null;
   lastTradeAt: number;
   /** Price change over the last 5 minutes, %. */
-  change5mPct: number;
+  change5mPct: number | null;
 }
 
 export interface CurveState {
@@ -324,11 +324,11 @@ export interface Trade {
   ts: number;
   slot: number;
   side: "buy" | "sell";
-  solAmount: number;
+  solAmount: number | null;
   tokenAmount: number;
-  priceSol: number;
-  priceUsd: number;
-  marketCapUsd: number;
+  priceSol: number | null;
+  priceUsd: number | null;
+  marketCapUsd: number | null;
   maker: string;
   tags: WalletTag[];
 }
@@ -573,7 +573,7 @@ export interface TokenRef {
   imageUri: string | null;
   launchpad: Launchpad;
   createdAt: number;
-  marketCapUsd: number;
+  marketCapUsd: number | null;
 }
 
 export interface TrackedTrade {

@@ -38,8 +38,8 @@ interface TradeRequestBase {
   source: TradeSource;
   /** `performance.timeOrigin + performance.now()` at the click, for the latency record. */
   clickedAt: number;
-  /** Quote at click time; the engine enforces slippage against it. */
-  expectedPriceSol: number;
+  /** Price shown at click time (null while unknown); the live engine quotes from the trade context itself. */
+  expectedPriceSol: number | null;
 }
 
 export interface BuyRequest extends TradeRequestBase {

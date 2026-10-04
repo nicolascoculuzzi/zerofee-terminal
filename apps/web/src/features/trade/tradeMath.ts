@@ -133,24 +133,24 @@ export function ladderNonceSlots(legs: readonly { kind: "take_profit" | "stop_lo
 }
 
 /** Snaps `price` to 0.5% steps of the current price (DESIGN.md 4.10); Alt disables snapping. */
-export function snapPrice(price: number, current: number, stepPct = 0.5): number {
-  if (!(current > 0) || !(price > 0)) return price;
+export function snapPrice(price: number, current: number | null, stepPct = 0.5): number {
+  if (current === null || !(current > 0) || !(price > 0)) return price;
   const pct = (price / current - 1) * 100;
   const snapped = Math.round(pct / stepPct) * stepPct;
   return Math.max(current * 0.001, current * (1 + snapped / 100));
 }
 
 /** Moves `price` by `stepPct` of the current price (keyboard Up/Down on a line handle). */
-export function nudgePrice(price: number, current: number, stepPct: number): number {
-  if (!(current > 0)) return price;
+export function nudgePrice(price: number, current: number | null, stepPct: number): number {
+  if (current === null || !(current > 0)) return price;
   const pct = (price / current - 1) * 100;
   const next = Math.round((pct + stepPct) / 0.5) * 0.5;
   return Math.max(current * 0.001, current * (1 + next / 100));
 }
 
-/** Signed distance of a target from the current price, %. */
-export function distancePct(target: number, current: number): number {
-  return current > 0 ? (target / current - 1) * 100 : 0;
+/** Signed distance of a target from the current price, %; null while the current price is unknown. */
+export function distancePct(target: number, current: number | null): number | null {
+  return current !== null && current > 0 ? (target / current - 1) * 100 : null;
 }
 
 /**
@@ -166,7 +166,7 @@ export function migrationPriceSol(curve: CurveState | null): number | null {
 }
 
 /** Trade-size bar width behind a tape row, % of the row (10 SOL fills 60%). */
-export function sizeBarPct(sol: number): number {
-  if (!(sol > 0)) return 0;
+export function sizeBarPct(sol: number | null): number {
+  if (sol === null || !(sol > 0)) return 0;
   return 60 * Math.min(1, Math.log10(1 + sol) / Math.log10(11));
 }

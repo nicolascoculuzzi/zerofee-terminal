@@ -101,6 +101,9 @@ const TAG_WHALE = 32;
 const TAG_KOL = 64;
 
 type WalletKind = "retail" | "pro" | "whale" | "sniper" | "kol";
+
+/** The simulation always knows its numbers: trades with every SOL and USD field set (the live wire can null them). */
+type SimTrade = Trade & { solAmount: number; priceSol: number; priceUsd: number; marketCapUsd: number };
 type Fate = "dud" | "climber" | "runner" | "rug";
 
 interface PoolWallet {
@@ -178,7 +181,7 @@ interface SimToken {
   holderIdx: Map<string, number>;
   insiders: Set<string>;
   scheduled: ScheduledTrade[];
-  trades: Trade[];
+  trades: SimTrade[];
   minuteCandles: Candle[];
   dyn: Dynamics;
   dexPaid: boolean;
@@ -400,7 +403,7 @@ export class SimEngine {
   private readonly subs = new Map<string, Set<AnyHandler>>();
   private readonly seqs = new Map<string, number>();
   private readonly candleState = new Map<string, Candle>();
-  private readonly pendingTrades = new Map<string, Trade[]>();
+  private readonly pendingTrades = new Map<string, SimTrade[]>();
   private pendingTracked: TrackedTrade[] = [];
   private readonly pulseRemovals: Record<PulseColumnId, string[]> = {
     new: [],
@@ -850,13 +853,13 @@ export class SimEngine {
     slot: number,
     tagBits: number,
     signature?: string,
-  ): Trade {
+  ): SimTrade {
     // Scheduled fills can land a tick late; keep each token's tape strictly time-ordered.
     const at = Math.max(ts, t.trades[t.trades.length - 1]?.ts ?? 0);
     const price = this.priceOf(t);
     if (t.pool) t.pool.feeBps = poolFeeBps(price * t.supply);
     const sig = signature ?? fakeSignature(this.rng);
-    const trade: Trade = {
+    const trade: SimTrade = {
       id: `${sig}:0`,
       signature: sig,
       mint: t.mint,
@@ -920,7 +923,7 @@ export class SimEngine {
     return false;
   }
 
-  private updateMinuteCandle(t: SimToken, trade: Trade): void {
+  private updateMinuteCandle(t: SimToken, trade: SimTrade): void {
     const bucket = Math.floor(trade.ts / 60_000) * 60;
     const last = t.minuteCandles[t.minuteCandles.length - 1];
     if (last && last.time === bucket) {
@@ -1430,7 +1433,7 @@ export class SimEngine {
     }
   }
 
-  private advanceCandle(key: string, tf: Timeframe, trades: Trade[]): Candle[] {
+  private advanceCandle(key: string, tf: Timeframe, trades: SimTrade[]): Candle[] {
     const secs = TIMEFRAME_SECONDS[tf];
     const changed: Candle[] = [];
     let current = this.candleState.get(key);

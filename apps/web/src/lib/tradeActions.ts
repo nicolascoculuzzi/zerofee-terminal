@@ -22,7 +22,8 @@ import { playTone } from "./sound";
 
 const NETWORK_FEE_SOL = 0.000005;
 
-function tokenInfo(mint: string): { symbol: string; priceSol: number } {
+/** Symbol and live price; the price is null while unknown (a quote with no known SOL value). */
+function tokenInfo(mint: string): { symbol: string; priceSol: number | null } {
   const t = useMarket.getState().tokens[mint];
   if (t) return { symbol: t.symbol, priceSol: t.priceSol };
   const detail = useToken.getState().detail;
@@ -312,15 +313,18 @@ export async function sell(args: SellArgs): Promise<TradeReceipt[]> {
       let pct: number | undefined;
       if (args.pct !== undefined) pct = Math.min(100, Math.max(0, args.pct));
       else if (args.solValue !== undefined) {
-        tokenAmount = priceSol > 0 ? Math.min(pos.holdingTokens, args.solValue / priceSol) : undefined;
-        if (tokenAmount === undefined) pct = 100;
+        // A SOL-sized sell needs the price; unknown (null) refuses below rather than selling everything.
+        if (priceSol === null || !(priceSol > 0)) return null;
+        tokenAmount = Math.min(pos.holdingTokens, args.solValue / priceSol);
       } else if (args.tokenAmount !== undefined) tokenAmount = Math.min(pos.holdingTokens, args.tokenAmount);
       else pct = 100;
       return { address, pct, tokenAmount };
     })
     .filter((p): p is { address: string; pct: number | undefined; tokenAmount: number | undefined } => p !== null);
   if (plans.length === 0) {
-    blocked("Nothing to sell", `No $${symbol} balance in the selected wallet.`);
+    if (args.solValue !== undefined && (priceSol === null || !(priceSol > 0))) {
+      blocked("Price unknown", `$${symbol}'s price in SOL is unknown right now, so a SOL-sized sell can't be measured. Sell a percentage.`);
+    } else blocked("Nothing to sell", `No $${symbol} balance in the selected wallet.`);
     return [];
   }
   if (!ensureUnlocked(`Unlock to sell $${symbol}`, () => void sell(args), args.source)) return [];
@@ -392,7 +396,11 @@ export async function sellInitials(mint: string, source: TradeSource, preset?: P
       .push({ kind: "info", title: "Initials already recovered", body: `You've taken out more than you put into $${symbol}.` });
     return [];
   }
-  const tokens = priceSol > 0 ? Math.min(pos.holdingTokens, remaining / priceSol) : pos.holdingTokens;
+  if (priceSol === null || !(priceSol > 0)) {
+    blocked("Price unknown", `$${symbol}'s price in SOL is unknown right now, so the initials can't be measured.`);
+    return [];
+  }
+  const tokens = Math.min(pos.holdingTokens, remaining / priceSol);
   return sell({ mint, tokenAmount: tokens, label: `initials (${fmtSol(remaining)} SOL)`, source, preset });
 }
 

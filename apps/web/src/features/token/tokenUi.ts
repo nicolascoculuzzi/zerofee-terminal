@@ -96,7 +96,8 @@ export interface TokenUiState {
   setSplit(split: number): void;
   setTradeCols(patch: Partial<TokenUiState["tradeCols"]>): void;
   addAlert(mint: string, priceSol: number, currentPriceSol: number): string;
-  moveAlert(id: string, priceSol: number, currentPriceSol: number): void;
+  /** `currentPriceSol` null (unknown price): the alert keeps its direction. */
+  moveAlert(id: string, priceSol: number, currentPriceSol: number | null): void;
   removeAlert(id: string): void;
   setBuySol(v: number | null): void;
   setSellPct(v: number | null): void;
@@ -193,7 +194,11 @@ export const useTokenUi = create<TokenUiState>()(
         return id;
       },
       moveAlert: (id, priceSol, currentPriceSol) =>
-        set((s) => ({ alerts: s.alerts.map((a) => (a.id === id ? { ...a, priceSol, above: priceSol >= currentPriceSol } : a)) })),
+        set((s) => ({
+          alerts: s.alerts.map((a) =>
+            a.id === id ? { ...a, priceSol, above: currentPriceSol === null ? a.above : priceSol >= currentPriceSol } : a,
+          ),
+        })),
       removeAlert: (id) => set((s) => ({ alerts: s.alerts.filter((a) => a.id !== id) })),
       setBuySol: (buySol) => set({ buySol }),
       setSellPct: (sellPct) => set({ sellPct }),
