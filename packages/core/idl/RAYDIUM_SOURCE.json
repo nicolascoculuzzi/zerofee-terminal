@@ -17,6 +17,7 @@
   },
   "cpmmProgramSource": {
     "repo": "raydium-io/raydium-cp-swap",
+    "path": "programs/cp-swap/src",
     "commit": "b3187ae53a1b95a201f855a59024a12ca8f5b51a",
     "committedAt": "2026-10-02T23:59:26Z"
   },

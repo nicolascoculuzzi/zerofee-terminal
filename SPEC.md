@@ -94,8 +94,8 @@ Program IDs, IDLs, fee accounts, tip accounts, minimum tips, rent and endpoints 
 - Every program ID, seed, discriminator, endpoint and fallback tip account lives in `packages/core/src/constants.ts`, each with a source URL comment. Nothing is hardcoded elsewhere, with one deliberate exception: `packages/signer` embeds its own reviewed copy of the program IDs, discriminators, layouts and **tip accounts**, because the signer must not trust core or the backend at runtime. A CI test cross-checks the signer's copy against core's.
 - Read live, never hardcode: rent (`getMinimumBalanceForRentExemption`; rent dropped in 2026), `bonding_curve.creator` (creator vault moves with fee sharing and holder rewards), `FeeConfig`, fee recipient lists, and the token program from the mint owner. Jito's `getTipAccounts` is read live by the backend only to detect drift; it never feeds the signer (a backend that could add a "tip account" could drain up to the tip cap per trade).
 - Use pump's unified `buy_v2` / `sell_v2` / `buy_exact_quote_in_v2`. PumpSwap pricing uses effective reserves (vault + signed `virtual_quote_reserves`); pricing from the raw vault underquotes boost pools by about 18%.
-- Golden tests: our account lists and quotes must match `@pump-fun/pump-sdk` and `@pump-fun/pump-swap-sdk` in CI.
-- A daily job diffs pump's IDLs and SDK versions and alerts on change (about a week of devnet notice is typical).
+- Golden tests: our account lists and quotes must match `@pump-fun/pump-sdk` and `@pump-fun/pump-swap-sdk` in CI (Raydium's: `@raydium-io/raydium-sdk-v2`, with the documented SDK deviations).
+- A daily job diffs pump's IDLs and SDK versions and alerts on change (about a week of devnet notice is typical). It also covers Raydium: the IDLs pinned in `packages/core/idl/RAYDIUM_SOURCE.json`, the CPMM program and LaunchLab CPI-crate sources our layouts also come from (the IDL repo lags the programs), and `@raydium-io/raydium-sdk-v2`.
 - Sources of truth: https://github.com/pump-fun/pump-public-docs, https://www.helius.dev/docs/sending-transactions/sender, https://docs.jito.wtf, https://developers.jup.ag
 
 ## Security rules (non-negotiable)
