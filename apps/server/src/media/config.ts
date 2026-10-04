@@ -28,7 +28,8 @@
  *   IMG_CACHE_MEMORY_MB     in-memory cache of resized images (default 64)
  *   IMG_RATE_RPS / _BURST   requests per IP (default 50/s, burst 300: a Pulse page loads many avatars at once)
  *   IMG_MISS_RPS / _BURST   upstream fetches (cache misses) started per IP (default 10/s, burst 100)
- *   IMG_MAX_UPSTREAM        image fetch jobs running at once, server-wide (default 16; more wait in the priority queue)
+ *   IMG_MAX_UPSTREAM        image fetch jobs running at once, server-wide (default 32; more wait in the priority queue;
+ *                           per-host limits are the pacer's)
  */
 import { dirname, join } from "node:path";
 import { type HostLimit, parseHostLimits } from "./pacer";
@@ -110,7 +111,7 @@ export function loadMediaConfig(env: Env, dbPath: string): MediaConfig {
     rateBurst: int(env, "IMG_RATE_BURST", 300, 1, 1_000_000),
     missPerSec: int(env, "IMG_MISS_RPS", 10, 1, 100_000),
     missBurst: int(env, "IMG_MISS_BURST", 100, 1, 1_000_000),
-    maxUpstream: int(env, "IMG_MAX_UPSTREAM", 16, 1, 1_000),
+    maxUpstream: int(env, "IMG_MAX_UPSTREAM", 32, 1, 1_000),
     patienceMs: int(env, "IMG_QUEUE_PATIENCE_MS", 2_000, 0, 60_000),
     backgroundRps: num(env, "IMG_BACKGROUND_RPS", 2, 0.01, 1_000),
     retryMax: int(env, "IMG_RETRY_MAX", 8, 1, 100),

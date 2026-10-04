@@ -91,7 +91,7 @@ export interface PacerOptions {
   maxPauseMs?: number;
   /** Waiters per host beyond which new low-priority requests are refused at once. */
   maxQueue?: number;
-  /** Longest a request waits for a slot before giving up as "host_paused" (default 30 s). */
+  /** Longest a request waits for a slot before giving up as "host_busy" (default 20 s). */
   maxWaitMs?: number;
 }
 
@@ -112,7 +112,7 @@ export class HostPacer {
     this.random = o.random ?? Math.random;
     this.maxPauseMs = o.maxPauseMs ?? 120_000;
     this.maxQueue = o.maxQueue ?? 2_000;
-    this.maxWaitMs = o.maxWaitMs ?? 30_000;
+    this.maxWaitMs = o.maxWaitMs ?? 20_000;
   }
 
   limitFor(host: string): HostLimit {
@@ -121,8 +121,8 @@ export class HostPacer {
 
   /**
    * Waits for a slot on `host` at `prio`; resolves with the release function (call it exactly once).
-   * Rejects with a transient "host_paused" failure when the host is paused for longer than `maxWaitMs`, or
-   * the wait runs past it (the caller retries later instead of holding a race open).
+   * Rejects with a transient "host_paused" failure when the host is paused for longer than `maxWaitMs`, and
+   * "host_busy" when the wait runs past it (the caller retries later instead of holding a race open).
    */
   acquire(host: string, prio: Priority, signal?: AbortSignal, maxWaitMs = this.maxWaitMs): Promise<() => void> {
     if (signal?.aborted) return Promise.reject(new FetchFailure("aborted", false));
@@ -143,7 +143,7 @@ export class HostPacer {
       const timer = setTimeout(() => {
         if (!leave()) return;
         if (signal && w.onAbort) signal.removeEventListener("abort", w.onAbort);
-        reject(new FetchFailure("host_paused", false, 0, Math.max(0, h.pausedUntil - this.now())));
+        reject(new FetchFailure("host_busy", false, 0, Math.max(0, h.pausedUntil - this.now())));
       }, maxWaitMs);
       (timer as { unref?: () => void }).unref?.();
       w.resolve = (release) => {

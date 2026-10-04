@@ -66,6 +66,8 @@ const WARM_SIZE: ImageProxySize = 96;
 const PERMANENT_TTL = 6 * 3_600_000;
 const GAVE_UP_TTL = 30 * 60_000;
 const RETRY_CAP_MS = 300_000;
+/** Failures that never reached the upstream (our own queues): they say nothing about the image. */
+const NO_VERDICT: ReadonlySet<string> = new Set(["host_paused", "host_busy", "busy"]);
 
 /** pump.fun's CDN URL for a mint: the fallback image when a pump coin's metadata can't be had. */
 export const pumpCdnUrl = (mint: string): string => `${PUMP_CDN}/${mint}`;
@@ -631,6 +633,16 @@ export class ImageProxy {
     }
     const errors = e instanceof AggregateError ? e.errors : [e];
     const failures = errors.filter((x): x is FetchFailure => x instanceof FetchFailure && x.reason !== "aborted");
+    if (failures.length > 0 && failures.every((f) => NO_VERDICT.has(f.reason) || f.reason === "sources_down")) {
+      // every source was only queued (busy or paused hosts): no attempt spent, look again shortly
+      job.attempts--;
+      job.reason = failures[0]?.reason ?? "busy";
+      const pause = failures.reduce((a, f) => Math.max(a, f.retryAfterMs ?? 0), 0);
+      job.nextAt = this.now() + Math.round(Math.max(1_000, Math.min(pause, 60_000)) * (0.75 + this.random() * 0.5));
+      for (const w of job.waiters.splice(0)) w.reject(new ProxyError(404, job.reason, "pending", (job.nextAt - this.now()) / 1000));
+      this.enqueue(job);
+      return;
+    }
     const permanent = failures.length > 0 && failures.every((f) => f.permanent);
     const reason = (failures.find((f) => f.status === 429) ?? failures[0])?.reason ?? (e instanceof Error ? e.message : "failed");
     job.reason = reason;
@@ -674,7 +686,7 @@ export class ImageProxy {
       got =
         job.original ??
         (await staggeredRace(
-          list,
+          list.map((c, i) => ({ ...c, fallback: i > 0 })),
           (c, signal, started) => this.attempt(c, signal, started, job.prio),
           this.o.cfg.staggerMs,
           this.o.cfg.patienceMs,
@@ -715,7 +727,7 @@ export class ImageProxy {
   }
 
   private async attempt(
-    c: FetchCandidate & { pumpCdn?: boolean },
+    c: FetchCandidate & { pumpCdn?: boolean; fallback?: boolean },
     signal: AbortSignal,
     started: () => void,
     prio: Priority,
@@ -732,6 +744,8 @@ export class ImageProxy {
         trusted: c.trusted,
         pacer: this.pacer,
         priority: prio,
+        // a fallback source joins the race only if its host has room soon: no queue pile-up on every host
+        pacerMaxWaitMs: c.fallback ? this.o.cfg.patienceMs : undefined,
         onStart: started,
         checkRedirect: c.pumpCdn
           ? (location, r) => {
@@ -774,7 +788,7 @@ export class ImageProxy {
       const f = e instanceof FetchFailure ? e : new FetchFailure("failed", false);
       if (f.reason !== "aborted") {
         // waiting out a paused host never reached the upstream
-        if (f.reason !== "host_paused" && f.reason !== "busy") this.stats.upstreamFailed++;
+        if (!NO_VERDICT.has(f.reason)) this.stats.upstreamFailed++;
         this.fail(f.reason);
         bump(this.stats.hostFailures, `${c.host} ${f.reason}`);
         if (f.reason === "content_type" && this.badMagicLogged < 50) {

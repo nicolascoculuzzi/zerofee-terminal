@@ -132,6 +132,8 @@ export interface BoundedFetchOptions {
   /** Per-host pacing: every hop waits for a slot on its host, and the host learns of 429s and failures. */
   pacer?: Pick<HostPacer, "acquire" | "success" | "throttled" | "failed">;
   priority?: Priority;
+  /** Longest wait for a pacing slot (default: the pacer's); a fallback source in a race waits briefly. */
+  pacerMaxWaitMs?: number;
   /** Called once the first request is actually sent (after any wait for a pacing slot). */
   onStart?(): void;
 }
@@ -168,7 +170,7 @@ export async function boundedFetch(url: string, o: BoundedFetchOptions): Promise
       const checkDns = hop > 0 || !o.trusted;
       if (checkDns ? !(await isSafeUrl(current, o.resolve)) : !isSafeUrlSyntax(current)) throw new FetchFailure("unsafe_url", true);
       const host = hostOf(current);
-      if (o.pacer) release = await o.pacer.acquire(host, o.priority ?? 1, o.signal);
+      if (o.pacer) release = await o.pacer.acquire(host, o.priority ?? 1, o.signal, o.pacerMaxWaitMs);
       if (hop === 0) {
         timer = setTimeout(() => timeoutCtl.abort(), o.timeoutMs);
         o.onStart?.();

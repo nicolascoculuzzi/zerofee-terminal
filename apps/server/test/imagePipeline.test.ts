@@ -411,6 +411,23 @@ describe("image jobs", () => {
     expect(t.proxy.stats.sources["images.pump.fun"]).toBe(1);
   });
 
+  test("a fallback source whose host is busy gives up after the patience instead of holding the race open", async () => {
+    const t = setup({
+      env: { IMG_WAIT_MS: "3000", IMG_QUEUE_PATIENCE_MS: "100" },
+      refs: { [MINT]: { image: `https://pump.mypinata.cloud/ipfs/${QM}`, pump: false } },
+      route: () => new Response("", { status: 403 }),
+    });
+    // every slot on the fallback host is taken
+    const held = [await t.proxy.pacer.acquire("gateway.pinata.cloud", 0), await t.proxy.pacer.acquire("gateway.pinata.cloud", 0)];
+    const t0 = performance.now();
+    const r = await t.get(path(MINT, `https://pump.mypinata.cloud/ipfs/${QM}`, 48));
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(r.headers.get("x-zf-image")).toBe("pending"); // 403 here + "busy" there: not a verdict on the image
+    expect(t.proxy.stats.failures.host_busy).toBe(1);
+    expect(t.calls.map((c) => new URL(c.url).host)).toEqual(["pump.mypinata.cloud"]);
+    for (const release of held) release();
+  });
+
   test("a host paused after 429s is skipped while another source remains, and that miss stays transient", async () => {
     const t = setup({
       env: { IMG_WAIT_MS: "500" },

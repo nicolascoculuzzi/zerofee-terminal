@@ -331,6 +331,10 @@ export class MetadataFetcher {
         this.opts.onResult(job.mint, null);
         return;
       }
+      if (f.reason === "host_paused" || f.reason === "host_busy" || f.reason === "busy") {
+        // only our own queues were in the way: no attempt spent
+        job.attempt--;
+      }
       job.notFound = f.notFound ? job.notFound + 1 : 0;
       const permanent = f.permanent || job.notFound >= NOT_FOUND_ATTEMPTS;
       if (!permanent && job.attempt < (this.opts.retryMax ?? 12) && !this.stopped) {
@@ -378,7 +382,7 @@ export class MetadataFetcher {
     try {
       return await staggeredRace(
         ordered,
-        (c, signal, started) => this.fetchOne(c, signal, started, prio),
+        (c, signal, started) => this.fetchOne(c, signal, started, prio, c !== ordered[0]),
         this.opts.staggerMs ?? 300,
         this.opts.pacer ? (this.opts.patienceMs ?? 2_000) : undefined,
       );
@@ -395,7 +399,7 @@ export class MetadataFetcher {
     }
   }
 
-  private async fetchOne(c: FetchCandidate, signal: AbortSignal, started: () => void, prio: Priority): Promise<string> {
+  private async fetchOne(c: FetchCandidate, signal: AbortSignal, started: () => void, prio: Priority, fallback = false): Promise<string> {
     let isImage = false;
     try {
       const res = await boundedFetch(c.url, {
@@ -409,6 +413,7 @@ export class MetadataFetcher {
         pacer: this.opts.pacer,
         // a launch's metadata gates everything else about it: same host priority as on-screen images
         priority: prio === PRIORITY.background ? PRIORITY.background : PRIORITY.visible,
+        pacerMaxWaitMs: fallback ? (this.opts.patienceMs ?? 2_000) : undefined,
         onStart: started,
         check: (r) => {
           const type = (r.headers.get("content-type") ?? "").toLowerCase();
