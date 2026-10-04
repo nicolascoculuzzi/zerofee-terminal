@@ -1,0 +1,36 @@
+zerofee web app (@zerofee/web)
+
+This product includes third-party software. Required attribution notices follow.
+
+--------------------------------------------------------------------------------
+TradingView Lightweight Charts™
+Copyright (c) 2026 TradingView, Inc. https://www.tradingview.com/
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Attribution in the app: every chart keeps the library's `attributionLogo`
+option enabled (a link to https://www.tradingview.com/), and Settings > About
+shows this notice with the same link.
+
+TradingView Advanced Charts is NOT used and must never be added to this
+repository (proprietary, company licence only).
+--------------------------------------------------------------------------------
+
+IBM Plex Sans and IBM Plex Mono
+Copyright 2017-2019 IBM Corp.
+
+Licensed under the SIL Open Font License 1.1 (https://openfontlicense.org),
+shipped unmodified via @fontsource-variable/ibm-plex-sans 5.3.0 and
+@fontsource/ibm-plex-mono 5.3.0. The full licence text is in
+licenses/OFL-IBM-Plex.txt, and Settings > About shows it.
+--------------------------------------------------------------------------------

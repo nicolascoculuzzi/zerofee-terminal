@@ -11,7 +11,7 @@ An Axiom-style Solana memecoin trading terminal with **zero platform fees**. You
 
 ## Status
 
-Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve, PumpSwap, Raydium LaunchLab (the curves behind BONK.fun, StonkFun and TRiX) and Raydium CPMM (where LaunchLab coins graduate) buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. Phase 2, the market data feed, decodes every pump.fun and PumpSwap launch, trade and migration, derives token metrics, and streams them over a WebSocket gateway. The backend also has wallet sign-in, per-user settings, the wallet tracker, server-side price alerts with Web Push / Telegram / Discord delivery, and an admin kill switch. The web UI is next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
+Early build. Phase 1, the trade engine, works in dry-run: pump.fun bonding-curve, PumpSwap, Raydium LaunchLab (the curves behind BONK.fun, StonkFun and TRiX) and Raydium CPMM (where LaunchLab coins graduate) buys and sells, built locally and simulated against mainnet, with fills matching our quotes exactly. Phase 2, the market data feed, decodes every pump.fun and PumpSwap launch, trade and migration, derives token metrics, and streams them over a WebSocket gateway. The backend also has wallet sign-in, per-user settings, the wallet tracker, server-side price alerts with Web Push / Telegram / Discord delivery, and an admin kill switch. The web UI (`apps/web`) runs on an in-browser simulation of that feed; wiring it to the gateway is next. See [SPEC.md](SPEC.md) for the full plan, feature checklist and phases.
 
 ## Quick start (developers)
 
@@ -71,9 +71,20 @@ SERVER_URL=http://127.0.0.1:8787 bun run --cwd apps/server signin-e2e
 - **Wallet tracker and copy trading.** Every decoded trade is matched in memory against all users' tracked wallets (up to 10,000 each) and copy-task leaders. Matches go to the signed-in `tracked` and `tracked:<mint>` topics (live feed rows and chart markers) and to wallet alerts (buy, sell, launch, minimum size, first buy only). Copy tasks (`/api/copy/tasks`: fixed or % sizing, per-buy, daily and lifetime caps, market-cap / liquidity / age filters, drift guard, copy sells, TP/SL, blacklists, pause) produce expiring signals on the `copy` topic; the browser builds and signs each copy trade itself and reports the result, and a per-leader cap limits total copy volume per slot. `bun run --cwd apps/server tracker-live` checks it against a running server with a throwaway key; `tracker-bench` measures the matcher.
 - **Kill switch.** With `ADMIN_TOKEN` set, `POST /api/admin/halt` stops every transaction submission until `POST /api/admin/resume`, and the halt is published to all clients. Every admin call, failed ones included, goes into an append-only audit log.
 
+### Web app
+
+The terminal UI in `apps/web` runs entirely on an in-browser simulation for now (a "Simulated data" badge in the status bar says so):
+
+```bash
+bun run --cwd apps/web dev
+```
+
+`bun run --cwd apps/web build` writes `apps/web/dist`. Set `VITE_BUILD_HASH` to the commit at build time (`VITE_BUILD_HASH=$(git rev-parse --short HEAD) bun run --cwd apps/web build`) and Settings > About shows which build is running; without it About reads "unversioned". CI doesn't set it yet.
+
 ## Docs
 
 - [SPEC.md](SPEC.md): architecture, security rules, stack, feature checklist, phases
+- [Design system](docs/design/DESIGN.md): tokens, formatting, components and screen blueprints the web UI is built and reviewed against
 - [Deploying](docs/ops/DEPLOY.md) and the [operations runbook](docs/ops/RUNBOOK.md): what to buy, the Hetzner host, the Docker stack with TLS, backups, monitoring, kill switch and incident response
 - [Mainnet-fork testing](docs/dev/FORK_TESTING.md): `bun run fork:start` + `bun run e2e` lands every trade path on a local validator running mainnet's programs and state, no real money
 - [Research report](docs/reports/Solana%20trading%20terminal%20teardown.md): how Axiom and its competitors work, pump.fun internals, transaction landing and MEV, data feeds, token analytics, costs

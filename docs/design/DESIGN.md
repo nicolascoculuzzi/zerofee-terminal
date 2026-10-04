@@ -643,7 +643,7 @@ Each component lists anatomy, sizes (compact / comfortable), states, keyboard be
 ```
 
   - Title at 12/600 `text-1`. Count at 11/500 `text-3`, tabular.
-  - "Paused" chip (only while paused): `Pause` 10 px + "Paused" in micro type, `text-2` on `surface-3`.
+  - "Paused" chip (only while paused): `Pause` 12 px (the smallest icon size, 2.11) + "Paused" in micro type, `text-2` on `surface-3`.
   - Search: a 24 px icon button that expands to a 160 px input in place (or press "/" while the column has focus). It filters by name, ticker or CA.
   - Quick-buy amount: a 76 px input (`Zap` 12 px + value). It overrides the global amount for this column.
   - Preset segmented P1 | P2 | P3, 22 px per segment. Hidden below 380 px column width (available in the "..." menu).
@@ -654,7 +654,7 @@ Each component lists anatomy, sizes (compact / comfortable), states, keyboard be
 - **Legend row** (toggle in the menu; forced on for narrow cards): 20 px, micro type in `text-3`: "T Top 10 · D Dev · S Snipers · I Insiders · B Bundlers".
 - **Column definitions** (title tooltip):
   - New Pairs: "Tokens on a bonding curve, newest first."
-  - Final Stretch: "Bonding progress 80% or more, highest progress first." (Default threshold; confirm with the data pipeline owner.)
+  - Final Stretch: "Bonding progress 60% or more, highest progress first." The threshold is configuration, not copy: the server owns it (default 60%, with a 55% exit so tokens near the line don't flap), and the UI renders the configured value (`FINAL_STRETCH_PROGRESS` in `apps/web/src/config.ts` until the gateway sends it).
   - Migrated: "Graduated to an AMM pool, newest first."
 - **States:**
   - Empty: "No tokens match these filters", with "Edit filters" (secondary) and "Reset" (ghost).
@@ -775,7 +775,7 @@ Radius 4 px for all except the pill.
 | `icon` | Square ghost: 20 / 24 / 28 px with 12 / 14 / 14 px icons (16 px icon in the 28 px top-bar version) | | | | |
 
 **Quick-buy pill**
-- 24 px tall (32 px visual and a 44 px hit area on mobile), pill radius, 6 px padding, `surface-3` fill, 1 px `hairline-strong`. `Zap` 12 px `text-3` plus the amount at 12/600 `text-1`.
+- 24 px tall at every breakpoint, pill radius, 6 px padding, `surface-3` fill, 1 px `hairline-strong`. `Zap` 12 px `text-3` plus the amount at 12/600 `text-1`. On phones the visual stays 24 px and a transparent pseudo-element extends the hit area to 44 px (5.8), so rows keep their rhythm.
 - Hover: `buy-tint` fill, `buy-edge` border, `buy` text and icon. Press: `buy` fill, `ink` text.
 - After a click: 300 ms pressed state, then idle. The toast carries progress.
 - Disabled for the card's first 250 ms on screen (mis-click guard).
@@ -1762,7 +1762,7 @@ Target WCAG 2.2 AA, with these specifics:
 |---|---|---|
 | Pulse frame rate | 60 fps (no frame over 16.7 ms) with 3 virtualised columns receiving updates at 10 Hz each, 40 visible cards, and scrolling | Chrome Performance panel, 30 s recording; scripting at most 6 ms per frame |
 | Update coalescing | WebSocket deltas buffered and applied once per `requestAnimationFrame`. Lists render at the user's rate (4–10 Hz, default 6 Hz). The focused token's tape flushes every 50–100 ms (SPEC). | Code review plus a performance mark per flush |
-| DOM size | At most 45 nodes per Pulse card, at most 6,000 nodes on the Pulse page, at most 120 mounted card rows across columns | `document.querySelectorAll('*').length` in a busy session |
+| DOM size | At most 45 nodes per Pulse card, at most 6,000 nodes on the Pulse page, at most 120 mounted card rows across columns. Card icons are CSS masks, not inline SVGs (below). | `document.querySelectorAll('*').length` in a busy session |
 | Re-render scope | A token update re-renders only the cards whose displayed strings changed (memoised rows keyed by mint, selector per field) | React Profiler: an MC tick renders one card |
 | Clock | One shared 1 Hz clock for ages. Zero per-row timers. | `grep` for `setInterval` in components |
 | Long tasks | No task over 50 ms while streaming. Filter recomputation runs in under 4 ms per column per flush, or moves to a worker. | Performance panel, Long Tasks |
@@ -1775,6 +1775,8 @@ Target WCAG 2.2 AA, with these specifics:
 | CSS | Up to 25 KB gzip | Build report |
 | Icons | Named lucide imports only; no icon font, no `import *` | `grep` for `from "lucide-react"` patterns |
 | Images | Token images proxied, at most 2× the display size, lazy-loaded, decoded async; monograms render with no network | Network panel |
+
+**Card icons as CSS masks.** An inline lucide SVG costs 2 to 5 nodes, and a wide card shows up to nine icons (socials, counters, copy, the pill's `Zap` or `Lock`, the menu), which alone would spend most of the 45-node budget. So the Pulse page renders each lucide icon it needs once, hidden, serialises it with a 3-unit stroke (1.5 px at 12 px on lucide's 24-unit grid), and publishes it as a custom property on the page root (`--zfp-<name>: url("data:image/svg+xml,…")`). A card icon is the host element's `::before`: 12 × 12 px, `background: currentColor`, `mask: var(--zfp-<name>) center/contain no-repeat`. It is still the lucide glyph at 12 px with a 1.5 px stroke, follows the text colour for hover and states, and costs zero nodes. A missing variable falls back to an empty mask, never a solid square. Use the technique only where a node budget applies (Pulse cards and phone rows); everywhere else icons stay inline lucide components. The CSP already allows `data:` images. Implementation: `apps/web/src/features/pulse/icons.tsx`.
 
 Lightweight Charts runs with `autoSize`. Candle updates use `series.update()`, never `setData()` per tick. Marker sets update at most 4 times per second.
 
