@@ -1045,6 +1045,11 @@ describe("armed orders on the mainnet fork", () => {
         cancels.set(c.signature, c.size);
       }
     }
+    // Everything the trading wallet signed this run went through SignerService and its firewall; nothing was refused.
+    const audit = tw.audit.list();
+    expect(audit.filter((e) => e.status === "refused")).toEqual([]);
+    expect(audit.length).toBeGreaterThanOrEqual([...rows.values()].reduce((s, r) => s + r.n, 0) + cancels.size);
+    console.log(`  signer: ${audit.length} transactions signed through SignerService (shipped policy), 0 refused`);
     const lines = [...rows].map(
       ([k, r]) => `    ${k.padEnd(26)} ${String(r.n).padStart(3)} variants, max ${r.max} B with the table (${r.maxWithout} B without)`,
     );
