@@ -16,8 +16,13 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Web UI on simulated data | ✅ | Every screen rebuilt to the design system and merged; web build in CI |
 | Design system (Mobbin-grounded, "no AI slop" checklist) | ✅ | [DESIGN.md](design/DESIGN.md): 161 Mobbin references, computed AA contrast, slop checklist |
 | Local mainnet-fork test harness (real programs, real landed txs, no real money) | ✅ | 10/10 e2e: curve, mayhem and PumpSwap buys/sells/exits land, exact to the lamport ([how](dev/FORK_TESTING.md)) |
-| Wire UI ↔ feed ↔ wallet ↔ engine | 🔨 | Live data → wallet/SIWS → dry-run trading → armed orders → trackers/copy |
-| UI polish rounds against the design system | ⏳ | |
+| Wire UI ↔ feed ↔ wallet ↔ engine | ✅ | Live pump.fun/PumpSwap/LaunchLab/CPMM data → SIWS → browser-built trades (Raydium included) → armed orders → trackers/copy, all DRY_RUN |
+| UI polish rounds against the design system | ✅ | 3 rounds: real wallet logos (any Wallet Standard wallet + Phantom/Solflare/Backpack/Coinbase/OKX/Trust), onboarding card, Axiom-style Pulse stat slots, token page, modals, phone pass |
+| Coin images | ✅ | Per-host pacing, retries, pump CDN, worker pool; 100% of images served after a cold restart (was 65%), launch → image p50 0.75 s |
+| Charts | ✅ | Adaptive axis, sane zoom, volume band, migration line, history paging; mini and PnL charts fixed |
+| Speed | ✅ | SQLite off the event loop (lag p99 34 → 4 ms), complete first Pulse snapshot, first screen 243 → 169 KB gzip, 60 fps; public RPC stream backlog is the remaining limit |
+| Strict CSP with no inline styles | ✅ | Chart attribution style allowed by hash only; build guard + test |
+| Every trade on every coin (capture-rate fixes + full history backfill) | 🔨 | Paginated trades/candles, history state for charts |
 | First real 0.001 SOL trade | 🙋 | Needs a throwaway dev wallet key in your local `.env` |
 
 ## Part 2: match Axiom, then beat it
