@@ -10,11 +10,15 @@
  *   chain                                       blockhash, slot, priority fees, Jito tip floor, SOL/USD, halt
  *   wallet:<address>                            balances and fills of one wallet (balances not published yet)
  *   orders                                      the session user's armed orders
+ *   tracked                                     the session user's tracked-wallet feed (trackers.ts)
+ *   tracked:<mint>                              the user's tracked-wallet trades on one token (chart markers)
+ *   copy                                        the session user's copy-trade signals, tasks and positions
  *
- * Market topics are public. `wallet:<address>` and `orders` are user topics: the WebSocket upgrade
- * must carry the session cookie (and an allowed Origin), `wallet:` only accepts the signed-in main
- * wallet or one of the user's registered trading wallets (`forbidden` otherwise), and `orders` is
- * scoped to the session's user. Without a session they answer `unauthorized`.
+ * Market topics are public. `wallet:<address>`, `orders`, `tracked`, `tracked:<mint>` and `copy` are
+ * user topics: the WebSocket upgrade must carry the session cookie (and an allowed Origin), `wallet:`
+ * only accepts the signed-in main wallet or one of the user's registered trading wallets (`forbidden`
+ * otherwise), and the others are scoped to the session's user. Without a session they answer
+ * `unauthorized`.
  *
  * The few runtime helpers below are pure and dependency-free so the server and the web app parse topics
  * identically.
@@ -44,8 +48,20 @@ export type TradeContextTopic = `tradectx:${string}`;
 export type ChainTopic = "chain";
 export type WalletTopic = `wallet:${string}`;
 export type OrdersTopic = "orders";
+export type TrackedTopic = "tracked" | `tracked:${string}`;
+export type CopyTopic = "copy";
 
-export type Topic = PulseTopic | TokenTopic | TradesTopic | CandlesTopic | TradeContextTopic | ChainTopic | WalletTopic | OrdersTopic;
+export type Topic =
+  | PulseTopic
+  | TokenTopic
+  | TradesTopic
+  | CandlesTopic
+  | TradeContextTopic
+  | ChainTopic
+  | WalletTopic
+  | OrdersTopic
+  | TrackedTopic
+  | CopyTopic;
 
 export type ParsedTopic =
   | { kind: "pulse"; column: PulseColumn }
@@ -55,7 +71,10 @@ export type ParsedTopic =
   | { kind: "tradectx"; mint: string }
   | { kind: "chain" }
   | { kind: "wallet"; address: string }
-  | { kind: "orders" };
+  | { kind: "orders" }
+  /** mint null = the whole feed; a mint = that token's markers. */
+  | { kind: "tracked"; mint: string | null }
+  | { kind: "copy" };
 
 /** Base58 address check (32-44 chars of the bitcoin alphabet). Cheap shape check, not a curve check. */
 const ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -72,6 +91,8 @@ export function isTimeframe(s: string): s is Timeframe {
 export function parseTopic(topic: string): ParsedTopic | null {
   if (topic === "chain") return { kind: "chain" };
   if (topic === "orders") return { kind: "orders" };
+  if (topic === "tracked") return { kind: "tracked", mint: null };
+  if (topic === "copy") return { kind: "copy" };
   const i = topic.indexOf(":");
   if (i <= 0) return null;
   const head = topic.slice(0, i);
@@ -85,6 +106,8 @@ export function parseTopic(topic: string): ParsedTopic | null {
       return isAddressLike(rest) ? { kind: head, mint: rest } : null;
     case "wallet":
       return isAddressLike(rest) ? { kind: "wallet", address: rest } : null;
+    case "tracked":
+      return isAddressLike(rest) ? { kind: "tracked", mint: rest } : null;
     case "candles": {
       const j = rest.lastIndexOf(":");
       if (j <= 0) return null;
@@ -107,4 +130,6 @@ export const topics = {
   chain: "chain" as ChainTopic,
   wallet: (address: string): WalletTopic => `wallet:${address}`,
   orders: "orders" as OrdersTopic,
+  tracked: (mint?: string): TrackedTopic => (mint ? `tracked:${mint}` : "tracked"),
+  copy: "copy" as CopyTopic,
 } as const;
