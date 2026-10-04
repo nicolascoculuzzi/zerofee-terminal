@@ -17,11 +17,23 @@ import {
   TOKEN_PROGRAM_ID,
 } from "../src";
 import { expectCurveFill, expectFee, expectLatencyThroughLanded, expectTipsLanded, venueInstruction } from "./expect";
-import { connectFork, type Fork, newWallet, runTrade, type TradeRun, targetOf, type Wallet } from "./harness";
+import {
+  connectFork,
+  type Fork,
+  missingTarget,
+  newWallet,
+  runTrade,
+  type TradeRun,
+  targetOf,
+  type Wallet,
+  withSkipReason,
+} from "./harness";
 
 const disc = (run: TradeRun) => venueInstruction(run, PUMP_PROGRAM_ID).data?.subarray(0, 8) ?? new Uint8Array();
 
-describe("pump curve - Token-2022 (create_v2) coin", () => {
+const noCurve2022 = missingTarget("curve2022");
+
+describe.skipIf(noCurve2022 !== null)(withSkipReason("pump curve - Token-2022 (create_v2) coin", noCurve2022), () => {
   let fork: Fork;
   let wallet: Wallet;
   let target: ForkTarget;
@@ -30,9 +42,7 @@ describe("pump curve - Token-2022 (create_v2) coin", () => {
 
   beforeAll(async () => {
     fork = await connectFork();
-    const t = fork.manifest.targets.find((x) => x.kind === "curve2022");
-    if (!t) throw new Error("the fork has no curve2022 target; pass a Token-2022 curve mint to fork:start");
-    target = t;
+    target = targetOf("curve2022") as ForkTarget;
     wallet = await newWallet(fork);
     ata = await findAssociatedTokenAddress(wallet.address, target.mint, TOKEN_2022_PROGRAM_ID);
   });
@@ -94,7 +104,9 @@ describe("pump curve - Token-2022 (create_v2) coin", () => {
 });
 
 // Legacy `create` (SPL Token) coins are rare on the curve since create_v2; covered when the fork has one.
-describe.skipIf(!targetOf("curveSpl"))("pump curve - legacy SPL Token coin", () => {
+const noCurveSpl = missingTarget("curveSpl");
+
+describe.skipIf(noCurveSpl !== null)(withSkipReason("pump curve - legacy SPL Token coin", noCurveSpl), () => {
   let fork: Fork;
   let wallet: Wallet;
   let target: ForkTarget;

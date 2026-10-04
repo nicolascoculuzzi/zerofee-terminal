@@ -104,6 +104,35 @@ export function targetOf(kind: TargetKind): ForkTarget | undefined {
   return manifestTargets().find((t) => t.kind === kind);
 }
 
+const HINTS: Record<TargetKind, string> = {
+  curve2022: "pass a Token-2022 curve mint to fork:start",
+  curveSpl: "pass a legacy SPL Token curve mint to fork:start",
+  mayhem: "pass a mayhem-mode curve mint to fork:start",
+  migration: "pass two Token-2022 curve mints to fork:start",
+  pumpswap: "pass a migrated (PumpSwap) mint to fork:start",
+};
+const announced = new Set<string>();
+
+/**
+ * Why a suite cannot run on this fork (it has no `kind` target), or null when it can. Used as
+ * `describe.skipIf(reason !== null)(withSkipReason(name, reason), ...)`, so a missing target is one explicit,
+ * explained skip instead of a cascade of failures. The reason is also printed once.
+ */
+export function missingTarget(kind: TargetKind): string | null {
+  if (targetOf(kind)) return null;
+  const reason = `the fork has no ${kind} target (${HINTS[kind]})`;
+  if (!announced.has(reason)) {
+    announced.add(reason);
+    console.warn(`skipping: ${reason}`);
+  }
+  return reason;
+}
+
+/** Test / describe name carrying the skip reason, so it shows in the runner's output. */
+export function withSkipReason(name: string, reason: string | null | undefined): string {
+  return reason ? `${name} [skipped: ${reason}]` : name;
+}
+
 export async function connectFork(): Promise<Fork> {
   const paths = forkPaths();
   const manifest = readManifest(paths);
@@ -171,7 +200,8 @@ export interface LandedTx {
 
 export async function fetchLandedTx(rpc: ForkRpc, signature: Signature): Promise<LandedTx> {
   for (let i = 0; i < 60; i++) {
-    const tx = await rpc.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0, encoding: "json" }).send();
+    // Version 1: v1 transactions are live on mainnet (and on forks with its feature set); asking for 0 fails on them.
+    const tx = await rpc.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 1, encoding: "json" }).send();
     if (tx?.meta) {
       const meta = tx.meta;
       const loaded = {
