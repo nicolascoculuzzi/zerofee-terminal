@@ -114,7 +114,12 @@ export const loopbackOnlyFetch = ((input: string | URL | Request, init?: Request
   return fetch(input, init);
 }) as typeof fetch;
 
-export type TargetKind = "curve2022" | "curveSpl" | "mayhem" | "pumpswap";
+/**
+ * curve2022 / curveSpl / mayhem / pumpswap: coins the trade suites buy and sell.
+ * migration: a second Token-2022 curve coin that the armed suite drives to completion and migrates to
+ * PumpSwap (irreversible on the fork), so it never shares a coin with the other suites.
+ */
+export type TargetKind = "curve2022" | "curveSpl" | "mayhem" | "migration" | "pumpswap";
 
 export interface ForkTarget {
   kind: TargetKind;

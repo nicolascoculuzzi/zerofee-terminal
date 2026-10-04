@@ -231,6 +231,9 @@ async function main() {
   for (const kind of ["curve2022", "pumpswap"] as const) {
     if (!targets.some((t) => t.kind === kind)) log(`warn: no ${kind} target; the matching e2e cases will fail`);
   }
+  if (!targets.some((t) => t.kind === "migration")) {
+    log("note: no migration target (a second Token-2022 curve coin); the armed migration-snipe case will be skipped");
+  }
 
   log("resolving accounts...");
   const clone = await resolveCloneList(mainnet, targets);
