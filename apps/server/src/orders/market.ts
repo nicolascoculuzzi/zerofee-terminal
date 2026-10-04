@@ -176,6 +176,8 @@ export class MarketStateView implements OrderMarket {
     if (rec.migrated && rec.pool) {
       const info = this.d.pools.get(rec.pool);
       return {
+        // The curve completed: an order with only curve variants is stranded ("migrated").
+        curve: { creator: rec.creator as Address, complete: true, ...flags },
         pool: {
           coinCreator: rec.creator as Address,
           ...(info?.isMayhemMode !== null && info?.isMayhemMode !== undefined ? { isMayhemMode: info.isMayhemMode } : {}),

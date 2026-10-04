@@ -262,7 +262,10 @@ describe("live quotes from the server's market state", () => {
     const q = view.quote(mint);
     expect(q?.venue).toBe("pumpswap");
     expect(liveQuoteOut("sell", 1_000_000_000n, q?.market as LiveMarketState)).toBeGreaterThan(0n);
-    expect(view.coinFacts(mint)).toEqual({ pool: { coinCreator: addr("pool-dev") as Address, isMayhemMode: false } });
+    expect(view.coinFacts(mint)).toEqual({
+      curve: { creator: addr("pool-dev") as Address, complete: true, isMayhemMode: false, isCashbackCoin: false },
+      pool: { coinCreator: addr("pool-dev") as Address, isMayhemMode: false },
+    });
     const r = view.recipients();
     const gc = decodeAmmGlobalConfig(coreFixture(PUMP_AMM_GLOBAL_CONFIG).data);
     expect(r.feeRecipients?.pump).toContain(global.feeRecipient);

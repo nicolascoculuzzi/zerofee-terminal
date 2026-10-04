@@ -9,7 +9,7 @@ import { isUniqueViolation, LimitExceededError, UserStore } from "../src/db/pg";
 import { setLogLevel } from "../src/log";
 import { ArmedOrdersRepo, NonceSlotTakenError, StaleOrderVersionError } from "../src/orders/repo";
 import { addr } from "./helpers";
-import { FAKE_VARIANT_WIRE, nonceValueOf, synthOrder, variantOf } from "./orderFixtures";
+import { nonceValueOf, synthOrder, variantOf } from "./orderFixtures";
 import { DRIVERS, type TestDb } from "./pgHelpers";
 
 setLogLevel("error");
@@ -60,8 +60,11 @@ describe.each(DRIVERS)("armed orders repository ($name)", ({ open }) => {
     const slView = views.find((v) => v.id === sl.id);
     expect(slView).toMatchObject({ kind: "stop-loss", status: "armed", amount: "123456789012345678", open: true, ocoGroup: "g1" });
     expect(slView?.attempts.map((a) => a.variants)).toEqual([6, 6]);
-    expect(JSON.stringify(views)).not.toContain(FAKE_VARIANT_WIRE); // no wire bytes in views
-    expect(JSON.stringify(views)).not.toContain(sl.attempts[0]?.nonce.cancel.wireBase64 as string);
+    // No signed bytes in views.
+    for (const a of [...tp.attempts, ...sl.attempts]) {
+      expect(JSON.stringify(views)).not.toContain(a.nonce.cancel.wireBase64);
+      for (const v of a.variants) expect(JSON.stringify(views)).not.toContain(v.tx.wireBase64);
+    }
 
     const slots = await repo.slots(uid);
     expect(slots.map((s) => s.status)).toEqual(["in-use", "in-use"]);

@@ -149,6 +149,25 @@ export function curveMarket(
   };
 }
 
+/** A canonical PumpSwap pool market on global fallback rates. */
+export function poolMarket(o: { base?: bigint; quote?: bigint; coinCreator?: string } = {}): LiveMarketState {
+  return {
+    venue: "pumpswap",
+    pool: { quoteMint: WSOL_MINT, isMayhemMode: false, coinCreator: (o.coinCreator ?? CREATOR) as Address, creatorFeeBps: 0n },
+    reserves: { baseReserve: o.base ?? 200_000_000_000_000n, quoteVaultReserve: o.quote ?? 85_000_000_000n, virtualQuoteReserves: 0n },
+    isCanonical: true,
+    baseMintSupply: 1_000_000_000_000_000n,
+    feeConfig: null,
+    globalConfig: {
+      lpFeeBasisPoints: 20n,
+      protocolFeeBasisPoints: 5n,
+      coinCreatorFeeBasisPoints: 5n,
+      creatorFeeConfigurable: false,
+      buybackBasisPoints: 5_000n,
+    },
+  };
+}
+
 /** Quote out of `amount` on `market` (the number the engine compares triggers against). */
 export function quoteOf(side: "buy" | "sell", amount: bigint, market: LiveMarketState): bigint {
   const q = liveQuoteOut(side, amount, market);

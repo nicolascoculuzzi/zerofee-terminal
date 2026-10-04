@@ -33,9 +33,8 @@ export function tagBytes(tag: string, n: number): Uint8Array {
 export const sigOf = (tag: string): string => b58.decode(tagBytes(`sig:${tag}`, 64));
 export const nonceValueOf = (tag: string): string => b58.decode(tagBytes(`nonce-value:${tag}`, 32));
 
-/** Fake signed bytes of synthetic orders (never decoded by the engine tests). */
-export const FAKE_VARIANT_WIRE = "AQIDBAUGBwgJ";
-export const FAKE_CANCEL_WIRE = "CgsMDQ4PEBES";
+/** Fake signed bytes (valid base64, unique per transaction, never decoded by the engine tests). */
+export const wireOf = (tag: string): string => Buffer.from(`wire:${tag}`).toString("base64");
 
 export const CREATOR = addr("creator") as Address;
 export const FEE = addr("fee-recipient") as Address;
@@ -88,7 +87,11 @@ export function synthOrder(a: SynthArgs = {}): ArmedOrder {
             tipLevel,
             tipLamports: 10_000n * BigInt(tipLevel + 1),
             priorityFeeLamports: 15_000n,
-            tx: { wireBase64: FAKE_VARIANT_WIRE, signature: sigOf(`${id}/${index}/${venue}/${mi}/${tipLevel}`), size: 900 },
+            tx: {
+              wireBase64: wireOf(`variant:${id}/${index}/${venue}/${mi}/${tipLevel}`),
+              signature: sigOf(`${id}/${index}/${venue}/${mi}/${tipLevel}`),
+              size: 900,
+            },
           });
         }
       }
@@ -100,7 +103,7 @@ export function synthOrder(a: SynthArgs = {}): ArmedOrder {
         authority: wallet,
         value: nonceValueOf(valueTag),
         // OCO orders carry the same cancel bytes for a shared nonce generation.
-        cancel: { wireBase64: FAKE_CANCEL_WIRE, signature: sigOf(`cancel:${nonceTag}:${valueTag}`), size: 200 },
+        cancel: { wireBase64: wireOf(`cancel:${nonceTag}:${valueTag}`), signature: sigOf(`cancel:${nonceTag}:${valueTag}`), size: 200 },
       },
       variants,
       status: "live",
