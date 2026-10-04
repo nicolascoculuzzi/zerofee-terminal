@@ -103,13 +103,29 @@ const READ_ONLY_METHODS = new Set([
 const MIN_SPACING_MS = 250;
 const MAX_ATTEMPTS = 8;
 
+/**
+ * HTTP statuses the public endpoint uses while throttling. 413 is what it answers (to tiny requests) once an IP
+ * used up its data allowance, e.g. right after the validator cloned the program binaries.
+ */
+const THROTTLE_STATUSES = [413, 429, 500, 502, 503, 504];
+
+/** Backoff for a throttling status: the data-allowance window (413) is ~30 s, the rest backs off exponentially. */
+function throttleDelayMs(status: number, retryAfter: string | null | undefined, attempt: number): number {
+  const after = Number(retryAfter);
+  if (Number.isFinite(after) && after > 0) return Math.min(after * 1_000, 35_000);
+  return status === 413 ? Math.min(5_000 * attempt, 35_000) : Math.min(1_000 * 2 ** (attempt - 1), 10_000);
+}
+
+/** JSON-RPC level throttling ("Too many requests", "... data allowance ..."). */
+const isThrottleError = (err: { code?: number; message?: string }) =>
+  err.code === 429 || /too many requests|rate limit|data allowance/i.test(err.message ?? "");
+
 /** ms to wait before retrying, or null if the error is not transient. Honors Retry-After. */
 function retryDelayMs(e: unknown, attempt: number): number | null {
   const backoff = Math.min(1_000 * 2 ** (attempt - 1), 10_000);
   if (isSolanaError(e, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR)) {
-    if (![429, 500, 502, 503, 504].includes(e.context.statusCode)) return null;
-    const after = Number(e.context.headers?.get?.("retry-after"));
-    return Number.isFinite(after) && after > 0 ? Math.min(after * 1_000, 15_000) : backoff;
+    if (!THROTTLE_STATUSES.includes(e.context.statusCode)) return null;
+    return throttleDelayMs(e.context.statusCode, e.context.headers?.get?.("retry-after"), attempt);
   }
   // fetch-level failures: the endpoint resets connections while rate limiting
   if (e instanceof TypeError || (e instanceof Error && /timed? ?out|ECONNRESET|socket|connection/i.test(e.message))) return backoff;
@@ -144,8 +160,8 @@ export function createReadOnlyRpc(url = cloneSourceUrl()) {
       try {
         const res = await base<T>(config);
         const err = (res as { error?: { code?: number; message?: string } }).error;
-        if (err && (err.code === 429 || /too many requests|rate limit/i.test(err.message ?? "")) && attempt < MAX_ATTEMPTS) {
-          await sleep(Math.min(1_000 * 2 ** (attempt - 1), 10_000));
+        if (err && isThrottleError(err) && attempt < MAX_ATTEMPTS) {
+          await sleep(/data allowance/i.test(err.message ?? "") ? 35_000 : Math.min(1_000 * 2 ** (attempt - 1), 10_000));
           continue;
         }
         return res;
@@ -177,7 +193,7 @@ interface JsonRpcError {
 /** Rate limits and node hiccups; not "not found", decode or version errors. */
 export function isTransientRpcError(err: JsonRpcError): boolean {
   return (
-    err.code === 429 ||
+    isThrottleError(err) ||
     err.code === -32005 || // node is behind
     err.code === -32004 || // block not available for slot
     err.code === -32014 || // block status not yet available
@@ -207,10 +223,9 @@ export function createReadOnlyBatch(url = cloneSourceUrl(), fetchFn: typeof fetc
         await sleep(backoff);
         continue;
       }
-      if ([429, 500, 502, 503, 504].includes(res.status)) {
+      if (THROTTLE_STATUSES.includes(res.status)) {
         if (attempt >= MAX_ATTEMPTS) throw new Error(`${redactUrl(url)} answered HTTP ${res.status} ${MAX_ATTEMPTS} times (rate limited)`);
-        const after = Number(res.headers.get("retry-after"));
-        await sleep(Number.isFinite(after) && after > 0 ? Math.min(after * 1_000, 15_000) : backoff);
+        await sleep(throttleDelayMs(res.status, res.headers.get("retry-after"), attempt));
         continue;
       }
       if (!res.ok) throw new Error(`${redactUrl(url)} answered HTTP ${res.status}`);

@@ -22,7 +22,7 @@ bun run e2e
 bun run fork:stop
 ```
 
-`fork:start` takes about 30–70 s. Most of that is finding live coins on the rate-limited public RPC (which also returns the odd transient error, such as an HTTP 413; just run it again). It prints the env the suite uses and leaves the validator running in the background until `fork:stop`.
+`fork:start` takes about 30–70 s. Most of that is finding live coins on the rate-limited public RPC. Its throttling answers (HTTP 429, 5xx, and the 413 it sends once an IP used up its data allowance, typically right after the validator cloned the program binaries) are retried with backoff. It prints the env the suite uses and leaves the validator running in the background until `fork:stop`.
 
 | Command | What it does |
 |---|---|
