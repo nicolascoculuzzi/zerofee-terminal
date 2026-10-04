@@ -16,12 +16,15 @@ import {
   DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
+  RAYDIUM_CPMM_PROGRAM,
+  RAYDIUM_LAUNCHLAB_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
   USDC_MINT,
 } from "./firewall/programs";
 import { createPumpBondingCurveRule, createPumpSwapRule } from "./firewall/rules/pump";
+import { createRaydiumCpmmRule, createRaydiumLaunchLabRule } from "./firewall/rules/raydium";
 import type { FirewallCaps } from "./firewall/types";
 import type { SignerPolicy } from "./service";
 
@@ -58,7 +61,8 @@ export const SIGNER_TIP_ACCOUNTS: readonly Address[] = Object.freeze([...JITO_TI
 
 /**
  * Programs a signed transaction may invoke: the built-ins (System also covers durable nonces) and the
- * venues that have a firewall rule. Raydium LaunchLab / CPMM and Jupiter join only with their rules.
+ * venues that have a firewall rule (pump.fun, PumpSwap, Raydium LaunchLab, Raydium CPMM). Jupiter
+ * joins only with its rule.
  */
 export const SIGNER_ALLOWED_PROGRAMS: readonly Address[] = Object.freeze([
   SYSTEM_PROGRAM,
@@ -68,6 +72,8 @@ export const SIGNER_ALLOWED_PROGRAMS: readonly Address[] = Object.freeze([
   ASSOCIATED_TOKEN_PROGRAM,
   PUMP_PROGRAM,
   PUMP_AMM_PROGRAM,
+  RAYDIUM_LAUNCHLAB_PROGRAM,
+  RAYDIUM_CPMM_PROGRAM,
 ]);
 
 /**
@@ -77,7 +83,10 @@ export const SIGNER_ALLOWED_PROGRAMS: readonly Address[] = Object.freeze([
 export const DEFAULT_FIREWALL_CAPS: FirewallCaps = Object.freeze({
   /** 1 SOL per trade (SPEC "Limits": per-user max SOL per trade). */
   maxBuyLamports: 1_000_000_000n,
-  /** 100 USDC per trade on USDC-quoted coins. */
+  /**
+   * 100 USDC per trade on USDC-quoted coins. Any other quote mint (Raydium pairs quoted in xStocks or
+   * USD1, ...) is refused until the user configures a cap for it.
+   */
   maxBuyQuote: Object.freeze({ [USDC_MINT]: 100_000_000n }),
   /** 0.01 SOL of tips per transaction: Sender Max (Fast preset) needs at least 0.001 SOL; room for Jito p95 spikes. */
   maxTipLamports: 10_000_000n,
@@ -94,7 +103,10 @@ export interface SignerPolicyOptions {
   readonly caps?: Partial<FirewallCaps>;
 }
 
-/** The shipped policy: embedded allowlist, tip accounts and pump.fun / PumpSwap rules (canonical pools only). */
+/**
+ * The shipped policy: embedded allowlist, tip accounts and venue rules: pump.fun, PumpSwap (canonical
+ * pools only), Raydium LaunchLab (share_fee_rate 0) and Raydium CPMM.
+ */
 export function createSignerPolicy(options: SignerPolicyOptions = {}): SignerPolicy {
   return {
     allowedPrograms: SIGNER_ALLOWED_PROGRAMS,
@@ -103,6 +115,8 @@ export function createSignerPolicy(options: SignerPolicyOptions = {}): SignerPol
     venueRules: Object.freeze([
       createPumpBondingCurveRule({ programId: PUMP_PROGRAM }),
       createPumpSwapRule({ programId: PUMP_AMM_PROGRAM, pumpProgramId: PUMP_PROGRAM }),
+      createRaydiumLaunchLabRule({ programId: RAYDIUM_LAUNCHLAB_PROGRAM }),
+      createRaydiumCpmmRule({ programId: RAYDIUM_CPMM_PROGRAM }),
     ]),
   };
 }
