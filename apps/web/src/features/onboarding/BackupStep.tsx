@@ -1,12 +1,15 @@
 import { ArrowRight, Check } from "lucide-react";
-import { type KeyboardEvent, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { cn } from "../../lib/cn";
 import { getServices } from "../../services";
 import type { TradingWallet } from "../../services/walletService";
-import { pickPositions, simulatedSecretKey } from "./backupKey";
+import { useUi } from "../../state/ui";
+import { useWallet } from "../../state/wallet";
+import { pickPositions } from "./backupKey";
 import { KeyReveal } from "./KeyReveal";
 import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { useExportedKey } from "./useExportedKey";
 
 /** "7, 19 and 41". */
 function listPositions(positions: number[]): string {
@@ -22,23 +25,46 @@ function listPositions(positions: number[]): string {
  * https://mobbin.com/screens/4a81b310-337b-404b-8e19-efc674b8ca31
  * https://mobbin.com/screens/fa3d1040-f206-4de4-b236-435f1760fd1e
  */
-export function BackupStep({
-  frame,
-  wallet,
-  backedUp,
-  onBusyChange,
-  onConfirmed,
-  onNext,
-}: {
+interface BackupStepProps {
   frame: StepFrame;
   wallet: TradingWallet;
   backedUp: boolean;
   onBusyChange: (busy: boolean) => void;
   onConfirmed: () => void;
   onNext: () => void;
-}) {
+}
+
+export function BackupStep(props: BackupStepProps) {
+  const { secret, error, retry } = useExportedKey(props.wallet.id);
+  const locked = useWallet((s) => s.service.locked);
+  const requestUnlock = useUi((s) => s.requestUnlock);
+  if (secret) return <BackupBody {...props} secret={secret} />;
+  return (
+    <>
+      <StepHeader frame={props.frame} />
+      {error ? (
+        <>
+          <InlineError>{error}</InlineError>
+          <Button
+            size="md"
+            variant="secondary"
+            className="mt-3"
+            onClick={() => (locked ? requestUnlock("Unlock to back up your trading key.", retry) : retry())}
+          >
+            {locked ? "Unlock to show the key" : "Try again"}
+          </Button>
+        </>
+      ) : (
+        <p className="flex items-center gap-2 text-data text-fg-3">
+          <Spinner /> Asking the signer for your key
+        </p>
+      )}
+    </>
+  );
+}
+
+function BackupBody({ frame, wallet, backedUp, onBusyChange, onConfirmed, onNext, secret }: BackupStepProps & { secret: string }) {
   const { busy, error, run } = useAction(onBusyChange);
-  const secret = useMemo(() => simulatedSecretKey(wallet.id, wallet.address), [wallet.id, wallet.address]);
   const [positions] = useState(() => pickPositions(secret.length));
   const [chars, setChars] = useState<string[]>(() => positions.map(() => ""));
   const inputs = useRef<(HTMLInputElement | null)[]>([]);

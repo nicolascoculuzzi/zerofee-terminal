@@ -75,6 +75,18 @@ export interface WalletService {
     password?: string;
   }): Promise<{ wallet: TradingWallet; backupPhrase: string[] }>;
   confirmBackup(walletId: string): Promise<void>;
+  /**
+   * The trading key in base58 (the format Phantom imports), for backup and export. Needs an
+   * unlocked keystore. The live signer shows it in its own isolated window; the mock returns a
+   * simulated key that controls nothing.
+   */
+  exportKey(walletId: string): Promise<string>;
+  /** Hides a trading wallet from the app. Refused while it holds SOL or live armed orders. */
+  archiveTradingWallet(walletId: string): Promise<void>;
+  /** Re-encrypts the keystore under a passkey or a new passphrase (inside the signer). Needs it unlocked. */
+  changeUnlockMethod(method: UnlockMethod, password?: string): Promise<void>;
+  /** Closes durable-nonce accounts no armed order holds and returns their rent to each trading wallet. */
+  reclaimRent(): Promise<{ closed: number; sol: number }>;
 
   unlock(password: string): Promise<void>;
   unlockWithPasskey(): Promise<void>;

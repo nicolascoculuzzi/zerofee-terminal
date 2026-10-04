@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { base58Encode, keyGroups, pickPositions, simulatedSecretKey } from "./backupKey";
+import { base58Encode, simulatedSecretKey } from "../../services/mock/simulatedKey";
+import { keyGroups, pickPositions } from "./backupKey";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 

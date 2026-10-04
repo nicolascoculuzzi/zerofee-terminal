@@ -7,35 +7,40 @@ import { HoldButton } from "../../components/ui/HoldButton";
 import { Modal } from "../../components/ui/Modal";
 import { Num } from "../../components/ui/Num";
 import { WalletAvatar } from "../../components/ui/TokenAvatar";
-import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { fmtCount, fmtSol, shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { TradingWallet } from "../../services/walletService";
 import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
+import { ExportedKeyView } from "../onboarding/ExportedKeyView";
 import { Money } from "./quote";
 import { colW, TABLE, TD, Th } from "./table";
 
 /**
- * Key export confirm (DESIGN.md 1.7, 4.17): the title names the action, one sentence of
- * consequence, both outcomes on the buttons, and the action needs a 1 s hold. The key itself
- * is only ever shown by the isolated signer (SPEC), never on this page.
+ * Key export (DESIGN.md 1.7, 4.17): the title names the action, one sentence of consequence, both
+ * outcomes on the buttons and a 1 s hold (after an unlock if the keystore is locked), then the
+ * reveal view from onboarding (4.19). The live signer draws that view in its own window.
  */
 function ExportKeyDialog({ wallet, balance, onClose }: { wallet: TradingWallet; balance: number; onClose: () => void }) {
   const [held, setHeld] = useState(false);
+  const requestUnlock = useUi((s) => s.requestUnlock);
   const simulated = getServices().simulated;
+  const confirmed = () => {
+    if (useWallet.getState().service.locked) requestUnlock(`Unlock to export ${wallet.label}'s key.`, () => setHeld(true));
+    else setHeld(true);
+  };
   return (
     <Modal
       open
       onClose={onClose}
-      width={400}
-      title={`Export the ${wallet.label} key?`}
+      width={480}
+      title={held ? `${wallet.label} key` : `Export the ${wallet.label} key?`}
       footer={
         held ? (
           <div className="flex justify-end">
             <Button variant="secondary" size="md" onClick={onClose} data-autofocus>
-              Done
+              Done, hide the key
             </Button>
           </div>
         ) : (
@@ -43,66 +48,100 @@ function ExportKeyDialog({ wallet, balance, onClose }: { wallet: TradingWallet; 
             <Button variant="secondary" size="md" onClick={onClose} data-autofocus>
               Keep key hidden
             </Button>
-            <HoldButton onConfirm={() => setHeld(true)}>Hold to export key</HoldButton>
+            <HoldButton onConfirm={confirmed}>Hold to export key</HoldButton>
           </div>
         )
       }
     >
       {held ? (
-        <p className="text-body text-fg-1">
-          {simulated
-            ? "This is a simulated wallet: there is no real key to export."
-            : "The signer window now shows the key. It never appears on this page; close that window when you're done."}
-        </p>
+        <ExportedKeyView wallet={wallet} simulated={simulated} />
       ) : (
         <p className="text-body text-fg-1">
-          Anyone who sees this key controls {wallet.label} and its {fmtSol(balance)} SOL. It opens in the isolated signer's window, never on
-          this page.
+          Anyone who sees this key controls {wallet.label} and its {fmtSol(balance)} SOL. Nobody can freeze it or get it back for you.
         </p>
       )}
     </Modal>
   );
 }
 
-function Actions({ wallet, active, onExport }: { wallet: TradingWallet; active: boolean; onExport: () => void }) {
+/** Archive confirm: the consequence in one sentence; the service refuses while SOL or orders remain. */
+function ArchiveDialog({ wallet, onClose }: { wallet: TradingWallet; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const archive = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await getServices().wallet.archiveTradingWallet(wallet.id);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={400}
+      title={`Archive ${wallet.label}?`}
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="secondary" size="md" onClick={onClose} data-autofocus>
+            Keep wallet
+          </Button>
+          <Button variant="danger" size="md" disabled={busy} onClick={() => void archive()}>
+            Archive {wallet.label}
+          </Button>
+        </div>
+      }
+    >
+      <p className="text-body text-fg-1">
+        {wallet.label} leaves every wallet list and picker. Its key stays in the signer, and your backup restores it.
+      </p>
+      {error && <p className="mt-2 text-label text-sell">{error}</p>}
+    </Modal>
+  );
+}
+
+function Actions({
+  wallet,
+  active,
+  onExport,
+  onArchive,
+}: {
+  wallet: TradingWallet;
+  active: boolean;
+  onExport: () => void;
+  onArchive: () => void;
+}) {
   const openFund = useUi((s) => s.openFund);
   const setActive = useWallet((s) => s.setActive);
   return (
     <span className="inline-flex items-center justify-end gap-1">
-      {active ? (
-        <>
-          <Button size="xs" variant="secondary" onClick={() => openFund("fund")}>
-            Fund
-          </Button>
-          <Button size="xs" variant="secondary" onClick={() => openFund("withdraw")}>
-            Withdraw
-          </Button>
-        </>
-      ) : (
-        <Tooltip content={`Trade from ${wallet.label}; Fund and Withdraw act on the active wallet`}>
-          <Button size="xs" variant="secondary" onClick={() => setActive(wallet.address)}>
-            Make active
-          </Button>
-        </Tooltip>
+      {!active && (
+        <Button size="xs" variant="ghost" onClick={() => setActive(wallet.address)}>
+          Make active
+        </Button>
       )}
+      <Button size="xs" variant="secondary" onClick={() => openFund("fund", wallet.address)}>
+        Fund
+      </Button>
+      <Button size="xs" variant="secondary" onClick={() => openFund("withdraw", wallet.address)}>
+        Withdraw
+      </Button>
       <Button size="xs" variant="ghost" icon={<KeyRound />} onClick={onExport}>
         Export key
       </Button>
-      {/* aria-disabled (not disabled) so the reason stays reachable by hover and focus. */}
-      <Tooltip content="Archiving runs in the signer; simulated wallets can't be archived">
-        <button
-          type="button"
-          aria-disabled="true"
-          className="inline-flex h-5 cursor-not-allowed items-center rounded-sm px-1.5 text-label font-medium text-fg-4"
-        >
-          Archive
-        </button>
-      </Tooltip>
+      <Button size="xs" variant="ghost" onClick={onArchive}>
+        Archive
+      </Button>
     </span>
   );
 }
 
-const W = { address: 15, balance: 11, holdings: 16, reserved: 10, actions: 34 } as const;
+const W = { address: 15, balance: 11, holdings: 16, reserved: 10, actions: 48 } as const;
 
 /*
  * Wallets tab (DESIGN.md 5.3): label, address, balance, holdings, SOL reserved by armed orders,
@@ -117,6 +156,7 @@ export function WalletsTable({ mobile, empty }: { mobile: boolean; empty?: React
   const activeAddress = useWallet((s) => s.activeAddress);
   const status = useWallet((s) => s.status);
   const [exporting, setExporting] = useState<TradingWallet | null>(null);
+  const [archiving, setArchiving] = useState<TradingWallet | null>(null);
   const wallets = useMemo(() => tradingWallets.filter((w) => !w.archived), [tradingWallets]);
 
   const rows = wallets.map((w) => {
@@ -131,8 +171,13 @@ export function WalletsTable({ mobile, empty }: { mobile: boolean; empty?: React
     return { wallet: w, st, holdings, value, active: w.address === activeAddress };
   });
 
-  const dialog = exporting && (
-    <ExportKeyDialog wallet={exporting} balance={status[exporting.address]?.solBalance ?? 0} onClose={() => setExporting(null)} />
+  const dialog = (
+    <>
+      {exporting && (
+        <ExportKeyDialog wallet={exporting} balance={status[exporting.address]?.solBalance ?? 0} onClose={() => setExporting(null)} />
+      )}
+      {archiving && <ArchiveDialog wallet={archiving} onClose={() => setArchiving(null)} />}
+    </>
   );
 
   if (wallets.length === 0) return <>{empty}</>;
@@ -238,7 +283,7 @@ export function WalletsTable({ mobile, empty }: { mobile: boolean; empty?: React
                 )}
               </td>
               <td className={cn(TD, "text-right")}>
-                <Actions wallet={w} active={active} onExport={() => setExporting(w)} />
+                <Actions wallet={w} active={active} onExport={() => setExporting(w)} onArchive={() => setArchiving(w)} />
               </td>
             </tr>
           ))}

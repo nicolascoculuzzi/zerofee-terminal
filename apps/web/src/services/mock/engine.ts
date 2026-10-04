@@ -2244,6 +2244,13 @@ export class SimEngine {
     return null;
   }
 
+  /** Armed, sending or needs-re-arm orders on a wallet. */
+  liveOrderCount(wallet: string): number {
+    let n = 0;
+    for (const o of this.orders.values()) if (o.wallet === wallet && isLive(o.order.status)) n++;
+    return n;
+  }
+
   freeNonceSlots(wallet: string): number {
     return NONCE_SLOTS - this.nonceUsed(wallet);
   }

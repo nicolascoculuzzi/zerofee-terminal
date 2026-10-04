@@ -10,12 +10,12 @@ import { fmtDate, fmtFee, fmtInt, fmtSol, shortAddr } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { getServices } from "../../services";
 import type { TradeMode } from "../../services/tradeService";
-import type { TradingWallet } from "../../services/walletService";
+import type { TradingWallet, UnlockMethod } from "../../services/walletService";
 import { useSettings } from "../../state/settings";
 import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
-import { simulatedSecretKey } from "../onboarding/backupKey";
-import { KeyReveal } from "../onboarding/KeyReveal";
+import { ExportedKeyView } from "../onboarding/ExportedKeyView";
+import { MIN_PASSPHRASE, passphraseChecks } from "../onboarding/password";
 import { errorMessage, fmtCountdown, fmtDateTime } from "./format";
 import { MODE_INFO, MODES } from "./modes";
 import { Block, InlineStatus, Note, RadioRow, Row, Rows, SectionHeader, SelectMenu, SubHeader, Tag, useTransient } from "./ui";
@@ -84,7 +84,7 @@ function ExportKey({ wallet, onClose }: { wallet: TradingWallet; onClose: () => 
   if (stage === "reveal") {
     return (
       <div className="space-y-3 pb-2">
-        <KeyReveal secret={simulatedSecretKey(wallet.id, wallet.address)} wallet={wallet} simulated={simulated} />
+        <ExportedKeyView wallet={wallet} simulated={simulated} />
         {simulated && <Note>In the live app the isolated signer draws this view in its own window, never this page.</Note>}
         <Button size="sm" variant="secondary" onClick={onClose}>
           Done, hide the key
@@ -107,6 +107,105 @@ function ExportKey({ wallet, onClose }: { wallet: TradingWallet; onClose: () => 
           Hold to export key
         </HoldButton>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Unlock method (DESIGN.md 5.5 "passkey or passphrase change"): one button to move to a passkey,
+ * or an inline passphrase form (with the onboarding checklist) to move to a passphrase. The
+ * signer re-encrypts the key, so the keystore must be unlocked first.
+ */
+function UnlockMethodControl({ current }: { current: UnlockMethod }) {
+  const requestUnlock = useUi((s) => s.requestUnlock);
+  const [form, setForm] = useState(false);
+  const [pw, setPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useTransient<string>(6000);
+  const checks = passphraseChecks(pw);
+  const valid = checks.every((c) => c.met) && pw === confirm;
+
+  const change = async (method: UnlockMethod, password?: string) => {
+    if (useWallet.getState().service.locked) {
+      requestUnlock("Unlock to change how the keystore unlocks.", () => void change(method, password));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await getServices().wallet.changeUnlockMethod(method, password);
+      setForm(false);
+      setPw("");
+      setConfirm("");
+      setDone(method === "passkey" ? "Now unlocks with your passkey" : "Now unlocks with your passphrase");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full flex-col items-end gap-2">
+      <span className="text-data text-fg-2">{METHOD_LABEL[current]}</span>
+      {done && <InlineStatus>{done}</InlineStatus>}
+      {current === "password" ? (
+        <Button size="xs" variant="secondary" disabled={busy} onClick={() => void change("passkey")}>
+          {busy ? "Waiting for passkey…" : "Use a passkey"}
+        </Button>
+      ) : form ? null : (
+        <Button size="xs" variant="secondary" onClick={() => setForm(true)}>
+          Use a passphrase
+        </Button>
+      )}
+      {form && (
+        <form
+          className="flex w-full flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (valid) void change("password", pw);
+          }}
+        >
+          <input
+            type="password"
+            className="zf-input max-md:h-11"
+            placeholder={`New passphrase, ${MIN_PASSPHRASE}+ characters`}
+            autoComplete="new-password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            aria-label="New passphrase"
+          />
+          <input
+            type="password"
+            className="zf-input max-md:h-11"
+            placeholder="Repeat the passphrase"
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            aria-label="Repeat the passphrase"
+            aria-invalid={confirm !== "" && confirm !== pw}
+          />
+          <ul className="text-label text-fg-3">
+            {checks.map((c) => (
+              <li key={c.id} className={c.met ? "text-fg-1" : undefined}>
+                {c.label}
+              </li>
+            ))}
+            {confirm !== "" && confirm !== pw && <li className="text-sell">The passphrases don't match</li>}
+          </ul>
+          <span className="flex justify-end gap-2">
+            <Button size="xs" variant="ghost" type="button" onClick={() => setForm(false)}>
+              Keep the passkey
+            </Button>
+            <Button size="xs" variant="primary" type="submit" disabled={!valid || busy}>
+              {busy ? "Re-encrypting…" : "Switch to passphrase"}
+            </Button>
+          </span>
+        </form>
+      )}
+      {error && <p className="text-label text-sell">{error}</p>}
     </div>
   );
 }
@@ -195,6 +294,11 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
   const [exportFor, setExportFor] = useState<string | null>(initialExport && activeWallet ? activeWallet.id : null);
   const [signedOut, setSignedOut] = useTransient<true>(8000);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [reclaiming, setReclaiming] = useState(false);
+  const [reclaimed, setReclaimed] = useTransient<string>(8000);
+  const [reclaimError, setReclaimError] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [removed, setRemoved] = useTransient<string>(8000);
   const { connected, session, locked, autoLockAt } = service;
 
   const go = (to: string) => {
@@ -218,6 +322,30 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
   };
 
   const free = nonceSlots ? Math.max(0, nonceSlots.total - nonceSlots.used) : 0;
+
+  const reclaim = async () => {
+    setReclaiming(true);
+    setReclaimError(null);
+    try {
+      const r = await getServices().wallet.reclaimRent();
+      setReclaimed(r.closed > 0 ? `Closed ${r.closed} slot${r.closed === 1 ? "" : "s"}, ${fmtFee(r.sol)} SOL back` : "Nothing to reclaim");
+    } catch (e) {
+      setReclaimError(errorMessage(e));
+    } finally {
+      setReclaiming(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!activeWallet) return;
+    setRemoveError(null);
+    try {
+      await getServices().wallet.archiveTradingWallet(activeWallet.id);
+      setRemoved(activeWallet.label);
+    } catch (e) {
+      setRemoveError(errorMessage(e));
+    }
+  };
 
   return (
     <>
@@ -296,19 +424,18 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
         </Row>
         <Row
           label="Unlock method"
-          help="Switching between passkey and passphrase re-encrypts the key inside the isolated signer. Not available on simulated wallets."
+          control="wide"
+          help="Switching between passkey and passphrase re-encrypts the key inside the isolated signer."
         >
-          {activeWallet ? (
-            <span className="text-data text-fg-2">{METHOD_LABEL[activeWallet.unlockMethod]}</span>
-          ) : (
-            <span className="text-data text-fg-4">–</span>
-          )}
+          {activeWallet ? <UnlockMethodControl current={activeWallet.unlockMethod} /> : <span className="text-data text-fg-4">–</span>}
         </Row>
       </Rows>
 
       <WithdrawalDestinations />
 
-      <SubHeader anchor="nonce">Nonce slots</SubHeader>
+      <SubHeader anchor="nonce" actions={reclaimed ? <InlineStatus>{reclaimed}</InlineStatus> : null}>
+        Nonce slots
+      </SubHeader>
       <Rows>
         <Row
           label="Durable-nonce slots"
@@ -330,14 +457,15 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
           label="Reclaim rent"
           help={
             free > 0
-              ? `Closes the ${free} free slot${free === 1 ? "" : "s"} and returns ${fmtFee(free * NONCE_RENT_SOL)} SOL. Needs the live signer; the simulation keeps a fixed pool.`
-              : "Every slot is in use by an armed order. Cancel orders to free slots."
+              ? `Closes the ${free} free slot${free === 1 ? "" : "s"} and returns ${fmtFee(free * NONCE_RENT_SOL)} SOL. Arming an order later reopens a slot for the same rent.`
+              : "Every open slot is in use by an armed order. Cancel orders to free slots."
           }
         >
-          <Button size="xs" variant="secondary" disabled>
-            Reclaim {free > 0 ? `${fmtFee(free * NONCE_RENT_SOL)} SOL` : "rent"}
+          <Button size="xs" variant="secondary" disabled={free === 0 || reclaiming} onClick={() => void reclaim()}>
+            {reclaiming ? "Closing slots…" : `Reclaim ${free > 0 ? `${fmtFee(free * NONCE_RENT_SOL)} SOL` : "rent"}`}
           </Button>
         </Row>
+        {reclaimError && <p className="py-1 text-label text-sell">{reclaimError}</p>}
       </Rows>
 
       <SubHeader anchor="sessions" actions={signedOut ? <InlineStatus>Signed out</InlineStatus> : null}>
@@ -399,7 +527,9 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
       </Rows>
       {signOutError && <p className="mt-1 text-label text-sell">{signOutError}</p>}
 
-      <SubHeader anchor="danger">Danger zone</SubHeader>
+      <SubHeader anchor="danger" actions={removed ? <InlineStatus>Removed {removed}</InlineStatus> : null}>
+        Danger zone
+      </SubHeader>
       <Rows>
         <Row
           label="Panic"
@@ -411,12 +541,13 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
         </Row>
         <Row
           label="Remove trading wallet"
-          help={`Removes ${activeWallet?.label ?? "the wallet"} from this browser. Withdraw its SOL first: only your backup can bring it back. Not available on simulated wallets.`}
+          help={`Removes ${activeWallet?.label ?? "the wallet"} from this browser. Withdraw its SOL and cancel its orders first: only your backup can bring it back.`}
         >
-          <Button size="sm" variant="danger" disabled className="max-md:h-11">
-            Remove {activeWallet?.label ?? "wallet"}
-          </Button>
+          <HoldButton disabled={!activeWallet} onConfirm={remove} className="max-md:h-11">
+            Hold to remove {activeWallet?.label ?? "wallet"}
+          </HoldButton>
         </Row>
+        {removeError && <p className="py-1 text-label text-sell">{removeError}</p>}
       </Rows>
     </>
   );

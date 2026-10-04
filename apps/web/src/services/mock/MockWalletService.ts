@@ -13,6 +13,7 @@ import { fakeAddress, fakeSignature, randomBase58 } from "./addresses";
 import { requestApproval } from "./approvalBroker";
 import type { SimEngine } from "./engine";
 import { mockBackupPhrase } from "./names";
+import { simulatedSecretKey } from "./simulatedKey";
 
 export interface DemoWalletSeed {
   id: string;
@@ -153,6 +154,52 @@ export class MockWalletService implements WalletService {
     this.set({
       tradingWallets: this.state.tradingWallets.map((w) => (w.id === walletId ? { ...w, backedUpAt: Date.now() } : w)),
     });
+  }
+
+  async exportKey(walletId: string): Promise<string> {
+    const wallet = this.state.tradingWallets.find((w) => w.id === walletId);
+    if (!wallet) throw new Error("Unknown trading wallet");
+    if (this.state.locked) throw new Error("Unlock the keystore to export a key");
+    await wait(250);
+    this.touch();
+    return simulatedSecretKey(wallet.id, wallet.address);
+  }
+
+  async archiveTradingWallet(walletId: string): Promise<void> {
+    const wallet = this.state.tradingWallets.find((w) => w.id === walletId && !w.archived);
+    if (!wallet) throw new Error("Unknown trading wallet");
+    const sol = this.engine.userSol(wallet.address);
+    if (sol > 0.001) throw new Error(`Withdraw its ${Number(sol.toFixed(4))} SOL first.`);
+    const orders = this.engine.liveOrderCount(wallet.address);
+    if (orders > 0) throw new Error(`Cancel its ${orders} armed order${orders === 1 ? "" : "s"} first.`);
+    await wait(300);
+    this.set({ tradingWallets: this.state.tradingWallets.map((w) => (w.id === walletId ? { ...w, archived: true } : w)) });
+  }
+
+  async changeUnlockMethod(method: UnlockMethod, password?: string): Promise<void> {
+    if (this.state.locked) throw new Error("Unlock the keystore first");
+    if (method === "password" && (!password || password.length < 8)) throw new Error("Passphrase must be at least 8 characters");
+    await wait(method === "passkey" ? 700 : 900);
+    this.passwords.clear();
+    const tradingWallets = this.state.tradingWallets.map((w) => {
+      if (method === "password" && password) this.passwords.set(w.id, password);
+      return w.archived ? w : { ...w, unlockMethod: method };
+    });
+    this.set({ tradingWallets });
+    this.touch();
+  }
+
+  async reclaimRent(): Promise<{ closed: number; sol: number }> {
+    await wait(600);
+    let closed = 0;
+    let sol = 0;
+    for (const w of this.state.tradingWallets) {
+      if (w.archived) continue;
+      const r = this.engine.reclaimNonceRent(w.address);
+      closed += r.closed;
+      sol += r.sol;
+    }
+    return { closed, sol };
   }
 
   async unlock(password: string): Promise<void> {
