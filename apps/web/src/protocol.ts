@@ -203,6 +203,8 @@ export interface TokenSummary {
   migratedAt: number | null;
   risk: TokenRisk;
   dexPaid: boolean;
+  /** When the Dex Screener profile was paid (ms), while `dexPaid` is true (mirrors packages/protocol). */
+  dexPaidAt: number | null;
   /** Share of LP tokens burned; null while on a bonding curve. */
   lpBurnedPct: number | null;
   /** Null for legacy SPL Token mints. */

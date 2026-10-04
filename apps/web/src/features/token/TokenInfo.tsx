@@ -4,7 +4,7 @@ import { MetricLabel } from "../../components/ui/bits";
 import { CopyButton } from "../../components/ui/controls";
 import { Popover } from "../../components/ui/Popover";
 import { cn } from "../../lib/cn";
-import { fmtCount, fmtRiskPct, shortAddr } from "../../lib/format";
+import { fmtAge, fmtCount, fmtRiskPct, shortAddr } from "../../lib/format";
 import { bandsText, METRICS, type MetricKey, type RiskKey, riskTone, TONE_TEXT, token2022Danger } from "../../lib/metrics";
 import type { TokenDetail } from "../../protocol";
 import { useSettings } from "../../state/settings";
@@ -156,7 +156,12 @@ export function TokenInfo({ detail, header = true }: { detail: TokenDetail; head
       <div className="grid grid-cols-3 divide-x divide-hairline border-b border-hairline">
         <InfoCell metric="holders" value={fmtCount(t.holders)} tone="text-fg-1" />
         <InfoCell metric="proTraders" label="Pro traders" value={fmtCount(t.proTraders)} tone="text-fg-1" />
-        <InfoCell metric="dexPaid" label="Dex paid" value={t.dexPaid ? "Paid" : "Unpaid"} tone={t.dexPaid ? "text-fg-1" : "text-fg-2"} />
+        <InfoCell
+          metric="dexPaid"
+          label="Dex paid"
+          value={t.dexPaid ? (t.dexPaidAt !== null ? `Paid ${fmtAge(t.dexPaidAt)} ago` : "Paid") : "Unpaid"}
+          tone={t.dexPaid ? "text-fg-1" : "text-fg-2"}
+        />
       </div>
       {danger.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 border-b border-hairline px-3 py-2">

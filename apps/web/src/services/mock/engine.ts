@@ -1643,6 +1643,7 @@ export class SimEngine {
         bundlersPct: (bundlers / supply) * 100,
       },
       dexPaid: t.dexPaid,
+      dexPaidAt: t.dexPaid ? t.dexPaidAt : null,
       lpBurnedPct: t.lpBurnedPct,
       token2022: t.token2022,
       feesPaidSol: t.feesSol,
