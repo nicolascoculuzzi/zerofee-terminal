@@ -1,432 +1,230 @@
-import { Check, Download, Upload } from "lucide-react";
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { NumberInput, Segmented } from "../../components/ui/controls";
+import { Hotkey } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
-import { copyText, downloadText } from "../../lib/clipboard";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import {
-  AUDIT_FIELDS,
-  activeFilterCount,
-  compileBlacklists,
-  compileFilter,
-  emptyFilter,
-  exportFilters,
-  isBlacklisted,
-  MONEY_FIELDS,
-  matchesFilter,
-  normalizeFilter,
-  type PulseFilter,
-  parseFilterImport,
-  type Range,
-} from "../../lib/filters";
-import { LAUNCHPADS, QUOTES } from "../../lib/metrics";
+import { compileBlacklists, compileFilter, isBlacklisted, matchesFilter, type PulseFilter } from "../../lib/filters";
+import { fmtCount } from "../../lib/format";
+import { IS_MAC } from "../../lib/hotkeys";
 import type { PulseColumnId } from "../../protocol";
 import { useMarket } from "../../state/market";
-import { type ColumnSettings, useSettings } from "../../state/settings";
-import { useToasts } from "../../state/toasts";
+import { useSettings } from "../../state/settings";
+import { FilterHeader } from "./FilterHeader";
+import { FilterSections, SECTIONS, type SectionId, sectionActive } from "./FilterSections";
+import { usePulseUi } from "./store";
+import { useFilterDrafts } from "./useFilterDrafts";
 
-/*
- * Filter modal. Anatomy: GetYourGuide's filters (min/max side by side with a unit prefix,
- * "Reset all" + "Show N results") https://mobbin.com/screens/6a1fb39a-89fe-45ae-9c8a-10cc20e4664a
- * and Square's live match count https://mobbin.com/screens/53162374-2076-479b-bb1d-5c473647d50f.
- * Field set and labels follow Axiom's Pulse filters (keywords, Protocols, Quote Tokens, Audit,
- * $ Metrics, Socials, presets 1-3, import/export, Apply All).
- */
+const NOTE_MS = 2400;
 
-const COLUMN_LABEL: Record<PulseColumnId, string> = { new: "New Pairs", final: "Final Stretch", migrated: "Migrated" };
-type Tab = "protocols" | "quotes" | "audit" | "metrics" | "socials";
-
-function RangeRow({ label, unit, value, onChange }: { label: string; unit: string; value: Range; onChange: (r: Range) => void }) {
-  const prefix = unit === "$" ? "$" : undefined;
-  const suffix = unit === "%" ? "%" : unit === "min" ? "min" : undefined;
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-      <span className="truncate text-data text-fg-2">{label}</span>
-      <NumberInput
-        value={value.min}
-        onChange={(min) => onChange({ ...value, min })}
-        placeholder="Min"
-        prefix={prefix}
-        suffix={suffix}
-        min={0}
-        className="w-22"
-        ariaLabel={`${label} minimum`}
-      />
-      <NumberInput
-        value={value.max}
-        onChange={(max) => onChange({ ...value, max })}
-        placeholder="Max"
-        prefix={prefix}
-        suffix={suffix}
-        min={0}
-        className="w-22"
-        ariaLabel={`${label} maximum`}
-      />
-    </div>
-  );
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
 }
 
-function Toggle({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={cn(
-        "flex h-7 items-center gap-2 rounded-sm border px-2 text-left text-data",
-        on ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
-      )}
-    >
-      <span
-        className={cn(
-          "flex size-3 items-center justify-center rounded-xs border",
-          on ? "border-fg-1 bg-accent text-bg" : "border-hairline-strong",
-        )}
-      >
-        {on && <Check className="icon-xs" strokeWidth={3} />}
-      </span>
-      {children}
-    </button>
-  );
-}
-
-export function FilterModal({ open, column: initialColumn, onClose }: { open: boolean; column: PulseColumnId; onClose: () => void }) {
-  const columns = useSettings((s) => s.columns);
-  const setColumn = useSettings((s) => s.setColumn);
-  const setColumnFilter = useSettings((s) => s.setColumnFilter);
-  const applyFilterToAll = useSettings((s) => s.applyFilterToAll);
-  const blacklists = useSettings((s) => s.blacklists);
+/** Live match count and per-launchpad / per-quote counts against the in-memory feed. */
+function useCounts(column: PulseColumnId, draft: PulseFilter) {
+  const mints = useMarket((s) => s.columns[column]);
   const tokens = useMarket((s) => s.tokens);
-  const columnMints = useMarket((s) => s.columns);
-  const [column, setColumnTab] = useState<PulseColumnId>(initialColumn);
-  const [preset, setPreset] = useState<0 | 1 | 2>(columns[initialColumn].activeFilter);
-  const [draft, setDraft] = useState<PulseFilter>(() =>
-    normalizeFilter(columns[initialColumn].filters[columns[initialColumn].activeFilter]),
-  );
-  const [tab, setTab] = useState<Tab>("protocols");
-  const [importText, setImportText] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  // Read settings through a ref so the effects below only re-run on slot changes, not on every settings write.
-  const columnsRef = useRef(columns);
-  columnsRef.current = columns;
-
-  // Re-seed the draft whenever the column or preset slot changes.
-  useEffect(() => {
-    if (!open) return;
-    setDraft(normalizeFilter(columnsRef.current[column].filters[preset]));
-  }, [open, column, preset]);
-
-  // Reset to the column's active preset each time the modal is (re)opened.
-  useEffect(() => {
-    if (!open) return;
-    setColumnTab(initialColumn);
-    setPreset(columnsRef.current[initialColumn].activeFilter);
-  }, [open, initialColumn]);
-
-  const matches = useMemo(() => {
-    const compiled = compileFilter(draft);
-    const bl = compileBlacklists(blacklists);
+  const blacklists = useSettings((s) => s.blacklists);
+  const debounced = useDebounced(draft, 250);
+  return useMemo(() => {
+    const compiled = compileFilter(debounced);
+    const blocked = compileBlacklists(blacklists);
     const now = Date.now();
-    const mints = columnMints[column];
-    let n = 0;
+    const protocols: Record<string, number> = {};
+    const quotes: Record<string, number> = {};
+    let matches = 0;
     for (const m of mints) {
       const t = tokens[m];
-      if (t && !isBlacklisted(t, bl) && matchesFilter(t, compiled, now)) n++;
+      if (!t || isBlacklisted(t, blocked)) continue;
+      protocols[t.launchpad] = (protocols[t.launchpad] ?? 0) + 1;
+      quotes[t.quote] = (quotes[t.quote] ?? 0) + 1;
+      if (matchesFilter(t, compiled, now)) matches++;
     }
-    return { n, total: mints.length };
-  }, [draft, blacklists, columnMints, column, tokens]);
+    return { matches, protocols, quotes };
+  }, [debounced, mints, tokens, blacklists]);
+}
 
-  const patch = (p: Partial<PulseFilter>) => setDraft((d) => ({ ...d, ...p }));
-  const toggleIn = <T,>(list: T[], v: T): T[] => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+/**
+ * Pulse filter modal (DESIGN.md 4.16): 720 px, at most 640 px tall. Header with column tabs and
+ * preset slots; a 168 px section nav (a dot marks sections with active filters) beside one
+ * scrolling column of sections; a footer with Reset column, Apply to all columns, the live match
+ * count and Apply. Edits are drafts until Apply. Esc with unsaved changes asks for a second Esc.
+ * Keys: Mod+Enter applies, Mod+S saves the slot, Ctrl+1–6 jump to sections, Up/Down move between
+ * range rows. Section nav with active dots and a live count after Juicebox:
+ * https://mobbin.com/screens/b94f8a11-6713-466e-a9d5-d08e558ba525 and "Show 128 results" after
+ * GetYourGuide: https://mobbin.com/screens/6a1fb39a-89fe-45ae-9c8a-10cc20e4664a
+ */
+export function FilterModal() {
+  const column = usePulseUi((s) => s.filterColumn);
+  if (!column) return null;
+  return <FilterModalBody initial={column} />;
+}
 
+function FilterModalBody({ initial }: { initial: PulseColumnId }) {
+  const d = useFilterDrafts(initial);
+  const counts = useCounts(d.column, d.draft);
+  const content = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const [section, setSection] = useState<SectionId>("keywords");
+  const [armed, setArmed] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const close = () => usePulseUi.getState().openFilters(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: any edit cancels a pending "press Esc again"
+  useEffect(() => setArmed(false), [d.draft, d.column, d.slot]);
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), NOTE_MS);
+    return () => clearTimeout(t);
+  }, [note]);
+
+  const guardedClose = () => {
+    if (d.dirty && !armed) {
+      setArmed(true);
+      return;
+    }
+    close();
+  };
   const apply = () => {
-    setColumnFilter(column, preset, draft);
-    setColumn(column, { activeFilter: preset });
-    onClose();
+    d.commit();
+    close();
   };
-
-  const exportAll = () => {
-    const payload: Partial<Record<PulseColumnId, PulseFilter[]>> = {};
-    for (const c of ["new", "final", "migrated"] as const) {
-      const list = [...columns[c].filters] as ColumnSettings["filters"];
-      if (c === column) list[preset] = draft;
-      payload[c] = list;
+  const jump = (id: SectionId) => {
+    const box = content.current;
+    const el = box?.querySelector<HTMLElement>(`[data-section="${id}"]`);
+    if (!box || !el) return;
+    box.scrollTo({ top: el.offsetTop - 16 });
+    setSection(id);
+  };
+  const spy = () => {
+    const box = content.current;
+    if (!box) return;
+    let current: SectionId = "keywords";
+    for (const el of box.querySelectorAll<HTMLElement>("[data-section]")) {
+      if (el.offsetTop - 24 <= box.scrollTop) current = el.dataset.section as SectionId;
     }
-    return exportFilters(payload);
+    if (box.scrollTop + box.clientHeight >= box.scrollHeight - 2) current = "socials";
+    setSection(current);
   };
 
-  const runImport = (text: string) => {
-    try {
-      const parsed = parseFilterImport(text);
-      if (parsed.kind === "single") {
-        setDraft(parsed.filter);
-        useToasts.getState().push({
-          kind: "success",
-          title: "Filter imported",
-          body: `Loaded into ${COLUMN_LABEL[column]} preset ${preset + 1}. Apply to save.`,
-        });
-      } else {
-        for (const c of ["new", "final", "migrated"] as const) {
-          const list = parsed.columns[c];
-          if (!list) continue;
-          for (const [i, f] of list.entries()) setColumnFilter(c, i as 0 | 1 | 2, f);
-        }
-        setDraft(normalizeFilter(parsed.columns[column]?.[preset] ?? draft));
-        useToasts.getState().push({ kind: "success", title: "Filter presets imported", body: "All columns updated." });
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+    if (mod && e.key === "Enter") {
+      e.preventDefault();
+      apply();
+    } else if (mod && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      d.save();
+      setNote(`Saved to slot ${d.slot + 1}`);
+    } else if (e.ctrlKey && !e.metaKey && /^Digit[1-6]$/.test(e.code)) {
+      e.preventDefault();
+      const target = SECTIONS[Number(e.code.slice(5)) - 1];
+      if (target) jump(target.id);
+    } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && (e.target as HTMLElement).classList.contains("zfp-range")) {
+      const inputs = Array.from(root.current?.querySelectorAll<HTMLInputElement>("input.zfp-range") ?? []);
+      const next = inputs[inputs.indexOf(e.target as HTMLInputElement) + (e.key === "ArrowDown" ? 2 : -2)];
+      if (next) {
+        e.preventDefault();
+        next.focus();
       }
-      setImportText(null);
-    } catch (e) {
-      useToasts.getState().push({ kind: "error", title: "Import failed", body: e instanceof Error ? e.message : String(e) });
     }
   };
 
-  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    void file.text().then(runImport);
-    e.target.value = "";
-  };
-
-  const tabs: { value: Tab; label: string }[] = [
-    { value: "protocols", label: `Protocols${draft.protocols.length !== LAUNCHPADS.length ? ` · ${draft.protocols.length}` : ""}` },
-    { value: "quotes", label: "Quote tokens" },
-    { value: "audit", label: "Audit" },
-    { value: "metrics", label: "$ Metrics" },
-    { value: "socials", label: "Socials" },
-  ];
+  const status = armed ? (
+    <span className="text-data text-fg-1">Discard changes? Press Esc again</span>
+  ) : note ? (
+    <span className="text-data text-fg-2">{note}</span>
+  ) : (
+    <span className="zf-num text-data text-fg-2">
+      {fmtCount(counts.matches)} {counts.matches === 1 ? "token matches" : "tokens match"} now
+    </span>
+  );
 
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Filters"
-      width={680}
-      footer={
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-data text-fg-2">
-            <span className="font-semibold text-fg-1">{matches.n}</span> of {matches.total} in {COLUMN_LABEL[column]} match now
-            {activeFilterCount(draft) > 0 && <span className="text-fg-3"> · {activeFilterCount(draft)} conditions</span>}
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <Button size="md" variant="ghost" onClick={() => setDraft(emptyFilter())}>
-              Reset
-            </Button>
-            <Button
-              size="md"
-              variant="secondary"
-              onClick={() => {
-                applyFilterToAll(draft);
-                setColumn(column, { activeFilter: preset });
-                useToasts
-                  .getState()
-                  .push({ kind: "success", title: "Applied to all columns", body: "Written into each column's active preset." });
-                onClose();
-              }}
-            >
-              Apply to all columns
-            </Button>
-            <Button size="md" variant="primary" onClick={apply}>
-              Apply
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Segmented<PulseColumnId>
-            value={column}
-            onChange={setColumnTab}
-            options={(["new", "final", "migrated"] as const).map((c) => ({ value: c, label: COLUMN_LABEL[c] }))}
-            label="Column"
-          />
-          <span className="zf-label ml-2">Preset</span>
-          <Segmented<"0" | "1" | "2">
-            value={String(preset) as "0" | "1" | "2"}
-            onChange={(v) => setPreset(Number(v) as 0 | 1 | 2)}
-            options={[
-              { value: "0", label: "1" },
-              { value: "1", label: "2" },
-              { value: "2", label: "3" },
-            ]}
-            label="Filter preset"
-          />
-          <div className="ml-auto flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Upload className="icon-sm" />}
-              onClick={() => setImportText(importText === null ? "" : null)}
-            >
-              Import
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Download className="icon-sm" />}
-              onClick={() => downloadText("zerofee-pulse-filters.json", exportAll())}
-            >
-              Export
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                void copyText(exportAll());
-                useToasts
-                  .getState()
-                  .push({ kind: "info", title: "Filter JSON copied", body: "Share it; anyone can import it.", ttl: 2500 });
-              }}
-            >
-              Copy JSON
-            </Button>
-          </div>
-        </div>
-
-        {importText !== null && (
-          <div className="space-y-2 rounded-md border border-hairline bg-surface-2 p-3">
-            <div className="text-data text-fg-2">Paste a filter or preset export (zerofee JSON; Axiom-style field names are accepted).</div>
-            <textarea
-              className="h-24 w-full rounded-sm border border-hairline-strong bg-bg p-2 font-mono text-label outline-none focus:border-accent"
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              placeholder='{"app":"zerofee","kind":"pulse-filters","v":1,"filters":{…}}'
-            />
-            <div className="flex gap-2">
-              <Button size="sm" variant="primary" disabled={!importText.trim()} onClick={() => runImport(importText)}>
-                Import
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>
-                Load file
-              </Button>
-              <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={onFile} />
-            </div>
-          </div>
-        )}
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1">
-            <span className="zf-label">Search keywords</span>
-            <input
-              className="zf-input"
-              value={draft.include}
-              onChange={(e) => patch({ include: e.target.value })}
-              placeholder="keyword1, keyword2"
-            />
-          </label>
-          <label className="space-y-1">
-            <span className="zf-label">Exclude keywords</span>
-            <input
-              className="zf-input"
-              value={draft.exclude}
-              onChange={(e) => patch({ exclude: e.target.value })}
-              placeholder="keyword1, keyword2"
-            />
-          </label>
-        </div>
-
-        <div className="flex border-b border-hairline">
-          {tabs.map((t) => (
-            <button
-              key={t.value}
-              type="button"
-              onClick={() => setTab(t.value)}
-              className={cn(
-                "-mb-px border-b-2 px-3 pb-2 text-data font-medium",
-                tab === t.value ? "border-fg-1 text-fg-1" : "border-transparent text-fg-2 hover:text-fg-1",
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {tab === "protocols" && (
-          <div className="space-y-2">
-            <div className="flex gap-3 text-label">
-              <button type="button" className="text-fg-2 hover:text-fg-1" onClick={() => patch({ protocols: LAUNCHPADS.map((l) => l.id) })}>
-                Select all
-              </button>
-              <button type="button" className="text-fg-2 hover:text-fg-1" onClick={() => patch({ protocols: [] })}>
-                Unselect all
-              </button>
-              {draft.protocols.length === 0 && <span className="text-warn">No protocols selected: nothing will match.</span>}
-            </div>
-            <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-              {LAUNCHPADS.map((l) => (
-                <Toggle
-                  key={l.id}
-                  on={draft.protocols.includes(l.id)}
-                  onClick={() => patch({ protocols: toggleIn(draft.protocols, l.id) })}
+    <Modal open onClose={guardedClose} bare width={720} label="Filters">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: modal-level shortcuts (DESIGN.md 4.16) */}
+      <div ref={root} onKeyDown={onKeyDown} className="flex h-[min(638px,calc(84vh-2px))] flex-col">
+        <FilterHeader
+          column={d.column}
+          onColumn={d.setColumn}
+          counts={d.tabCounts}
+          slot={d.slot}
+          onSlot={d.setSlot}
+          onImport={(text) => {
+            try {
+              setNote(d.load(text));
+              return null;
+            } catch (err) {
+              return err instanceof Error ? err.message : String(err);
+            }
+          }}
+          exportJson={d.exportJson}
+          shareJson={d.shareJson}
+          onClose={close}
+        />
+        <div className="flex min-h-0 flex-1">
+          <nav aria-label="Filter sections" className="w-42 shrink-0 space-y-px border-r border-hairline bg-surface-1 p-2">
+            {SECTIONS.map((s, i) => (
+              <Tooltip key={s.id} content={<Hotkey binding={`Ctrl+${i + 1}`} />} wrapperClassName="w-full">
+                <button
+                  type="button"
+                  aria-current={section === s.id ? "true" : undefined}
+                  onClick={() => jump(s.id)}
+                  className={cn(
+                    "focus-inset flex h-7 w-full items-center gap-1.5 rounded-sm px-2 text-left text-data font-medium transition-colors",
+                    section === s.id ? "bg-surface-3 text-fg-1" : "text-fg-2 hover:text-fg-1",
+                  )}
                 >
-                  {l.label}
-                </Toggle>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {tab === "quotes" && (
-          <div className="grid grid-cols-2 gap-1 sm:grid-cols-4">
-            {QUOTES.map((q) => (
-              <Toggle key={q} on={draft.quotes.includes(q)} onClick={() => patch({ quotes: toggleIn(draft.quotes, q) })}>
-                {q === "OTHER" ? "Other" : q}
-              </Toggle>
+                  {s.label}
+                  {sectionActive(d.draft, s.id) && (
+                    <>
+                      <span aria-hidden="true" className="size-1.5 rounded-full bg-fg-1" />
+                      <span className="sr-only">, has active filters</span>
+                    </>
+                  )}
+                </button>
+              </Tooltip>
             ))}
+          </nav>
+          <div ref={content} onScroll={spy} className="relative min-h-0 flex-1 overflow-y-auto p-4">
+            <FilterSections draft={d.draft} patch={d.patch} counts={counts} />
           </div>
-        )}
-
-        {tab === "audit" && (
-          <div className="grid gap-x-6 gap-y-2 md:grid-cols-2">
-            {AUDIT_FIELDS.map((f) => (
-              <RangeRow
-                key={f.key}
-                label={f.label}
-                unit={f.unit}
-                value={draft.audit[f.key]}
-                onChange={(r) => patch({ audit: { ...draft.audit, [f.key]: r } })}
-              />
-            ))}
-          </div>
-        )}
-
-        {tab === "metrics" && (
-          <div className="grid gap-x-6 gap-y-2 md:grid-cols-2">
-            {MONEY_FIELDS.map((f) => (
-              <RangeRow
-                key={f.key}
-                label={f.label}
-                unit={f.unit}
-                value={draft.metrics[f.key]}
-                onChange={(r) => patch({ metrics: { ...draft.metrics, [f.key]: r } })}
-              />
-            ))}
-          </div>
-        )}
-
-        {tab === "socials" && (
-          <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-            <Toggle on={draft.socials.x} onClick={() => patch({ socials: { ...draft.socials, x: !draft.socials.x } })}>
-              Has X account
-            </Toggle>
-            <Toggle on={draft.socials.telegram} onClick={() => patch({ socials: { ...draft.socials, telegram: !draft.socials.telegram } })}>
-              Has Telegram
-            </Toggle>
-            <Toggle on={draft.socials.website} onClick={() => patch({ socials: { ...draft.socials, website: !draft.socials.website } })}>
-              Has website
-            </Toggle>
-            <Toggle
-              on={draft.socials.atLeastOne}
-              onClick={() => patch({ socials: { ...draft.socials, atLeastOne: !draft.socials.atLeastOne } })}
+        </div>
+        <div className="flex h-13 shrink-0 items-center gap-2 border-t border-hairline px-4">
+          <Button size="md" variant="ghost" onClick={d.reset}>
+            Reset column
+          </Button>
+          <Button
+            size="md"
+            variant="secondary"
+            onClick={() => {
+              d.commitAll();
+              close();
+            }}
+          >
+            Apply to all columns
+          </Button>
+          <div className="ml-auto flex min-w-0 items-center gap-3">
+            <span className="truncate">{status}</span>
+            <Tooltip
+              content={
+                <span className="flex items-center gap-2">
+                  Apply and close <Hotkey binding="Mod+Enter" />
+                </span>
+              }
             >
-              At least one social
-            </Toggle>
-            <Toggle on={draft.socials.dexPaid} onClick={() => patch({ socials: { ...draft.socials, dexPaid: !draft.socials.dexPaid } })}>
-              Dex Paid
-            </Toggle>
+              <Button size="md" variant="primary" onClick={apply}>
+                Apply filters
+              </Button>
+            </Tooltip>
           </div>
-        )}
+        </div>
       </div>
     </Modal>
   );
