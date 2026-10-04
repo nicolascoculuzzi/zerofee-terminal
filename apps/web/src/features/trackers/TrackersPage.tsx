@@ -168,8 +168,9 @@ export default function TrackersPage() {
 
   let content: ReactNode;
   if (shown === "wallets") content = <WalletManager query={deferredQuery} onShowTrades={showTrades} toolbar={<WalletPaneToolbar />} />;
-  else if (shown === "trades") content = <LiveTrades query={deferredQuery} onAddWallet={openAdd} />;
-  else if (shown === "monitor") content = <Monitor query={deferredQuery} onAddWallet={openAdd} />;
+  // Side by side, the wallet manager's empty state already offers Add wallet: one action per screen.
+  else if (shown === "trades") content = <LiveTrades query={deferredQuery} onAddWallet={wide ? undefined : openAdd} />;
+  else if (shown === "monitor") content = <Monitor query={deferredQuery} onAddWallet={wide ? undefined : openAdd} />;
   else if (shown === "copy") content = <CopyPane query={deferredQuery} />;
   else content = <XPane query={deferredQuery} />;
 

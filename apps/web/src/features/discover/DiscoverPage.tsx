@@ -35,7 +35,13 @@ export default function DiscoverPage() {
         <section aria-label="Trending" className="flex min-h-0 min-w-0 flex-col bg-surface-1">
           <TrendingPanel />
         </section>
-        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-px">
+        {/* An empty watchlist shrinks to its one-line empty state so New pairs gets the height. */}
+        <div
+          className={cn(
+            "grid min-h-0 min-w-0 gap-px",
+            watchCount === 0 ? "grid-rows-[auto_minmax(0,1fr)]" : "grid-rows-[minmax(0,1fr)_minmax(0,1fr)]",
+          )}
+        >
           <WatchlistPanel />
           <NewPairsPanel />
         </div>

@@ -146,6 +146,7 @@ export default function OrdersPage() {
   const tabs = ORDER_TABS.map((t) => ({ id: t.id, label: t.label, count: counts[t.id], attention: t.id === "rearm" && counts.rearm > 0 }));
   const emptyAll = (
     <EmptyState
+      className="text-balance"
       icon={<ListChecks />}
       title="No armed orders"
       body="Arm a limit, take-profit or stop-loss from any token page."
@@ -158,6 +159,7 @@ export default function OrdersPage() {
   );
   const emptyTab = (
     <EmptyState
+      className="text-balance"
       title={`No ${ORDER_TABS.find((t) => t.id === tab)?.label.toLowerCase() ?? ""} orders`}
       body="Orders move between these tabs as their status changes."
     />
