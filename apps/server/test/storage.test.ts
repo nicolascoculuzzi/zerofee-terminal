@@ -45,6 +45,47 @@ describe("schema", () => {
       { mint: "B", creator: "LIVE2", migrated: 0 },
     ]);
   });
+
+  test("v3: trade SOL values become nullable; the 0s earlier versions wrote for unknown values become NULL", () => {
+    const db = new Database(":memory:", { strict: true });
+    db.exec(MIGRATIONS[0] as string);
+    db.exec(MIGRATIONS[1] as string);
+    const row = (id: string, amountSol: number, priceSol: number, mcSol: number) => [
+      id,
+      "M",
+      `sig-${id}`,
+      1,
+      0,
+      1,
+      1,
+      0,
+      0,
+      "T",
+      "10",
+      "20",
+      amountSol,
+      priceSol,
+      mcSol,
+    ];
+    const insert = db.prepare(
+      "INSERT INTO trades (id, mint, signature, slot, ev_index, block_time, received_at, venue, side, trader, quote_amount, token_amount, amount_sol, price_sol, mc_sol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    insert.run(...row("known", 0.5, 3e-8, 30));
+    insert.run(...row("exotic", 0, 0, 0));
+    db.exec(MIGRATIONS[2] as string);
+    const rows = new StorageReader(db).recentTrades("M", 10).sort((a, b) => a.id.localeCompare(b.id));
+    expect(rows.map((t) => [t.id, t.amountSol, t.priceSol, t.mcSol])).toEqual([
+      ["exotic", null, null, null],
+      ["known", 0.5, 3e-8, 30],
+    ]);
+    // NULLs are accepted from now on, and the indexes are back
+    insert.run(...row("new", 0, 0, 0));
+    db.run("UPDATE trades SET amount_sol = NULL, price_sol = NULL, mc_sol = NULL WHERE id = 'new'");
+    const idx = (
+      db.query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'trades' ORDER BY name").all() as { name: string }[]
+    ).map((r) => r.name);
+    expect(idx).toEqual(["sqlite_autoindex_trades_1", "trades_mint_time", "trades_time"]);
+  });
 });
 
 describe("writer + reader", () => {

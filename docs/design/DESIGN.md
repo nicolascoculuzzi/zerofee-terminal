@@ -1136,6 +1136,7 @@ A right rail 320 px wide (300 at `xl`, 288 at `lg`), `surface-1`, 1 px `hairline
 - **Footer** (52 px, `hairline` on top): left, "Reset column" (ghost) and "Apply to all columns" (`secondary`); right, a live count "128 tokens match now" at 12 `text-2` and "Apply" (`primary`, ⌘↵).
 - **Behaviour:**
   - Edits update the live count (debounced 250 ms, against the in-memory feed). Apply commits.
+  - Unknown is not zero. A metric the server sends as `null` (MC, price, liquidity or volume in SOL for a token quoted in a mint with no known SOL value; audit metrics before they are computed) fails any min or max set on it, so the token drops out while that filter is active. "Max MC 50 SOL" must not let an exotic-quoted token through as "0 SOL". The copy-trade filters and price alerts follow the same rule (packages/protocol `market.ts` header).
   - Esc with unsaved changes shows "Discard changes? Press Esc again" in the footer; a second Esc discards.
   - Presets: 3 slots per column. ⌘S saves to the current slot. Import accepts our versioned JSON and Axiom-style exports (field names per the feature inventory).
 - **Keyboard:** Up/Down between rows, Tab between inputs, Ctrl+1 to Ctrl+6 jump to sections, ⌘↵ applies, ⌘S saves, Esc as above.

@@ -61,14 +61,14 @@ export interface TrackedTradeRow {
   image: string | null;
   launchpad: Launchpad;
   venue: "pump" | "pumpswap";
-  /** Trade size in SOL (0 for launches). */
-  amountSol: number;
+  /** Trade size in SOL (0 for launches; null when the token's quote has no known SOL value). */
+  amountSol: number | null;
   amountUsd: number | null;
   /** Token amount in base units ("0" for launches). */
   tokenAmount: string;
-  /** Post-trade price and market cap (SOL; USD when SOL/USD is known). */
-  priceSol: number;
-  mcSol: number;
+  /** Post-trade price and market cap (SOL; USD when SOL/USD is known); null when unknown (see TokenSummary). */
+  priceSol: number | null;
+  mcSol: number | null;
   mcUsd: number | null;
   signature: string;
   slot: number;
@@ -137,9 +137,12 @@ export interface CopyTaskConfig {
   dailySpendLimitSol: number;
   /** Buy signals per UTC day. */
   dailyBuyLimit: number;
-  /** Market cap at the leader's trade. */
+  /** Market cap at the leader's trade. An unknown market cap (null in TokenSummary) fails a min and a max. */
   mc: CopyValueRange;
-  /** Quote-side liquidity at the leader's trade (curve real reserves, or the pool's quote vault). */
+  /**
+   * Quote-side liquidity at the leader's trade (curve real reserves, or the pool's quote vault). Unknown
+   * liquidity fails a min and a max.
+   */
   liquidity: CopyValueRange;
   /** Token age in seconds at the leader's trade (unknown age passes a minimum and fails a maximum). */
   ageSec: CopyRange;
@@ -296,6 +299,9 @@ export const COPY_SKIP_REASONS = [
   "liquidity_below_min",
   "liquidity_above_max",
   "usd_price_unavailable",
+  /** An MC / liquidity filter is set and the token's value is unknown (quote without a SOL value). */
+  "mc_unknown",
+  "liquidity_unknown",
   "leader_size_below_min",
   "leader_size_above_max",
   "max_buys_per_token",
@@ -335,13 +341,14 @@ export interface CopySignal {
   /** The leader trade this signal follows ("" for TP / SL exits, which follow the price, not a trade). */
   leaderSignature: string;
   leaderSlot: number;
-  leaderSol: number;
+  /** The leader's trade size in SOL; null when the token's quote has no known SOL value. */
+  leaderSol: number | null;
   leaderTokenAmount: string;
   /** Leader's average fill price (SOL per whole token); null when not computable. */
   leaderPriceSol: number | null;
-  /** Price and market cap when the server evaluated the signal. */
-  priceSol: number;
-  mcSol: number;
+  /** Price and market cap when the server evaluated the signal; null when unknown. */
+  priceSol: number | null;
+  mcSol: number | null;
   mcUsd: number | null;
   /** buy: SOL to spend (already capped). */
   sizeSol: number | null;

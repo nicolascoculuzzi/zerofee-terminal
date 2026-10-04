@@ -209,6 +209,27 @@ describe("buy signals", () => {
     { name: "maximum MC (USD)", reason: "mc_above_max", config: { mc: { max: 1_000 } } },
     { name: "maximum MC (SOL)", reason: "mc_above_max", config: { mc: { max: 30, currency: "sol" } } },
     { name: "USD filter without SOL/USD", reason: "usd_price_unavailable", config: { mc: { min: 100 } }, view: () => ({ mcUsd: null }) },
+    // a token whose quote has no SOL value (exotic quote) has mcSol null: unknown never passes a max as "0"
+    {
+      name: "maximum MC (SOL), MC unknown",
+      reason: "mc_unknown",
+      config: { mc: { max: 1_000, currency: "sol" } },
+      view: () => ({ priceSol: null, mcSol: null, mcUsd: null }),
+    },
+    {
+      name: "maximum MC (USD), MC unknown",
+      reason: "mc_unknown",
+      config: { mc: { max: 1e9 } },
+      view: () => ({ mcSol: null, mcUsd: null }),
+    },
+    {
+      name: "maximum liquidity (SOL), liquidity unknown",
+      reason: "liquidity_unknown",
+      config: { liquidity: { max: 1_000 } },
+      view: () => ({ liquiditySol: null, liquidityUsd: null }),
+    },
+    { name: "leader trade without a SOL value", reason: "price_unknown", trade: { amountSol: null, priceSol: null, mcSol: null } },
+    { name: "price unknown (null)", reason: "price_unknown", view: () => ({ priceSol: null }) },
     { name: "minimum liquidity", reason: "liquidity_below_min", config: { liquidity: { min: 20 } } },
     { name: "maximum liquidity (USD)", reason: "liquidity_above_max", config: { liquidity: { max: 1_000, currency: "usd" } } },
     { name: "minimum leader size", reason: "leader_size_below_min", config: { leaderSol: { min: 2 } } },

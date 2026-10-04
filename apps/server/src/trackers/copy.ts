@@ -62,10 +62,11 @@ export interface TokenView {
   symbol: string;
   decimals: number;
   venue: "pump" | "pumpswap";
-  priceSol: number;
-  mcSol: number;
+  /** null = unknown (the token's quote has no known SOL value): MC / liquidity filters then skip. */
+  priceSol: number | null;
+  mcSol: number | null;
   mcUsd: number | null;
-  liquiditySol: number;
+  liquiditySol: number | null;
   liquidityUsd: number | null;
   createdAt: number | null;
   creator: string | null;
@@ -195,7 +196,7 @@ export type ReportOutcome = { ok: true; signal: CopySignal } | { ok: false; stat
 /** Leader's average fill price in SOL per whole token, or null. */
 export function leaderFillPrice(t: Trade, decimals: number): number | null {
   const tokens = Number(t.tokenAmount) / 10 ** decimals;
-  if (!(tokens > 0) || !(t.amountSol > 0)) return null;
+  if (!(tokens > 0) || t.amountSol === null || !(t.amountSol > 0)) return null;
   return t.amountSol / tokens;
 }
 
@@ -545,23 +546,30 @@ export class CopyEngine {
     const age = token.createdAt === null ? null : (now - token.createdAt) / 1000;
     if (c.ageSec.min !== null && age !== null && age < c.ageSec.min) return { skip: "token_too_young" };
     if (c.ageSec.max !== null && (age === null || age > c.ageSec.max)) return { skip: "token_too_old" };
+    // Unknown (null) values never pass a min or a max: a token without a SOL value is not "MC 0".
     const mc = c.mc.currency === "usd" ? token.mcUsd : token.mcSol;
     const liq = c.liquidity.currency === "usd" ? token.liquidityUsd : token.liquiditySol;
-    if ((c.mc.min !== null || c.mc.max !== null) && mc === null) return { skip: "usd_price_unavailable" };
+    if ((c.mc.min !== null || c.mc.max !== null) && mc === null)
+      return { skip: c.mc.currency === "usd" && token.mcSol !== null ? "usd_price_unavailable" : "mc_unknown" };
     if (mc !== null && c.mc.min !== null && mc < c.mc.min) return { skip: "mc_below_min" };
     if (mc !== null && c.mc.max !== null && mc > c.mc.max) return { skip: "mc_above_max" };
-    if ((c.liquidity.min !== null || c.liquidity.max !== null) && liq === null) return { skip: "usd_price_unavailable" };
+    if ((c.liquidity.min !== null || c.liquidity.max !== null) && liq === null)
+      return { skip: c.liquidity.currency === "usd" && token.liquiditySol !== null ? "usd_price_unavailable" : "liquidity_unknown" };
     if (liq !== null && c.liquidity.min !== null && liq < c.liquidity.min) return { skip: "liquidity_below_min" };
     if (liq !== null && c.liquidity.max !== null && liq > c.liquidity.max) return { skip: "liquidity_above_max" };
-    if (c.leaderSol.min !== null && t.amountSol < c.leaderSol.min) return { skip: "leader_size_below_min" };
-    if (c.leaderSol.max !== null && t.amountSol > c.leaderSol.max) return { skip: "leader_size_above_max" };
+    // A leader trade without a SOL value cannot be sized or drift-checked in SOL.
+    const leaderSol = t.amountSol;
+    if (leaderSol === null) return { skip: "price_unknown" };
+    if (c.leaderSol.min !== null && leaderSol < c.leaderSol.min) return { skip: "leader_size_below_min" };
+    if (c.leaderSol.max !== null && leaderSol > c.leaderSol.max) return { skip: "leader_size_above_max" };
     const pos = task.positions.get(t.mint);
     if (pos && pos.buys >= c.maxBuysPerToken) return { skip: "max_buys_per_token" };
     if (!pos && task.positions.size >= COPY_LIMITS.positionsPerTask) return { skip: "max_positions" };
     const fill = leaderFillPrice(t, token.decimals);
-    if (fill === null || !(token.priceSol > 0)) return { skip: "price_unknown" };
-    if ((token.priceSol / fill - 1) * 100 > c.maxDriftPct) return { skip: "price_drift" };
-    let size = c.sizing.mode === "fixed" ? c.sizing.sol : (t.amountSol * c.sizing.pct) / 100;
+    const price = token.priceSol;
+    if (fill === null || price === null || !(price > 0)) return { skip: "price_unknown" };
+    if ((price / fill - 1) * 100 > c.maxDriftPct) return { skip: "price_drift" };
+    let size = c.sizing.mode === "fixed" ? c.sizing.sol : (leaderSol * c.sizing.pct) / 100;
     size = Math.min(size, c.maxPerBuySol, user.maxTradeSol);
     this.rollDay(task, user, now);
     if (task.buysToday >= c.dailyBuyLimit) return { skip: "daily_buy_limit" };
@@ -597,8 +605,8 @@ export class CopyEngine {
       leaderSol: 0,
       leaderTokenAmount: "0",
       leaderPriceSol: null,
-      priceSol: token?.priceSol ?? 0,
-      mcSol: token?.mcSol ?? 0,
+      priceSol: token?.priceSol ?? null,
+      mcSol: token?.mcSol ?? null,
       mcUsd: token?.mcUsd ?? null,
       sizeSol: null,
       maxPriceSol: null,
@@ -787,7 +795,8 @@ export class CopyEngine {
       const set = this.byMint.get(mint);
       if (!set) continue;
       const token = this.o.token(mint);
-      if (!token || !(token.priceSol > 0)) continue;
+      const price = token?.priceSol ?? null;
+      if (!token || price === null || !(price > 0)) continue;
       for (const task of set) {
         const c = task.config;
         if (c.takeProfitPct === null && c.stopLossPct === null) continue;
@@ -795,7 +804,7 @@ export class CopyEngine {
         if (!pos || pos.tokens <= 0n || pos.exitSignalId || now < pos.exitCooldownUntil) continue;
         const avg = this.avgPrice(pos);
         if (avg === null) continue;
-        const pnl = (token.priceSol / avg - 1) * 100;
+        const pnl = (price / avg - 1) * 100;
         let trigger: CopySellTrigger | null = null;
         if (c.takeProfitPct !== null && pnl >= c.takeProfitPct) trigger = "take_profit";
         else if (c.stopLossPct !== null && pnl <= -c.stopLossPct) trigger = "stop_loss";
@@ -959,7 +968,7 @@ export class CopyEngine {
     const chain = r.signature
       ? this.o.recentTrades?.(s.wire.mint).find((t) => t.signature === r.signature && t.side === s.wire.side)
       : undefined;
-    const sol = chain ? chain.amountSol : (r.solAmount as number);
+    const sol = chain?.amountSol ?? (r.solAmount as number);
     const tokens = BigInt(chain ? chain.tokenAmount : (r.tokenAmount as string));
     s.wire.status = "executed";
     s.wire.reason = null;
@@ -1092,9 +1101,10 @@ export class CopyEngine {
     const s = this.recent.peek(id);
     if (s?.wire.status !== "executed" || s.wire.confirmed || t.side !== s.wire.side || t.mint !== s.wire.mint) return;
     this.sigWatch.delete(t.signature);
-    if (s.wire.filledSol !== t.amountSol || s.wire.filledTokens !== t.tokenAmount) {
-      this.correctFill(s, t.amountSol, BigInt(t.tokenAmount));
-      s.wire.filledSol = t.amountSol;
+    const sol = t.amountSol ?? s.wire.filledSol ?? 0;
+    if (s.wire.filledSol !== sol || s.wire.filledTokens !== t.tokenAmount) {
+      this.correctFill(s, sol, BigInt(t.tokenAmount));
+      s.wire.filledSol = sol;
       s.wire.filledTokens = t.tokenAmount;
     }
     s.wire.confirmed = true;
@@ -1114,7 +1124,7 @@ export class CopyEngine {
 
   private positionWire(task: TaskRt, pos: PositionRt): CopyPosition {
     const token = this.o.token(pos.mint);
-    const price = token && token.priceSol > 0 ? token.priceSol : null;
+    const price = token?.priceSol != null && token.priceSol > 0 ? token.priceSol : null;
     const whole = Number(pos.tokens) / 10 ** pos.decimals;
     return {
       taskId: task.id,

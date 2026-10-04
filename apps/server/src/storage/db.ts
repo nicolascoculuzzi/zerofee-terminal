@@ -100,6 +100,36 @@ export const MIGRATIONS: readonly string[] = [
   ) WITHOUT ROWID;
   CREATE INDEX wallet_funders_funder ON wallet_funders(funder);
   `,
+  // v3: a trade's SOL values are NULL when its quote has no known SOL value (exotic quote mints, USDC before
+  // a SOL/USD rate). Earlier versions stored 0; a known price is never 0, so those rows become NULL.
+  `
+  CREATE TABLE trades_v3 (
+    id TEXT PRIMARY KEY,
+    mint TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    slot INTEGER NOT NULL,
+    tx_index INTEGER,
+    ev_index INTEGER NOT NULL,
+    block_time INTEGER NOT NULL,
+    received_at INTEGER NOT NULL,
+    venue INTEGER NOT NULL,
+    side INTEGER NOT NULL,
+    trader TEXT NOT NULL,
+    quote_amount TEXT NOT NULL,
+    token_amount TEXT NOT NULL,
+    amount_sol REAL,
+    price_sol REAL,
+    mc_sol REAL
+  );
+  INSERT INTO trades_v3 SELECT id, mint, signature, slot, tx_index, ev_index, block_time, received_at, venue, side, trader,
+    quote_amount, token_amount,
+    CASE WHEN price_sol > 0 THEN amount_sol END, NULLIF(price_sol, 0), NULLIF(mc_sol, 0)
+    FROM trades;
+  DROP TABLE trades;
+  ALTER TABLE trades_v3 RENAME TO trades;
+  CREATE INDEX trades_mint_time ON trades(mint, block_time);
+  CREATE INDEX trades_time ON trades(block_time);
+  `,
 ];
 
 export function migrate(db: Database): number {

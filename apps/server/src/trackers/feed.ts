@@ -39,11 +39,11 @@ export interface MatchRecord {
   image: string | null;
   launchpad: Launchpad;
   venue: "pump" | "pumpswap";
-  amountSol: number;
+  amountSol: number | null;
   amountUsd: number | null;
   tokenAmount: string;
-  priceSol: number;
-  mcSol: number;
+  priceSol: number | null;
+  mcSol: number | null;
   mcUsd: number | null;
   signature: string;
   slot: number;

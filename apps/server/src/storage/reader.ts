@@ -26,9 +26,10 @@ export interface TradeRow {
   trader: string;
   quote_amount: string;
   token_amount: string;
-  amount_sol: number;
-  price_sol: number;
-  mc_sol: number;
+  /** NULL when the trade's quote had no known SOL value (schema v3). */
+  amount_sol: number | null;
+  price_sol: number | null;
+  mc_sol: number | null;
 }
 
 export function rowToTrade(r: TradeRow): Trade {

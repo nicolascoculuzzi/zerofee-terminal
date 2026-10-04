@@ -79,7 +79,7 @@ async function pickTraders(): Promise<{ address: string; trades: number }[]> {
   });
   for (const c of ["new", "final", "migrated"]) ws.send(JSON.stringify({ type: "subscribe", topic: `pulse:${c}` }));
   await Bun.sleep(2_000);
-  const busiest = [...new Map(tokens.map((t) => [t.mint, t])).values()].sort((a, b) => b.volume5m - a.volume5m).slice(0, 12);
+  const busiest = [...new Map(tokens.map((t) => [t.mint, t])).values()].sort((a, b) => (b.volume5m ?? 0) - (a.volume5m ?? 0)).slice(0, 12);
   for (const t of busiest) ws.send(JSON.stringify({ type: "subscribe", topic: `trades:${t.mint}` }));
   console.log(`sampling the tapes of ${busiest.length} busy tokens for ${SAMPLE_SEC}s ...`);
   await Bun.sleep(SAMPLE_SEC * 1_000);
@@ -137,8 +137,8 @@ async function main(): Promise<void> {
       for (const r of m.data.rows as TrackedTradeRow[]) {
         rows.push({ ...r, arrivedAt: now });
         console.log(
-          `tracked  ${r.tag.padEnd(9)} ${r.kind.padEnd(4)} ${r.amountSol.toFixed(4).padStart(9)} SOL  ${(r.symbol || short(r.mint)).padEnd(10)} ` +
-            `MC ${r.mcSol.toFixed(1)} SOL  slot ${r.slot}  ${short(r.signature)}  first=${r.firstBuy}  ` +
+          `tracked  ${r.tag.padEnd(9)} ${r.kind.padEnd(4)} ${(r.amountSol?.toFixed(4) ?? "?").padStart(9)} SOL  ${(r.symbol || short(r.mint)).padEnd(10)} ` +
+            `MC ${r.mcSol?.toFixed(1) ?? "?"} SOL  slot ${r.slot}  ${short(r.signature)}  first=${r.firstBuy}  ` +
             `detect ${r.receivedAt - r.blockTime} ms, server->client ${now - r.receivedAt} ms`,
         );
       }
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
         if (!signals.has(s.id) || signals.get(s.id)?.status !== s.status) {
           console.log(
             `copy     ${s.side.padEnd(4)} ${s.status.padEnd(8)} ${s.reason ?? ""} ${s.symbol || short(s.mint)} size ${s.sizeSol ?? "-"} ` +
-              `sell ${s.sellFraction ?? "-"} leader ${s.leaderSol.toFixed(4)} SOL`,
+              `sell ${s.sellFraction ?? "-"} leader ${s.leaderSol?.toFixed(4) ?? "?"} SOL`,
           );
         }
         signals.set(s.id, { ...s, arrivedAt: signals.get(s.id)?.arrivedAt ?? now });

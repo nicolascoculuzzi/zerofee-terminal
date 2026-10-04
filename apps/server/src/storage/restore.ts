@@ -78,19 +78,19 @@ function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): void
     rec.holders.applyDelta(r.trader, delta);
     if (isBuy) rec.holders.classifyBuy(r.trader, r.slot, txBuyers, BigInt(r.quote_amount));
   }
-  rec.windows.add(r.block_time, r.amount_sol, isBuy);
+  rec.windows.add(r.block_time, r.amount_sol ?? 0, isBuy);
   const trade = rowToTrade(r);
   trade.tags = rec.holders ? rec.holders.tagsOf(r.trader) : [];
   const entry: TradeEntry = {
     trade,
     key: [r.slot, r.tx_index ?? 0, r.ev_index] as OrderKey,
     tsMs: r.block_time,
-    volumeSol: r.amount_sol,
+    volumeSol: r.amount_sol ?? 0,
     isBuy,
     holderDelta: rec.holders ? delta : 0n,
     curveAfter: null,
     poolAfter: null,
-    priceSol: r.price_sol,
+    priceSol: r.price_sol ?? 0,
     solUsd: null,
   };
   rec.trades.push(entry);

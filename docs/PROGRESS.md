@@ -13,10 +13,10 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | CI + daily pump.fun interface watch | ✅ | GitHub Actions; opens an issue on drift |
 | Live data feed + backend gateway | ✅ | 6-min public-RPC run: 303 launches, 341 trades/s, 0 decode failures, ~0.5–1 s detection; Yellowstone gRPC client verified under Bun |
 | Wallet login (SIWS) + browser trading wallet + signer firewall | ✅ | Adversarial review: no critical bypass. 1,061-case matrix: every engine transaction (pump, PumpSwap, Raydium LaunchLab/CPMM) passes in all 3 modes; every tampered variant refused for its named reason |
-| Web UI on simulated data | 🔨 | All screens rebuilt to the design system; integration + merge in progress |
+| Web UI on simulated data | ✅ | Every screen rebuilt to the design system and merged; web build in CI |
 | Design system (Mobbin-grounded, "no AI slop" checklist) | ✅ | [DESIGN.md](design/DESIGN.md): 161 Mobbin references, computed AA contrast, slop checklist |
 | Local mainnet-fork test harness (real programs, real landed txs, no real money) | ✅ | 10/10 e2e: curve, mayhem and PumpSwap buys/sells/exits land, exact to the lamport ([how](dev/FORK_TESTING.md)) |
-| Wire UI ↔ feed ↔ wallet ↔ engine | ⏳ | |
+| Wire UI ↔ feed ↔ wallet ↔ engine | 🔨 | Live data → wallet/SIWS → dry-run trading → armed orders → trackers/copy |
 | UI polish rounds against the design system | ⏳ | |
 | First real 0.001 SOL trade | 🙋 | Needs a throwaway dev wallet key in your local `.env` |
 
@@ -27,7 +27,7 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Armed orders core: nonce slots, lookup tables, variant grids, triggers | ✅ (validator suite 10/10; all armed txs pass the firewall; worst case 1,053 of 1,232 bytes) |
 | Armed orders: server engine + UI | ✅ end-to-end on the mainnet fork (TP, OCO, SL ladder, cancel, PumpSwap SL, live migration snipe: 19/19 e2e); ✅ server engine (intake, triggers, nonce monitor, halt/Panic cancels); UI view built, wiring pending |
 | Raydium LaunchLab + CPMM (StonkFun, Bonk) | ✅ engine (mainnet dry runs exact) + signer firewall rules |
-| Jupiter `/build` fallback for the long tail | ⏳ |
+| Jupiter `/build` fallback for the long tail | 🔨 (with a firewall route rule) |
 | Wallet tracker + alerts (Web Push, Telegram, Discord) | ✅ server: matcher (4–6M trades/s), tracked feed, alerts (Telegram bot token 🙋) |
 | Copy trading, trailing stops, DCA, dev-sell exits | ✅ copy engine server + armed exits; trailing/dev-sell triggers in engine; UI wiring pending |
 | X tracker | ⏳ (X data key 🙋) |
