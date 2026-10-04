@@ -165,7 +165,12 @@ describe("buildTrade on the Jupiter fallback", () => {
       minOut: r.otherAmountThreshold,
     });
     expect(t.quote.feesQuote.total).toBe(0n);
-    expect(t.quote.jupiter).toMatchObject({ instruction: "route_v2", labels: ["Dynamic Bonding Curve"] });
+    expect(t.quote.jupiter).toMatchObject({
+      instruction: "route_v2",
+      labels: ["Dynamic Bonding Curve"],
+      reviewedVenuesOnly: false,
+      droppedAtaCreate: false,
+    });
     expect(t.defaultCuLimit).toBe(DEFAULT_CU_LIMITS.jupiter);
     expect(t.hotAccount).toBe(r.routePlan[0]!.ammKey);
     expect(t.lookupTables).toEqual({});
@@ -326,6 +331,7 @@ describe("routes the signer can verify (hops may not act on the user's accounts 
       [JUPITER_REVIEWED_DEX_LABELS.join(","), null],
     ]);
     expect(JUPITER_REVIEWED_DEX_LABELS).toEqual(["Whirlpool", "Meteora DAMM v2", "Dynamic Bonding Curve"]);
+    expect(t.quote.jupiter?.reviewedVenuesOnly).toBe(true);
     expect(jupiterRouteProblem({ instructions: t.instructions, instruction: t.quote.jupiter!.instruction }, JUPITER_TAKER)).toBeNull();
   });
 

@@ -399,6 +399,9 @@ function printQuote(s: TokenState, q: Awaited<ReturnType<typeof buildTrade>>["qu
       `          Jupiter ${q.jupiter.instruction} via ${q.jupiter.labels.join(" > ")} (price impact ${impact}); ` +
         "venue fees are inside Jupiter's quote, no Jupiter or platform fee",
     );
+    if (q.jupiter.reviewedVenuesOnly) {
+      console.log("          re-quoted over the venues whose hops the signer verifies (the open route was not verifiable)");
+    }
     if (q.jupiter.maxAccounts !== undefined || q.jupiter.droppedAtaCreate) {
       console.log(
         `          fitted to one packet:${q.jupiter.maxAccounts !== undefined ? ` route re-quoted with maxAccounts=${q.jupiter.maxAccounts}` : ""}` +

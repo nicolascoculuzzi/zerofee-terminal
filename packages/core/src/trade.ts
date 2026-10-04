@@ -90,6 +90,8 @@ export interface TradeQuote {
     maxAccounts?: number;
     /** Jupiter's creation of the (existing) token account was left out to fit one packet. */
     droppedAtaCreate: boolean;
+    /** The open route was one the signer would refuse, so the quote is over the reviewed venues only. */
+    reviewedVenuesOnly: boolean;
   };
 }
 
@@ -297,6 +299,7 @@ async function buildJupiterTrade(state: JupiterState, req: TradeRequest, opts: J
         priceImpactPct: route.priceImpactPct,
         ...(budget !== undefined ? { maxAccounts: budget } : {}),
         droppedAtaCreate,
+        reviewedVenuesOnly: restricted,
       },
     },
     instructions,

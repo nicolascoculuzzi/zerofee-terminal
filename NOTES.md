@@ -32,7 +32,7 @@ Slots ~453,130,650–453,133,400. None of these tokens has a pump curve, canonic
 | Buy 0.01 SOL of BONK (split Invariant 9% / BisonFi 91%, then TesseraV), re-quoted at `maxAccounts=48` | `shared_accounts_route_v2` | 247,218 / 296,662 | 1,074 B | 20 + 18 from 3 tables | +0.001% (state moved) |
 | Sell 0.01% of a BONK holding (TesseraV > BisonFi) | `shared_accounts_route_v2` | 144,623 / 186,802 | 983 B | 2 tables | simulated OK |
 
-Firewall: every one of these, in every landing mode, passed `createSignerPolicy` with Jupiter's quote as the expectation (the 6Vsnb… buy and full sell, the DBC buy and sell, and the BONK buy and sell went through the live check). Turbo is 49 B smaller than standard (one Sender tip instead of two tips). Protected is 16 B smaller (one Jito tip plus the jitodontfront marker).
+Firewall: the 6Vsnb… buy and full sell, the DBC buy and sell, and the BONK buy and sell went through the live check. Each passed `createSignerPolicy` in every landing mode, with Jupiter's quote as the expectation. After the hop rules (entry above), the DBC buy, a BONK buy (a three-hop shared route, 1,145 B, 222,728 CU) and a 6Vsnb… full sell (706 B, 34,224 CU) were re-run and passed again in all three modes. Turbo is 49 B smaller than standard (one Sender tip instead of two tips). Protected is 16 B smaller (one Jito tip plus the jitodontfront marker).
 
 What these numbers mean:
 
