@@ -1,6 +1,6 @@
 import { Segmented } from "../../components/ui/controls";
 import { Num } from "../../components/ui/Num";
-import { fmtCompact, fmtPct, fmtPriceText, fmtSol } from "../../lib/format";
+import { DASH, fmtCompact, fmtPct, fmtPriceText, fmtSol } from "../../lib/format";
 import type { TokenSummary } from "../../protocol";
 import type { QuoteCurrency } from "../../state/settings";
 import type { TriggerMetric } from "../token/tokenUi";
@@ -52,10 +52,11 @@ export function LimitFields({
   solUsd: number;
   onEnter?: () => void;
 }) {
+  // null: the quote has no known SOL value right now; distances and the current value read as the dash.
   const current = token.priceSol;
   const dist = distancePct(priceSol, current);
   const value = triggerValue(priceSol, metric, quote, token.supply, solUsd);
-  const currentValue = triggerValue(current, metric, quote, token.supply, solUsd);
+  const currentValue = current === null ? null : triggerValue(current, metric, quote, token.supply, solUsd);
   const usd = quote === "USD";
   return (
     <div className="space-y-2">
@@ -84,8 +85,10 @@ export function LimitFields({
         ariaLabel={metric === "mc" ? "Trigger market cap" : "Trigger price"}
       />
       <Slider
-        value={Math.max(-100, Math.min(100, dist))}
-        onChange={(pct) => onPriceSol(current * Math.max(0.001, 1 + pct / 100))}
+        value={dist === null ? 0 : Math.max(-100, Math.min(100, dist))}
+        onChange={(pct) => {
+          if (current !== null) onPriceSol(current * Math.max(0.001, 1 + pct / 100));
+        }}
         min={-100}
         max={100}
         step={0.5}
@@ -97,7 +100,9 @@ export function LimitFields({
       <p className="text-label text-fg-3">
         <span className="zf-num">{fmtPct(dist, { signed: true })}</span> vs current {metric === "mc" ? "MC" : "price"}{" "}
         {metric === "mc" ? (
-          <span className="zf-num">{usd ? `$${fmtCompact(currentValue)}` : `${fmtSol(currentValue)} SOL`}</span>
+          <span className="zf-num">
+            {currentValue === null ? DASH : usd ? `$${fmtCompact(currentValue)}` : `${fmtSol(currentValue)} SOL`}
+          </span>
         ) : (
           <Num kind="price" usd={usd} value={currentValue} unit={usd ? undefined : "SOL"} />
         )}

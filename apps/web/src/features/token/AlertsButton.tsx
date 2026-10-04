@@ -25,10 +25,16 @@ export function AlertsButton({ token, size = "sm" }: { token: TokenSummary; size
   const removeAlert = useTokenUi((s) => s.removeAlert);
   const alertKey = useSettings((s) => s.hotkeys["token.alert"]?.[0]);
   const fx = quote === "USD" ? solUsd : 1;
-  const currentMc = token.priceSol * token.supply * fx;
-  const [mc, setMc] = useState(currentMc * 1.2);
+  // Unknown price (null: the quote has no known SOL value): no reference to set an alert against.
+  const price = token.priceSol;
+  const currentMc = price === null ? Number.NaN : price * token.supply * fx;
+  const known = Number.isFinite(currentMc) && currentMc > 0;
+  const [mc, setMc] = useState(known ? currentMc * 1.2 : 0);
   const mine = alerts.filter((a) => a.mint === token.mint);
   const usd = quote === "USD";
+  const add = () => {
+    if (known && price !== null && mc > 0) addAlert(token.mint, mc / (token.supply * fx), price);
+  };
 
   return (
     <>
@@ -46,7 +52,7 @@ export function AlertsButton({ token, size = "sm" }: { token: TokenSummary; size
           title=""
           active={open || mine.length > 0}
           onClick={() => {
-            if (!open) setMc(Number((currentMc * 1.2).toPrecision(3)));
+            if (!open && known) setMc(Number((currentMc * 1.2).toPrecision(3)));
             setOpen((o) => !o);
           }}
         >
@@ -66,12 +72,13 @@ export function AlertsButton({ token, size = "sm" }: { token: TokenSummary; size
               suffix={usd ? "MC" : "SOL MC"}
               ariaLabel="Alert market cap"
               className="flex-1"
-              onEnter={() => addAlert(token.mint, mc / (token.supply * fx), token.priceSol)}
+              onEnter={add}
             />
-            <Button variant="primary" size="sm" onClick={() => addAlert(token.mint, mc / (token.supply * fx), token.priceSol)}>
+            <Button variant="primary" size="sm" disabled={!known} onClick={add}>
               Add alert
             </Button>
           </div>
+          {!known && <p className="text-label text-fg-3">The market cap is unknown right now, so there is nothing to measure from.</p>}
           {mine.length > 0 && (
             <ul className="space-y-1">
               {mine.map((a) => (

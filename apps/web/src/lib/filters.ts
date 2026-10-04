@@ -98,10 +98,27 @@ function rangeActive(r: Range): boolean {
   return r.min !== null || r.max !== null;
 }
 
-function inRange(value: number, r: Range): boolean {
+/**
+ * Unknown is not zero (DESIGN.md 4.16, packages/protocol market.ts): a value the server sends as null
+ * (or a NaN placeholder) fails any min or max set on it, so the token drops out while that filter is
+ * active. "Max MC $50K" must not let a token with an unknown market cap through as "$0".
+ */
+export function inRange(value: number | null | undefined, r: Range): boolean {
+  if (r.min === null && r.max === null) return true;
+  if (typeof value !== "number" || !Number.isFinite(value)) return false;
   if (r.min !== null && value < r.min) return false;
   if (r.max !== null && value > r.max) return false;
   return true;
+}
+
+/**
+ * Token age in minutes for the age filter. A creation time the server did not observe means the token
+ * is older than its observation window: it passes a minimum age and fails a maximum (the copy-trade
+ * filters' rule, packages/protocol trackers.ts).
+ */
+function ageInRange(createdAt: number | null, now: number, r: Range): boolean {
+  if (typeof createdAt === "number" && Number.isFinite(createdAt)) return inRange((now - createdAt) / 60_000, r);
+  return r.max === null;
 }
 
 function keywords(raw: string): string[] {
@@ -152,7 +169,7 @@ export function matchesFilter(t: TokenSummary, c: CompiledFilter, now: number): 
     if (c.exclude.some((k) => hay.includes(k))) return false;
   }
   const a = f.audit;
-  if (!inRange((now - t.createdAt) / 60_000, a.ageMin)) return false;
+  if (!ageInRange(t.createdAt, now, a.ageMin)) return false;
   if (!inRange(t.risk.top10Pct, a.top10)) return false;
   if (!inRange(t.risk.devPct, a.dev)) return false;
   if (!inRange(t.risk.snipersPct, a.snipers)) return false;

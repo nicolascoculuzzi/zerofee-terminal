@@ -79,6 +79,8 @@ function useTokenHotkeys(mint: string | undefined): void {
       const detail = useToken.getState().detail;
       if (!detail || detail.summary.mint !== mint) return;
       const current = detail.summary.priceSol;
+      // Unknown price (null): no direction to cross from, so no alert.
+      if (current === null) return;
       ui().addAlert(mint, crosshair.priceSol ?? current * 1.1, current);
     });
     for (const [i, tab] of TAB_ORDER.entries()) on(`token.tab${i + 1}` as HotkeyAction, () => ui().setTab(tab));

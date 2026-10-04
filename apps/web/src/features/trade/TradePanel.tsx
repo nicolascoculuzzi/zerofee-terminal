@@ -165,9 +165,11 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
   const side = ui.side;
   const orderType = ui.orderType;
   const exec = preset[side];
-  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? 125;
+  // null until the venue's live fee is known (the live trade engine reads FeeConfig).
+  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? null;
   const venue = venueShort(token.venue);
-  const available = status ? Math.max(0, status.solBalance - status.reservedSol) : 0;
+  // null until the wallet feed reports a balance: "–", and no balance check (never a fake 0).
+  const available = status ? Math.max(0, status.solBalance - status.reservedSol) : null;
   const holding = position?.holdingTokens ?? 0;
   const firstBuy = holding <= 0;
   const feedOk = connection === "live" || connection === "degraded";
@@ -182,13 +184,19 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
   priceRef.current = token.priceSol;
   useEffect(() => {
     if (orderType === "limit" && useTokenUi.getState().limitPriceSol === null) {
-      useTokenUi.getState().setLimitPriceSol(defaultLimitPrice(useTokenUi.getState().side, priceRef.current));
+      const seed = defaultLimitPrice(useTokenUi.getState().side, priceRef.current);
+      if (seed !== null) useTokenUi.getState().setLimitPriceSol(seed);
     }
   }, [orderType]);
-  const limitPrice = ui.limitPriceSol ?? defaultLimitPrice(side, token.priceSol);
+  // NaN while the price is unknown: the limit fields read "–" and arming refuses (armLimitDraft).
+  const limitPrice = ui.limitPriceSol ?? defaultLimitPrice(side, token.priceSol) ?? Number.NaN;
 
   const sellTokens =
-    sellUnit === "pct" ? (holding * (sellPct ?? 0)) / 100 : token.priceSol > 0 ? Math.min(holding, (sellSol ?? 0) / token.priceSol) : 0;
+    sellUnit === "pct"
+      ? (holding * (sellPct ?? 0)) / 100
+      : token.priceSol !== null && token.priceSol > 0
+        ? Math.min(holding, (sellSol ?? 0) / token.priceSol)
+        : 0;
 
   const buyQuote = useMemo(
     () => (side === "buy" && buySol > 0 ? quoteBuy(detail.curve, detail.pool, buySol) : null),
@@ -370,7 +378,8 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
             Bal <span className="zf-num text-fg-2">{fmtSol(available)}</span> SOL ·
             <button
               type="button"
-              onClick={() => ui.setBuySol(maxBuySol(available, exec, firstBuy))}
+              disabled={available === null}
+              onClick={() => available !== null && ui.setBuySol(maxBuySol(available, exec, firstBuy))}
               className="font-medium text-fg-1 hover:underline"
               title="Leaves the reserve for fees, tip and rent"
             >
@@ -423,13 +432,8 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
       />
     );
 
-  const refMcQuote = triggerValue(
-    side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : token.priceSol,
-    "mc",
-    quote,
-    token.supply,
-    solUsd,
-  );
+  const refPrice = side === "sell" && position && position.avgEntryPriceSol > 0 ? position.avgEntryPriceSol : token.priceSol;
+  const refMcQuote = refPrice === null ? Number.NaN : triggerValue(refPrice, "mc", quote, token.supply, solUsd);
 
   const fields = (
     <>
@@ -470,6 +474,7 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
         cost={cost}
         symbol={sym}
         venue={venue}
+        route={detail.route ?? null}
         landing={exec.landing}
         slippagePct={exec.slippagePct}
         open={ui.costOpen}

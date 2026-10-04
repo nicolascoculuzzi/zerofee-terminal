@@ -3,6 +3,7 @@ import { useState } from "react";
 import { IconButton } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
 import { HoldButton } from "../../components/ui/HoldButton";
+import { WalletBadge } from "../../components/ui/WalletIcon";
 import { isBase58Address } from "../../lib/address";
 import { fmtDate, shortAddr } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
@@ -12,7 +13,6 @@ import { useWallet } from "../../state/wallet";
 import { errorMessage, fmtCountdown } from "./format";
 import { Block, InlineStatus, Row, Rows, SubHeader, Tag, useTransient } from "./ui";
 
-const PROVIDER_NAME = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" } as const;
 const LABEL_MAX = 24;
 
 /*
@@ -48,7 +48,10 @@ export function WithdrawalDestinations() {
           : destinations.some((d) => d.address === trimmed)
             ? "Already in your list."
             : null;
-  const canAdd = connected !== null && trimmed !== "" && addressError === null && !busy;
+  // Live: the server has no delayed-destination flow yet and the signer refuses every destination but the
+  // connected wallet, so nothing can be added.
+  const supported = getServices().features.otherDestinations;
+  const canAdd = supported && connected !== null && trimmed !== "" && addressError === null && !busy;
 
   const add = async () => {
     if (!canAdd) return;
@@ -117,7 +120,7 @@ export function WithdrawalDestinations() {
           help={
             connected ? (
               <span className="inline-flex items-center gap-1">
-                {PROVIDER_NAME[connected.provider]} <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
+                <WalletBadge wallet={connected} /> <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
                 <CopyButton text={connected.address} label="Copy connected wallet address" />
               </span>
             ) : (
@@ -190,6 +193,11 @@ export function WithdrawalDestinations() {
             </div>
           )}
           {error && <div className="mt-1 text-label text-sell">{error}</div>}
+          {!supported && (
+            <div className="mt-1 text-label text-fg-3">
+              Not available yet: withdrawals go to your connected wallet only, and the signer refuses any other destination.
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
             <span className="max-w-[44ch] text-label text-fg-3">
               {connected

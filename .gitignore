@@ -8,8 +8,8 @@ keypair*.json
 id.json
 *.key
 *.pem
-wallets/
-keystore/
+/wallets/
+/keystore/
 
 # Local databases
 *.db

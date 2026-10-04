@@ -7,8 +7,8 @@
  * rolled-back events go out as `correction` messages. Slow clients that exceed the backpressure limit
  * are disconnected (they reconnect and resnapshot).
  *
- * REST: GET /api/health, /api/tokens/:mint, /api/candles, /api/program-accounts, /api/img (media/proxy.ts);
- * POST /api/tx;
+ * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts, /api/lookup-tables,
+ * /api/img (media/proxy.ts); POST /api/tx;
  * GET /debug; GET /metrics (Prometheus, token or loopback only: src/metrics.ts). Per-IP token-bucket
  * rate limits; an AuthProvider seam for SIWS sessions.
  *
@@ -26,11 +26,13 @@ import {
   type ClientMessage,
   type ErrorCode,
   type HealthResponse,
+  isAddressLike,
   isTimeframe,
   type OrdersDelta,
   type ParsedTopic,
   type PulseColumn,
   parseTopic,
+  type SearchResponse,
   TIMEFRAME_MS,
   type Timeframe,
   type TokenSummary,
@@ -41,6 +43,7 @@ import type { Server, ServerWebSocket } from "bun";
 import { apiError, json } from "../api/http";
 import type { ServerConfig } from "../config";
 import type { ChainPublisher } from "../feeds/chain";
+import { type LookupTableReader, MAX_LOOKUP_TABLES_PER_REQUEST } from "../feeds/lookupTables";
 import type { ProgramAccountsCache } from "../feeds/programAccounts";
 import { logger } from "../log";
 import { COLUMNS, diffSummary, type PulseBoard } from "../market/pulse";
@@ -108,6 +111,8 @@ export interface GatewayDeps {
   chain: ChainPublisher;
   reader: StorageReader | null;
   programAccounts: ProgramAccountsCache | null;
+  /** GET /api/lookup-tables (chain reads); absent = 503. */
+  lookupTables?: LookupTableReader | null;
   auth: AuthProvider;
   tx: TxHandler;
   health(): HealthResponse;
@@ -324,11 +329,13 @@ export class Gateway {
         return new Response(DEBUG_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
       if (req.method === "GET" && url.pathname.startsWith("/api/tokens/"))
         return this.getToken(decodeURIComponent(url.pathname.slice("/api/tokens/".length)));
+      if (req.method === "GET" && url.pathname === "/api/search") return this.search(url);
       if (req.method === "GET" && url.pathname === "/api/candles") return this.getCandles(url);
       if (req.method === "GET" && url.pathname === "/api/program-accounts") {
         const v = this.d.programAccounts?.get();
         return v ? json(v) : apiError(503, "unavailable", "program accounts not loaded yet");
       }
+      if (req.method === "GET" && url.pathname === "/api/lookup-tables") return await this.lookupTables(url);
       if (url.pathname === "/api/tx") {
         if (req.method !== "POST") return apiError(405, "bad_request", "POST only");
         if (!this.txLimiter.allow(ip)) return apiError(429, "rate_limited", "slow down");
@@ -364,6 +371,34 @@ export class Gateway {
     const token = this.d.market.summary(mint) ?? this.d.reader?.token(mint)?.summary ?? null;
     if (!token) return apiError(404, "not_found", "unknown token");
     return json({ token, tradeContext: this.d.market.tradeContext(mint) });
+  }
+
+  /** GET /api/search?q&limit: a contract address matches exactly; text matches tickers and names in memory. */
+  private search(url: URL): Response {
+    const q = (url.searchParams.get("q") ?? "").trim();
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? 20)) || 20));
+    if (q.length > 64) return apiError(400, "bad_request", "query too long");
+    let tokens: TokenSummary[];
+    if (isAddressLike(q)) {
+      const token = this.d.market.summary(q) ?? this.d.reader?.token(q)?.summary ?? null;
+      tokens = token ? [token] : [];
+    } else tokens = this.d.market.search(q, limit);
+    const body: SearchResponse = { tokens };
+    return json(body);
+  }
+
+  private async lookupTables(url: URL): Promise<Response> {
+    const list = (url.searchParams.get("addresses") ?? "").split(",").filter((a) => a.length > 0);
+    if (list.length === 0 || list.length > MAX_LOOKUP_TABLES_PER_REQUEST) {
+      return apiError(400, "bad_request", `addresses must list 1-${MAX_LOOKUP_TABLES_PER_REQUEST} lookup tables`);
+    }
+    if (!list.every(isAddressLike)) return apiError(400, "bad_request", "invalid address");
+    if (!this.d.lookupTables) return apiError(503, "unavailable", "lookup tables are not served here");
+    try {
+      return json(await this.d.lookupTables.read(list));
+    } catch (e) {
+      return apiError(503, "unavailable", `lookup tables unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private getCandles(url: URL): Response {
@@ -517,7 +552,7 @@ export class Gateway {
     const stillWanted = ws.data.pending.delete(topic) && ws.readyState === 1;
     if (!stillWanted || data === null) {
       this.hub.removeSubscriber(internal);
-      if (stillWanted) this.sendError(ws, "unavailable", "wallet balances are not published yet", topic);
+      if (stillWanted) this.sendError(ws, "unavailable", "no snapshot for this topic right now", topic);
       return;
     }
     ws.send(this.hub.snapshot(internal, data, topic));

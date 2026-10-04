@@ -1,11 +1,12 @@
 import { ArrowRight, Check } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
+import { WalletBadge } from "../../components/ui/WalletIcon";
 import { shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { ConnectedWallet, SiwsSession } from "../../services/walletService";
 import { fmtDateTime } from "../settings/format";
-import { InlineError, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
 const STATEMENT = "Sign in to zerofee. This request will not trigger a transaction or cost any fees.";
 /** Preview only; the signed session carries the real expiry. */
@@ -33,9 +34,22 @@ export function SignInStep({
 }) {
   const { busy, error, run } = useAction(onBusyChange);
   const [previewAt] = useState(() => Date.now());
-  const signed = session !== null && session.address === connected.address ? session : null;
+  const signed = session !== null && session.address === connected.address && session.message ? session : null;
+  // The live server issues the nonce: show the exact text the wallet will be asked to sign.
+  const [exact, setExact] = useState<string | null>(null);
+  useEffect(() => {
+    const preview = getServices().wallet.previewSignIn;
+    if (!preview || signed) return;
+    let live = true;
+    preview
+      .call(getServices().wallet)
+      .then((text) => live && setExact(text))
+      .catch(() => live && setExact(null));
+    return () => {
+      live = false;
+    };
+  }, [signed]);
   const domain = window.location.host;
-  const wallet = PROVIDER_NAME[connected.provider];
 
   const preview: { id: string; text: string; pending?: string }[] = [
     { id: "head", text: `${domain} wants you to sign in with your Solana account:` },
@@ -61,19 +75,21 @@ export function SignInStep({
       <StepHeader frame={frame} />
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <span className="zf-label">{signed ? "Signed message" : "Message to sign"}</span>
-        <span className="text-label text-fg-3">
-          {wallet} · <span className="font-mono">{shortAddr(connected.address)}</span>
+        <span className="inline-flex items-center gap-1 text-label text-fg-3">
+          <WalletBadge wallet={connected} /> · <span className="font-mono">{shortAddr(connected.address)}</span>
         </span>
       </div>
       <pre className="overflow-x-auto rounded-sm bg-surface-2 p-3 font-mono text-label font-normal whitespace-pre-wrap break-all text-fg-2">
         {signed
           ? signed.message
-          : preview.map((line) => (
-              <span key={line.id} className="block">
-                {line.text || " "}
-                {line.pending && <span className="text-fg-3">({line.pending})</span>}
-              </span>
-            ))}
+          : exact !== null
+            ? exact
+            : preview.map((line) => (
+                <span key={line.id} className="block">
+                  {line.text || " "}
+                  {line.pending && <span className="text-fg-3">({line.pending})</span>}
+                </span>
+              ))}
       </pre>
       <p className="mt-3 text-body text-fg-2">This signature proves you own this wallet. It can't move funds.</p>
 
@@ -93,7 +109,7 @@ export function SignInStep({
         ) : (
           <Button size="xl" variant="primary" disabled={busy} onClick={() => void sign()}>
             {busy && <Spinner />}
-            {busy ? `Waiting for ${wallet}` : `Sign in with ${wallet}`}
+            {busy ? `Waiting for ${connected.name}` : `Sign in with ${connected.name}`}
           </Button>
         )}
       </StepActions>

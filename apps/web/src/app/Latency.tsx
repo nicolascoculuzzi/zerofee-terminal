@@ -17,7 +17,16 @@ function Arrow() {
  * 48px bar (text-3 on a surface-3 track; the largest segment in text-2), then the total.
  * The record is cumulative ms since the click; rows show the time each step added.
  */
-export function LatencyBreakdownView({ latency, status }: { latency: LatencyBreakdown; status: "confirmed" | "failed" | null }) {
+export function LatencyBreakdownView({
+  latency,
+  status,
+  simulated = false,
+}: {
+  latency: LatencyBreakdown;
+  status: "confirmed" | "failed" | null;
+  /** Dry run: the lane row is the server's simulation and nothing landed, so there is no landing row. */
+  simulated?: boolean;
+}) {
   const lastSent = latency.lanes.reduce((m, l) => Math.max(m, l.sentMs), latency.receivedMs);
   const steps: Step[] = [
     {
@@ -44,8 +53,10 @@ export function LatencyBreakdownView({ latency, status }: { latency: LatencyBrea
       ),
       delta: latency.receivedMs - latency.signedMs,
     },
-    ...latency.lanes.map((l) => ({ label: `Sent · ${l.lane}`, delta: l.sentMs - latency.receivedMs })),
-    { label: status === "failed" ? "Not landed" : "Landed", delta: latency.landedMs === null ? null : latency.landedMs - lastSent },
+    ...latency.lanes.map((l) => ({ label: simulated ? l.lane : `Sent · ${l.lane}`, delta: l.sentMs - latency.receivedMs })),
+    ...(simulated
+      ? []
+      : [{ label: status === "failed" ? "Not landed" : "Landed", delta: latency.landedMs === null ? null : latency.landedMs - lastSent }]),
   ];
   const max = Math.max(1, ...steps.map((s) => s.delta ?? 0));
   return (

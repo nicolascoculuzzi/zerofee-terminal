@@ -21,6 +21,7 @@ import type {
   ArmOrdersResponse,
   ArmRejection,
   CancelOrderResponse,
+  NonceProbeResponse,
   NonceSlotsResponse,
   OrderDetailResponse,
   OrderLimits,
@@ -387,6 +388,36 @@ describe("intake: refused", () => {
       await capped.close();
     }
   }, 60_000);
+});
+
+describe("nonce probe", () => {
+  test("a wallet's derived slots as they stand on chain, held slots named; other wallets and bad input refused", async () => {
+    const { b, signer } = await trader();
+    const [slot0, slot1, slot2] = await nonceRefs(signer.address, 3);
+    if (!slot0 || !slot1 || !slot2) throw new Error("no slots");
+    chain.setNonce(slot0.account, signer.address, slot0.value);
+    chain.setNonce(slot2.account, addr("someone-else"), slot2.value);
+    // An open order holds slot 0 once armed.
+    const held = await stopLoss(signer);
+    expect((await post(b, armedOrderToJson(held))).status).toBe(201);
+    const heldAccount = held.attempts[0]?.nonce.account;
+
+    const r = await b.json<NonceProbeResponse>("GET", `/api/orders/nonce-probe?wallet=${signer.address}&count=3`);
+    expect(r.status).toBe(200);
+    expect(r.body.wallet).toBe(signer.address);
+    expect(r.body.rentLamports).toBeNull(); // the fake chain has no rent method
+    expect(r.body.slots.map((s) => s.nonceAccount)).toEqual([slot0.account, slot1.account, slot2.account]);
+    expect(r.body.slots[0]).toMatchObject({ index: 0, state: "ready", orderId: heldAccount === slot0.account ? held.id : null });
+    expect(r.body.slots[0]?.nonceValue).not.toBeNull();
+    expect(r.body.slots[1]).toMatchObject({ index: 1, state: "absent", nonceValue: null, lamports: null, orderId: null });
+    expect(r.body.slots[2]).toMatchObject({ index: 2, state: "foreign" });
+
+    const stranger = await armedWallet();
+    expect((await b.req("GET", `/api/orders/nonce-probe?wallet=${stranger.address}&count=2`)).status).toBe(403);
+    expect((await b.req("GET", `/api/orders/nonce-probe?wallet=${signer.address}&count=33`)).status).toBe(400);
+    expect((await b.req("GET", `/api/orders/nonce-probe?wallet=nope&count=2`)).status).toBe(400);
+    expect((await new Browser(env).req("GET", `/api/orders/nonce-probe?wallet=${signer.address}&count=2`)).status).toBe(401);
+  });
 });
 
 describe("cancel, Panic and the kill switch", () => {

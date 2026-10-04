@@ -6,7 +6,7 @@ import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
-import { fmtPct, fmtSol, fmtUsd } from "../../lib/format";
+import { fmtPct, fmtSol, fmtUsd, signClass } from "../../lib/format";
 import { TIMEFRAMES, type Timeframe, type TokenDetail } from "../../protocol";
 import { useSettings } from "../../state/settings";
 import { RiskChips } from "../pulse/RiskChips";
@@ -106,8 +106,8 @@ export function MobileToken({ detail }: { detail: TokenDetail }) {
               {quote === "USD" ? fmtUsd(mc) : fmtSol(mc)}
               {quote === "SOL" && <span className="zf-unit">{" SOL"}</span>}
             </span>
-            <span className={cn("zf-num text-data font-medium", change > 0 ? "text-buy" : change < 0 ? "text-sell" : "text-fg-3")}>
-              {change > 0 ? "↑ " : change < 0 ? "↓ " : ""}
+            <span className={cn("zf-num text-data font-medium", signClass(change))}>
+              {change !== null && change > 0 ? "↑ " : change !== null && change < 0 ? "↓ " : ""}
               {fmtPct(change, { signed: true })} 5m
             </span>
           </div>

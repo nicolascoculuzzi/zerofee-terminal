@@ -4,7 +4,7 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { fmtFee, fmtLamports, fmtPct, fmtSol, fmtSolShort, fmtTokens } from "../../lib/format";
 import { LANDING_INFO } from "../../lib/landing";
-import type { LandingPreset } from "../../protocol";
+import type { LandingPreset, TradeRoute } from "../../protocol";
 import type { CostLines } from "./tradeMath";
 
 /*
@@ -30,17 +30,17 @@ export function ZeroMark({ className }: { className?: string }) {
   );
 }
 
-function Sol({ value, approx }: { value: number; approx?: boolean }) {
+function Sol({ value, approx }: { value: number | null; approx?: boolean }) {
   return (
     <span className="zf-num">
-      {approx ? "~" : ""}
+      {approx && value !== null ? "~" : ""}
       {fmtSol(value)}
       <span className="zf-unit">{" SOL"}</span>
     </span>
   );
 }
 
-function Fee({ value }: { value: number }) {
+function Fee({ value }: { value: number | null }) {
   return (
     <span className="zf-num" title={fmtLamports(value)}>
       {fmtFee(value)}
@@ -68,6 +68,7 @@ export function CostBreakdown({
   cost,
   symbol,
   venue,
+  route = null,
   landing,
   slippagePct,
   open,
@@ -77,6 +78,8 @@ export function CostBreakdown({
   cost: CostLines;
   symbol: string;
   venue: string;
+  /** Live: the coin trades through the Jupiter fallback (no local venue); shown instead of the venue fee. */
+  route?: TradeRoute | null;
   landing: LandingPreset;
   slippagePct: number;
   open: boolean;
@@ -117,7 +120,8 @@ export function CostBreakdown({
               tip={`Estimated from the live curve or pool reserves. Up to ${slippagePct}% slippage is allowed.`}
             >
               <span className="zf-num text-fg-1">
-                ~{fmtTokens(cost.tokens)} {symbol}
+                {cost.tokens === null ? "" : "~"}
+                {fmtTokens(cost.tokens)} {symbol}
               </span>
             </Line>
           )}
@@ -127,16 +131,28 @@ export function CostBreakdown({
               tip={`SOL from the live reserves after the venue fee. Up to ${slippagePct}% slippage is allowed.`}
             >
               <span className="text-fg-1">
-                <Sol value={cost.amountSol - cost.venueFeeSol} approx />
+                <Sol value={cost.amountSol === null || cost.venueFeeSol === null ? null : cost.amountSol - cost.venueFeeSol} approx />
               </span>
             </Line>
           )}
           {(kind === "buy" || kind === "sell") && (
             <Line label="Price impact" tip="How far this trade moves the price against you at today's reserves.">
-              <span className={cn("zf-num", cost.impactPct >= 10 && "text-warn")}>{fmtPct(cost.impactPct)}</span>
+              <span className={cn("zf-num", (cost.impactPct ?? route?.priceImpactPct ?? 0) >= 10 && "text-warn")}>
+                {fmtPct(cost.impactPct ?? route?.priceImpactPct ?? null)}
+              </span>
             </Line>
           )}
-          {kind !== "ladder" && kind !== "limitSell" && kind !== "limitBuy" && (
+          {route && (
+            <Line
+              label="Route (Jupiter)"
+              tip={`No pump.fun curve or PumpSwap pool to build on (${route.reason}), so Jupiter routes this trade, chosen when you trade. Venue fees along the route are inside its quote; Jupiter adds no fee and neither does zerofee.`}
+            >
+              <span className="block max-w-44 truncate text-fg-1" title={route.labels.join(" → ")}>
+                {route.labels.length > 0 ? route.labels.join(" → ") : "Best route at trade time"}
+              </span>
+            </Line>
+          )}
+          {!route && kind !== "ladder" && kind !== "limitSell" && kind !== "limitBuy" && (
             <Line
               label={`Venue fee (${venue} ${fmtSolShort(cost.venuePct)}%)`}
               tip={`Charged by ${venue} on every trade. It goes to the launchpad or AMM, not to zerofee.`}

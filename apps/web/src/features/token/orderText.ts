@@ -1,5 +1,5 @@
-import { fmtSolShort } from "../../lib/format";
 import type { Order, OrderKind, OrderStatus } from "../../protocol";
+import { sizeText as orderSizeText } from "../orders/orderText";
 
 /*
  * Order wording for the token page (DESIGN.md 4.20): sizes as verbs ("Sell 25%", "Buy 0.5 SOL"),
@@ -16,6 +16,9 @@ export const KIND_TEXT: Record<OrderKind, string> = {
   migration_sell: "Migration sell",
   copy_buy: "Copy buy",
   dev_snipe: "Dev snipe",
+  trailing_stop: "Trailing stop",
+  dca_tranche: "DCA tranche",
+  dev_sell_exit: "Dev-sell exit",
 };
 
 export const KIND_SHORT: Record<OrderKind, string> = {
@@ -27,6 +30,9 @@ export const KIND_SHORT: Record<OrderKind, string> = {
   migration_sell: "Migration sell",
   copy_buy: "Copy buy",
   dev_snipe: "Dev snipe",
+  trailing_stop: "Trailing",
+  dca_tranche: "DCA",
+  dev_sell_exit: "Dev-sell exit",
 };
 
 export type StatusTone = "info" | "warn" | "sell" | "done" | "off";
@@ -40,18 +46,17 @@ export const STATUS_TEXT: Record<OrderStatus, { label: string; tone: StatusTone 
   cancelled: { label: "Cancelled", tone: "off" },
 };
 
-/** "Buy 0.5 SOL", "Sell 25%". */
+/** "Buy 0.5 SOL", "Sell 25%", "Sell 1.2M tokens". */
 export function sizeText(order: Order): string {
-  const verb = order.side === "buy" ? "Buy" : "Sell";
-  return order.size.kind === "sol" ? `${verb} ${fmtSolShort(order.size.sol)} SOL` : `${verb} ${fmtSolShort(order.size.pct)}%`;
+  return orderSizeText(order);
 }
 
 /** Signed % from the live value to the trigger (a distance, not PnL), or null. */
-export function distanceToTrigger(order: Order, current: { mcUsd: number; priceSol: number }): number | null {
+export function distanceToTrigger(order: Order, current: { mcUsd: number | null; priceSol: number | null }): number | null {
   const t = order.trigger;
   if (t.value === null) return null;
-  if (t.metric === "mc") return current.mcUsd > 0 ? (t.value / current.mcUsd - 1) * 100 : null;
-  if (t.metric === "price") return current.priceSol > 0 ? (t.value / current.priceSol - 1) * 100 : null;
+  if (t.metric === "mc") return current.mcUsd !== null && current.mcUsd > 0 ? (t.value / current.mcUsd - 1) * 100 : null;
+  if (t.metric === "price") return current.priceSol !== null && current.priceSol > 0 ? (t.value / current.priceSol - 1) * 100 : null;
   return null;
 }
 

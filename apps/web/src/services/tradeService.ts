@@ -38,12 +38,14 @@ interface TradeRequestBase {
   source: TradeSource;
   /** `performance.timeOrigin + performance.now()` at the click, for the latency record. */
   clickedAt: number;
-  /** Quote at click time; the engine enforces slippage against it. */
-  expectedPriceSol: number;
+  /** Price shown at click time (null while unknown); the live engine quotes from the trade context itself. */
+  expectedPriceSol: number | null;
 }
 
 export interface BuyRequest extends TradeRequestBase {
   solAmount: number;
+  /** Copy trades: never pay more than this per whole token (SOL); the live engine raises the minimum out to match. */
+  maxPriceSol?: number | null;
 }
 
 export interface SellRequest extends TradeRequestBase {
@@ -81,6 +83,10 @@ export interface TradeReceipt {
     priceSol: number;
     fees: TradeFees;
   } | null;
+  /** Dry run (server DRY_RUN=true): the signed transaction was simulated and nothing was sent. */
+  simulated?: boolean;
+  /** Jupiter fallback: the venues of the route, in order. */
+  route?: string[];
 }
 
 export interface LimitOrderRequest {

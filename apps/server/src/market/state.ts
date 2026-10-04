@@ -1196,6 +1196,24 @@ export class MarketState {
     return buildTradeContext(rec, rec.pool ? this.deps.resolver.pools.get(rec.pool) : undefined);
   }
 
+  /**
+   * Tokens in memory whose ticker or name matches `query` (case-insensitive): exact ticker first, then
+   * ticker prefix, then a name match; ties go to the most recently traded. Only the winners are summarized.
+   */
+  search(query: string, limit: number): TokenSummary[] {
+    const q = query.trim().replace(/^\$/, "").toLowerCase();
+    if (!q) return [];
+    const hits: { rec: TokenRecord; score: number }[] = [];
+    for (const rec of this.tokens.values()) {
+      const symbol = rec.symbol.toLowerCase();
+      const score = symbol === q ? 3 : symbol.startsWith(q) ? 2 : rec.name.toLowerCase().includes(q) ? 1 : 0;
+      if (score) hits.push({ rec, score });
+    }
+    hits.sort((a, b) => b.score - a.score || (b.rec.lastTradeAt ?? 0) - (a.rec.lastTradeAt ?? 0));
+    const opts = { solUsd: this.deps.solUsd(), now: this.now() };
+    return hits.slice(0, limit).map((h) => summarize(h.rec, opts));
+  }
+
   recentTrades(mint: string, limit = 100): Trade[] {
     const rec = this.tokens.get(mint);
     if (!rec) return [];

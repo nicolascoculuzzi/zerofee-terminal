@@ -10,6 +10,7 @@ import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
 import { Enricher, watchedMints } from "./enrich";
 import { ChainPublisher } from "./feeds/chain";
+import { LookupTableReader } from "./feeds/lookupTables";
 import { MetadataFetcher } from "./feeds/metadata";
 import { ProgramAccountsCache } from "./feeds/programAccounts";
 import { SolUsdFeed } from "./feeds/solUsd";
@@ -32,6 +33,7 @@ import { restoreMarket } from "./storage/restore";
 import { StorageWriter } from "./storage/writer";
 import type { UserLayer } from "./user";
 import { RpcClient } from "./util/rpc";
+import { WalletFeed } from "./wallets/feed";
 
 const log = logger("app");
 export const VERSION = "0.2.0";
@@ -105,6 +107,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   // MarketState, the resolver and the enricher reference each other through callbacks.
   let market: MarketState | null = null;
   let enricher: Enricher | null = null;
+  // wallet:<address> feed (built once the gateway exists; it needs the topic hub).
+  let walletFeed: WalletFeed | null = null;
   const resolver = new AccountResolver(rpc, {
     pool: (p) => market?.onPoolReady(p),
     mint: (m) => market?.onMintResolved(m),
@@ -143,8 +147,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     funderOf: (w) => enricher?.funderOf(w) ?? null,
     onLaunch: (rec) => enricher?.onLaunch(rec),
     onMigrate: (rec) => enricher?.onMigrate(rec),
-    // Wallet tracker / copy trading: every recorded trade is matched against the tracked wallets.
-    onTrade: o.user ? (t, tx) => o.user?.trackers.onTrade(t, tx) : undefined,
+    // Wallet tracker / copy trading: every recorded trade is matched against the tracked wallets; a watched
+    // wallet's own trades go out on its wallet:<address> topic.
+    onTrade: o.user
+      ? (t, tx) => {
+          o.user?.trackers.onTrade(t, tx);
+          walletFeed?.onTrade(t);
+        }
+      : undefined,
   });
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
@@ -348,6 +358,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     chain,
     reader,
     programAccounts,
+    lookupTables: new LookupTableReader(rpc),
     auth: o.auth ?? user?.sessions ?? new AnonymousAuth(),
     tx,
     health,
@@ -386,6 +397,22 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   gateway.start();
   metrics.start();
   user?.trackers.attachHub(gateway.hub);
+  if (user) {
+    const hub = gateway.hub;
+    const gw = gateway;
+    walletFeed = new WalletFeed({
+      rpc,
+      history: (address, limit) => reader.tradesByTrader(address, limit),
+      watched: (address) => hub.hasSubscribers(`wallet:${address}`),
+      watchedAll: () => [...hub.subscribed("wallet:")].map((t) => t.slice("wallet:".length)),
+      publish: (address, delta) => gw.publishWallet(address, delta),
+      refreshMs: cfg.walletFeed.refreshMs,
+      afterFillMs: cfg.walletFeed.afterFillMs,
+    });
+    const feed = walletFeed;
+    user.attachWalletFeed((address) => feed.snapshot(address));
+    if (o.pollers !== false) feed.start();
+  }
   user?.start();
   if (orders) {
     orders.ready = orders.start().catch((e) => log.error(`armed-orders engine failed to start: ${e instanceof Error ? e.message : e}`));
@@ -443,6 +470,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
       metrics.stop();
+      walletFeed?.stop();
       await orders?.engine.stop();
       await source?.stop();
       await pumpPortal?.stop();

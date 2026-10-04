@@ -40,6 +40,7 @@ export const useToken = create<TokenState>()((set, get) => ({
         summary: delta.summary ?? prev.summary,
         curve: delta.curve !== undefined ? delta.curve : prev.curve,
         pool: delta.pool !== undefined ? delta.pool : prev.pool,
+        route: delta.route !== undefined ? delta.route : prev.route,
         holders: delta.holders ?? prev.holders,
         topTraders: delta.topTraders ?? prev.topTraders,
       },

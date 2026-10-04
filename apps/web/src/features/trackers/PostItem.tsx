@@ -61,7 +61,9 @@ function richText(text: string): ReactNode[] {
 const MentionChip = memo(function MentionChip({ token }: { token: TokenRef }) {
   const live = useMarket((s) => s.tokens[token.mint]);
   const mcUsd = live?.marketCapUsd ?? token.marketCapUsd;
-  const change = live && token.marketCapUsd > 0 ? ((live.marketCapUsd - token.marketCapUsd) / token.marketCapUsd) * 100 : null;
+  const then = token.marketCapUsd;
+  const nowMc = live?.marketCapUsd ?? null;
+  const change = nowMc !== null && then !== null && then > 0 ? ((nowMc - then) / then) * 100 : null;
   return (
     <span
       {...hoverTarget(token.mint)}

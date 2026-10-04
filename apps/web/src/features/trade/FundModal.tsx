@@ -22,7 +22,6 @@ import { PresetChips, solStep } from "./AmountField";
  * https://mobbin.com/screens/09a5bbe0-2943-4077-9f53-eddf516df513
  */
 
-const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
 /** Left in the connected wallet for its own network fees. */
 const FEE_RESERVE_SOL = 0.001;
 
@@ -41,7 +40,7 @@ function FundFromConnected({ address }: { address: string }) {
   const [busy, setBusy] = useState(false);
   const connected = useWallet((s) => s.service.connected);
   const close = useUi((s) => s.closeFund);
-  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "your wallet";
+  const provider = connected?.name ?? "your wallet";
 
   useEffect(() => {
     void getServices()
@@ -56,8 +55,16 @@ function FundFromConnected({ address }: { address: string }) {
     if (!amount || over) return;
     setBusy(true);
     try {
-      await getServices().wallet.fundFromConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: `From ${provider}` });
+      const r = await getServices().wallet.fundFromConnected(address, amount);
+      useToasts.getState().push(
+        r.simulated
+          ? {
+              kind: "info",
+              title: `Dry run: funding ${fmtSolShort(amount)} SOL simulated`,
+              body: "The server simulated the signed transfer and sent nothing.",
+            }
+          : { kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: `From ${provider}` },
+      );
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Funding failed", body: e instanceof Error ? e.message : String(e) });
@@ -135,7 +142,8 @@ function Deposit({ address, label }: { address: string; label: string }) {
 }
 
 function Withdraw({ address }: { address: string }) {
-  const balance = useWallet((s) => s.status[address]?.solBalance ?? 0);
+  // null until the wallet feed reports the balance: shown as "–", never as 0.
+  const balance = useWallet((s) => s.status[address]?.solBalance ?? null);
   const reserved = useWallet((s) => s.status[address]?.reservedSol ?? 0);
   const connected = useWallet((s) => s.service.connected);
   const destinations = useSettings((s) => s.withdrawalDestinations);
@@ -145,9 +153,9 @@ function Withdraw({ address }: { address: string }) {
   const [amount, setAmount] = useState<number | null>(null);
   const [dest, setDest] = useState<string>("connected");
   const [busy, setBusy] = useState(false);
-  const available = Math.max(0, balance - reserved - 0.00001);
-  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "Connected wallet";
-  const over = amount !== null && amount > available;
+  const available = balance === null ? null : Math.max(0, balance - reserved - 0.00001);
+  const provider = connected?.name ?? "Connected wallet";
+  const over = amount !== null && available !== null && amount > available;
   const other = destinations.find((d) => d.id === dest) ?? null;
 
   const submit = async () => {
@@ -167,8 +175,16 @@ function Withdraw({ address }: { address: string }) {
     }
     setBusy(true);
     try {
-      await getServices().wallet.withdrawToConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: `To ${provider}` });
+      const r = await getServices().wallet.withdrawToConnected(address, amount);
+      useToasts.getState().push(
+        r.simulated
+          ? {
+              kind: "info",
+              title: `Dry run: withdrawal of ${fmtSolShort(amount)} SOL simulated`,
+              body: "The server simulated the signed transfer and sent nothing.",
+            }
+          : { kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: `To ${provider}` },
+      );
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Withdrawal failed", body: e instanceof Error ? e.message : String(e) });
@@ -182,7 +198,12 @@ function Withdraw({ address }: { address: string }) {
       <div className="space-y-1">
         <div className="flex h-4 items-center justify-between text-label">
           <span className="font-medium text-fg-3">Amount</span>
-          <button type="button" className="text-fg-3 hover:text-fg-1" onClick={() => setAmount(Math.floor(available * 10_000) / 10_000)}>
+          <button
+            type="button"
+            className="text-fg-3 hover:text-fg-1"
+            disabled={available === null}
+            onClick={() => available !== null && setAmount(Math.floor(available * 10_000) / 10_000)}
+          >
             Available <span className="zf-num text-fg-1">{fmtSol(available)}</span> SOL · Max
           </button>
         </div>
@@ -196,7 +217,9 @@ function Withdraw({ address }: { address: string }) {
           invalid={over}
           ariaLabel="Amount to withdraw in SOL"
         />
-        {over && <p className="text-label text-sell">Exceeds the available balance by {fmtSol((amount ?? 0) - available)} SOL</p>}
+        {over && available !== null && (
+          <p className="text-label text-sell">Exceeds the available balance by {fmtSol((amount ?? 0) - available)} SOL</p>
+        )}
         {reserved > 0 && <p className="text-label text-fg-3">{fmtSol(reserved)} SOL stays reserved by armed orders.</p>}
       </div>
       <div className="space-y-1" role="radiogroup" aria-label="Destination">

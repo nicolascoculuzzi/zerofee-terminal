@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { FeedHealth, MarketStatus, PulseColumnId, TokenSummary } from "../protocol";
+import { IS_LIVE } from "../runtime";
 import type { FeedConnectionState } from "../services/dataSource";
 
 export interface PulseBatch {
@@ -28,16 +29,20 @@ export interface MarketState {
   setConnection(state: FeedConnectionState): void;
 }
 
+/** Unknown times (NaN: creation not observed by the live server) sort as oldest. */
+const t = (ms: number | null): number => (ms !== null && Number.isFinite(ms) ? ms : 0);
+
 const sorters: Record<PulseColumnId, (a: TokenSummary, b: TokenSummary) => number> = {
-  new: (a, b) => b.createdAt - a.createdAt,
-  final: (a, b) => b.bondingProgress - a.bondingProgress || b.createdAt - a.createdAt,
-  migrated: (a, b) => (b.migratedAt ?? 0) - (a.migratedAt ?? 0),
+  new: (a, b) => t(b.createdAt) - t(a.createdAt),
+  final: (a, b) => b.bondingProgress - a.bondingProgress || t(b.createdAt) - t(a.createdAt),
+  migrated: (a, b) => t(b.migratedAt) - t(a.migratedAt),
 };
 
 export const useMarket = create<MarketState>()((set, get) => ({
   tokens: {},
   columns: { new: [], final: [], migrated: [] },
-  solUsd: 119.5,
+  // The simulation starts at its own SOL/USD; live values stay unknown ("–") until the chain topic says.
+  solUsd: IS_LIVE ? Number.NaN : 119.5,
   solUsdAt: Date.now(),
   slot: 0,
   feed: { state: "reconnecting", lagMs: 0, eventsPerSec: 0 },

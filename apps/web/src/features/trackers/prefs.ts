@@ -5,7 +5,7 @@ import type { Launchpad } from "../../protocol";
 /** UI-only preferences for the Trackers page and the docks (tabs, filters, sorts). */
 
 /** Below 1280 px one pane shows the chosen tab; from 1280 px the wallet manager is always on the left. */
-export type TrackerTab = "wallets" | "trades" | "monitor" | "x";
+export type TrackerTab = "wallets" | "trades" | "monitor" | "x" | "copy";
 /** The right pane at 1280 px and up. */
 export type TrackerPane = Exclude<TrackerTab, "wallets">;
 export type SideFilter = "all" | "buy" | "sell";
@@ -47,7 +47,7 @@ interface TrackerPrefsState {
   setXView(view: XView): void;
 }
 
-const TABS: readonly TrackerTab[] = ["wallets", "trades", "monitor", "x"];
+const TABS: readonly TrackerTab[] = ["wallets", "trades", "monitor", "x", "copy"];
 
 export const useTrackerPrefs = create<TrackerPrefsState>()(
   persist(

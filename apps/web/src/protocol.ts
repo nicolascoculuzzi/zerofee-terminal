@@ -146,17 +146,17 @@ export interface TokenSocials {
 /** Holder-composition metrics; definitions are published in-app (SPEC "Token metric definitions"). */
 export interface TokenRisk {
   /** Top 10 holders' share of supply; excludes curve PDA, AMM vaults, burn addresses, lockers. */
-  top10Pct: number;
+  top10Pct: number | null;
   /** Creator wallet balance (live `bonding_curve.creator`) as % of supply. */
-  devPct: number;
+  devPct: number | null;
   /** True once the creator sold their whole position ("DS" on cards). */
   devSold: boolean;
   /** Non-dev buyers whose first buy landed within 3 slots of creation. */
-  snipersPct: number;
+  snipersPct: number | null;
   /** Transfer-only receivers plus wallets the creator funded within two hops. */
-  insidersPct: number;
+  insidersPct: number | null;
   /** Creation-slot co-buyers, same-slot funder/size clusters, multi-wallet txs. */
-  bundlersPct: number;
+  bundlersPct: number | null;
 }
 
 /** Token-2022 extensions that let someone else move, freeze or block your tokens. */
@@ -186,18 +186,18 @@ export interface TokenSummary {
   socials: TokenSocials;
   supply: number;
   decimals: number;
-  priceSol: number;
-  priceUsd: number;
-  marketCapSol: number;
-  marketCapUsd: number;
-  liquidityUsd: number;
+  priceSol: number | null;
+  priceUsd: number | null;
+  marketCapSol: number | null;
+  marketCapUsd: number | null;
+  liquidityUsd: number | null;
   /** Volume in USD since creation (rolling 24 h for tokens older than a day). */
-  volumeUsd: number;
+  volumeUsd: number | null;
   txns: number;
   buys: number;
   sells: number;
-  holders: number;
-  proTraders: number;
+  holders: number | null;
+  proTraders: number | null;
   /** 0..1, `1 − real_token_reserves_now / real_token_reserves_initial`; 1 once migrated. */
   bondingProgress: number;
   migratedAt: number | null;
@@ -210,12 +210,12 @@ export interface TokenSummary {
   /** Null for legacy SPL Token mints. */
   token2022: Token2022Flags | null;
   /** Total fees traders paid on this token: venue fees + priority fees + tips, in SOL. */
-  feesPaidSol: number;
+  feesPaidSol: number | null;
   /** Net buy since creation: SOL bought minus SOL sold, in USD (Pulse "NB", signed). */
-  netBuyUsd: number;
+  netBuyUsd: number | null;
   lastTradeAt: number;
   /** Price change over the last 5 minutes, %. */
-  change5mPct: number;
+  change5mPct: number | null;
 }
 
 export interface CurveState {
@@ -275,10 +275,26 @@ export interface TopTrader {
 }
 
 /** `token:<mint>` snapshot. */
+/**
+ * How a coin with no local venue trades (live mode: the Jupiter fallback). Set instead of `curve` / `pool`
+ * when the browser cannot price the coin on a pump.fun curve or PumpSwap pool itself.
+ */
+export interface TradeRoute {
+  via: "jupiter";
+  /** Why no local venue is used. */
+  reason: string;
+  /** Venues of the last quoted route, in order ("Meteora DBC"); empty until a trade is quoted. */
+  labels: string[];
+  /** Price impact of that quote, %; null when unknown. */
+  priceImpactPct: number | null;
+}
+
 export interface TokenDetail {
   summary: TokenSummary;
   curve: CurveState | null;
   pool: PoolState | null;
+  /** Live mode: the Jupiter fallback route, when the coin has no local venue. */
+  route?: TradeRoute | null;
   /** Top holders, largest first (curve and pool accounts included and tagged). */
   holders: Holder[];
   topTraders: TopTrader[];
@@ -293,6 +309,7 @@ export interface TokenDetailDelta {
   summary?: TokenSummary;
   curve?: CurveState | null;
   pool?: PoolState | null;
+  route?: TradeRoute | null;
   holders?: Holder[];
   topTraders?: TopTrader[];
 }
@@ -324,11 +341,11 @@ export interface Trade {
   ts: number;
   slot: number;
   side: "buy" | "sell";
-  solAmount: number;
+  solAmount: number | null;
   tokenAmount: number;
-  priceSol: number;
-  priceUsd: number;
-  marketCapUsd: number;
+  priceSol: number | null;
+  priceUsd: number | null;
+  marketCapUsd: number | null;
   maker: string;
   tags: WalletTag[];
 }
@@ -454,19 +471,27 @@ export type OrderKind =
   | "migration_buy"
   | "migration_sell"
   | "copy_buy"
-  | "dev_snipe";
+  | "dev_snipe"
+  /** Armed-order kinds of the live engine (@zerofee/core ArmedOrderKind) without a simulated twin. */
+  | "trailing_stop"
+  | "dca_tranche"
+  | "dev_sell_exit";
 
 /** `stale` = the pre-signed transactions can no longer land and the order needs re-arming. */
 export type OrderStatus = "armed" | "submitted" | "filled" | "stale" | "cancelled" | "failed";
 
 export interface OrderTrigger {
-  /** `mc` triggers on market cap (USD), `price` on SOL price, `migration` on graduation. */
-  metric: "mc" | "price" | "migration" | "leader_buy" | "dev_launch";
+  /**
+   * `mc` triggers on market cap (USD), `price` on SOL price, `migration` on graduation. Live armed
+   * orders add `trailing` (value = trail %), `time` (value = not-before, ms) and `dev_sell`.
+   */
+  metric: "mc" | "price" | "migration" | "leader_buy" | "dev_launch" | "trailing" | "time" | "dev_sell";
   direction: "above" | "below" | null;
   value: number | null;
 }
 
-export type OrderSize = { kind: "sol"; sol: number } | { kind: "pct"; pct: number };
+/** `tokens`: a fixed token amount (UI units), how live armed sells that are not full exits are sized. */
+export type OrderSize = { kind: "sol"; sol: number } | { kind: "pct"; pct: number } | { kind: "tokens"; tokens: number };
 
 /** One pre-signed variant on an order's min-out grid. */
 export interface OrderVariant {
@@ -565,7 +590,7 @@ export interface TokenRef {
   imageUri: string | null;
   launchpad: Launchpad;
   createdAt: number;
-  marketCapUsd: number;
+  marketCapUsd: number | null;
 }
 
 export interface TrackedTrade {

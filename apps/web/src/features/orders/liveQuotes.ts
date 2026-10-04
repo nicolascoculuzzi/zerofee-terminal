@@ -5,8 +5,8 @@ import { useMarket } from "../../state/market";
 import { subscribeSequenced } from "../../state/subscribe";
 
 export interface LiveQuote {
-  mcUsd: number;
-  priceSol: number;
+  mcUsd: number | null;
+  priceSol: number | null;
   supply: number;
   lastTradeAt: number;
 }

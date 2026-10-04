@@ -156,6 +156,30 @@ export class RpcClient {
     return { slot, accounts };
   }
 
+  /** getTokenAccountsByOwner (jsonParsed) for one token program: the owner's token accounts with amounts and decimals. */
+  async getTokenAccountsByOwner(
+    owner: string,
+    programId: string,
+    commitment = "confirmed",
+  ): Promise<{ slot: number; accounts: { account: string; mint: string; amount: string; decimals: number; tokenProgram: string }[] }> {
+    const r = await this.call<{
+      context: { slot: number };
+      value: {
+        pubkey: string;
+        account: { owner: string; data: { parsed?: { info?: { mint?: string; tokenAmount?: { amount?: string; decimals?: number } } } } };
+      }[];
+    }>("getTokenAccountsByOwner", [owner, { programId }, { encoding: "jsonParsed", commitment }]);
+    const accounts = [];
+    for (const v of r.value) {
+      const info = v.account.data.parsed?.info;
+      const amount = info?.tokenAmount?.amount;
+      const decimals = info?.tokenAmount?.decimals;
+      if (!info?.mint || typeof amount !== "string" || typeof decimals !== "number") continue;
+      accounts.push({ account: v.pubkey, mint: info.mint, amount, decimals, tokenProgram: v.account.owner });
+    }
+    return { slot: r.context.slot, accounts };
+  }
+
   getLatestBlockhash(commitment = "confirmed") {
     return this.call<{ context: { slot: number }; value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [
       { commitment },

@@ -143,7 +143,7 @@ services:
       APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env.production}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.production}
       SIGNER_DOMAIN: ${SIGNER_DOMAIN:-}
-      CSP_CONNECT_EXTRA: ${CSP_CONNECT_EXTRA:-https://sender.helius-rpc.com https://api.mainnet-beta.solana.com}
+      CSP_CONNECT_EXTRA: ${CSP_CONNECT_EXTRA:-https://sender.helius-rpc.com https://api.mainnet-beta.solana.com https://api.jup.ag}
       SERVER_UPSTREAM: 127.0.0.1:8787
     read_only: true
     tmpfs:

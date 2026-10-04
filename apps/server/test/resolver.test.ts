@@ -57,6 +57,8 @@ describe("account resolver", () => {
       fromAccount: true,
     });
     expect(pools[0]?.poolBaseTokenAccount).toBeTruthy();
+    // The account size travels to the trade context (a short pool needs extend_account before a swap).
+    expect(pools[0]?.dataLength).toBeGreaterThan(200);
     expect(AccountResolver.ready(pools[0])).toBe(true);
     expect(calls.every((c) => c.method === "getMultipleAccounts")).toBe(true);
     expect(persisted).toContain(snap.pool);

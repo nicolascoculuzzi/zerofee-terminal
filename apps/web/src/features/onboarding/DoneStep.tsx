@@ -2,6 +2,7 @@ import { ArrowRight, Check, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "../../components/ui/Button";
 import { Hotkey } from "../../components/ui/controls";
+import { WalletBadge } from "../../components/ui/WalletIcon";
 import { fmtSol, shortAddr } from "../../lib/format";
 import type { ConnectedWallet, TradingWallet } from "../../services/walletService";
 import { useSettings } from "../../state/settings";
@@ -42,7 +43,9 @@ export function DoneStep({
       <StepHeader frame={frame} />
       <ul className="divide-y divide-hairline border-y border-hairline">
         <Item ok>
-          Signed in as <span className="font-mono">{shortAddr(connected.address)}</span>
+          <span className="inline-flex flex-wrap items-center gap-1">
+            Signed in as <span className="font-mono">{shortAddr(connected.address)}</span> with <WalletBadge wallet={connected} />
+          </span>
         </Item>
         <Item ok>Trading wallet created ({wallet.unlockMethod === "passkey" ? "passkey" : "passphrase"})</Item>
         <Item ok={backedUp}>{backedUp ? "Backup verified" : "Backup not verified"}</Item>

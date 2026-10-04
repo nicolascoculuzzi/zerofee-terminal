@@ -28,7 +28,7 @@ import { Cell, CursorBar, HeaderCell, HeaderRow, rowTone, SortHeaderCell } from 
 import { VirtualGrid } from "./VirtualList";
 
 const rowKey = (r: MonitorRow): string => r.mint;
-const liveMc = (r: MonitorRow): number => useMarket.getState().tokens[r.mint]?.marketCapUsd ?? r.lastMcUsd;
+const liveMc = (r: MonitorRow): number | null => useMarket.getState().tokens[r.mint]?.marketCapUsd ?? r.lastMcUsd;
 
 /*
  * Monitor columns (DESIGN.md 5.4): token · tracked holders · net flow 15 m · first tracked buy ·

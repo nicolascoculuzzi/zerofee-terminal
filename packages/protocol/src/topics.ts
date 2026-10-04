@@ -8,7 +8,7 @@
  *   candles:<mint>:<tf>                         OHLCV, tf in TIMEFRAMES
  *   tradectx:<mint>                             inputs for building a trade locally with @zerofee/core
  *   chain                                       blockhash, slot, priority fees, Jito tip floor, SOL/USD, halt
- *   wallet:<address>                            balances and fills of one wallet (balances not published yet)
+ *   wallet:<address>                            balances (RPC) and fills (the feed) of one of the user's wallets
  *   orders                                      the session user's armed orders
  *   tracked                                     the session user's tracked-wallet feed (trackers.ts)
  *   tracked:<mint>                              the user's tracked-wallet trades on one token (chart markers)

@@ -16,7 +16,7 @@ const RISK_KEYS: RiskKey[] = ["top10", "dev", "snipers", "insiders", "bundlers"]
 const CHART_W = 216;
 const CHART_H = 56;
 
-function riskValue(token: TokenSummary, k: RiskKey): number {
+function riskValue(token: TokenSummary, k: RiskKey): number | null {
   const r = token.risk;
   return k === "top10"
     ? r.top10Pct

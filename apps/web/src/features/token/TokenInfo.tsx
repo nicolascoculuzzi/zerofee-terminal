@@ -95,7 +95,7 @@ export function TokenInfo({ detail, header = true }: { detail: TokenDetail; head
   const t = detail.summary;
   const r = t.risk;
   const danger = token2022Danger(t.token2022);
-  const band = (key: RiskKey, v: number) => (colors ? TONE_TEXT[riskTone(key, v, thresholds)] : "text-fg-1");
+  const band = (key: RiskKey, v: number | null) => (colors ? TONE_TEXT[riskTone(key, v, thresholds)] : "text-fg-1");
   const lpTone =
     t.lpBurnedPct === null ? "text-fg-2" : t.lpBurnedPct >= 100 ? "text-fg-1" : t.lpBurnedPct <= 0 ? "text-risk-high" : "text-risk-mid";
 

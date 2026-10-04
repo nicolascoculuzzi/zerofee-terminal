@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { compileBlacklists, compileFilter, isBlacklisted, matchesFilter } from "../../lib/filters";
+import { compareKnown } from "../../lib/sort";
 import type { PulseColumnId, TokenSummary } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
@@ -11,7 +12,7 @@ function matchesSearch(t: TokenSummary, q: string): boolean {
   return t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || t.mint.toLowerCase().startsWith(q);
 }
 
-const SORT_VALUE: Record<Exclude<SortKey, "default">, (t: TokenSummary) => number> = {
+const SORT_VALUE: Record<Exclude<SortKey, "default">, (t: TokenSummary) => number | null> = {
   mc: (t) => t.marketCapUsd,
   volume: (t) => t.volumeUsd,
   holders: (t) => t.holders,
@@ -58,7 +59,8 @@ export function useIncoming(column: PulseColumnId) {
     });
     if (sort !== "default") {
       const value = SORT_VALUE[sort];
-      list.sort((a, b) => value(tokens[b] as TokenSummary) - value(tokens[a] as TokenSummary));
+      // Highest first; unknown values (null from the live server) last, never as 0.
+      list.sort((a, b) => compareKnown(value(tokens[a] as TokenSummary), value(tokens[b] as TokenSummary), -1));
     }
     return list;
   }, [mints, tokens, blocked, compiled, search, sort]);

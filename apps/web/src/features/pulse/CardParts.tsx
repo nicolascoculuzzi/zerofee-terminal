@@ -258,7 +258,7 @@ export function MetricsCell({ view, stale }: { view: CardView; stale: boolean })
  * Wide+ second metrics column: fees paid in SOL and net buy (signed, in the global quote). As
  * tall as the first metrics column, so F and NB line up with MC and V.
  */
-const NB_TONE: Record<CardView["nbTone"], string> = { buy: "text-buy", sell: "text-sell", zero: "text-fg-3" };
+const NB_TONE: Record<CardView["nbTone"], string> = { buy: "text-buy", sell: "text-sell", zero: "text-fg-3", unknown: "text-fg-4" };
 
 export function FeesCell({ view, stale }: { view: CardView; stale: boolean }) {
   return (

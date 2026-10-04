@@ -136,9 +136,10 @@ interface HolderView {
  * Average-cost PnL from the holder's lifetime buys and sells. Tokens that arrived by transfer
  * (no buy) have no cost basis, so a holder who never bought shows "–".
  */
-function holderView(h: Holder, rank: number, priceSol: number): HolderView {
+function holderView(h: Holder, rank: number, priceSol: number | null): HolderView {
   const system = h.tags.includes("curve") || h.tags.includes("pool");
-  const valueSol = h.balance * priceSol;
+  // Unknown price (null): values and PnL are unknown (NaN renders as the dash), never 0.
+  const valueSol = priceSol === null ? Number.NaN : h.balance * priceSol;
   const avg = !system && h.boughtTokens > 0 ? h.boughtSol / h.boughtTokens : null;
   const costHeld = avg !== null ? avg * Math.min(h.balance, Math.max(0, h.boughtTokens - h.soldTokens)) : null;
   return {
@@ -228,7 +229,7 @@ function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked:
   }
 }
 
-function SummaryValue({ k, pct, label, sold }: { k: RiskKey; pct: number; label: string; sold?: boolean }) {
+function SummaryValue({ k, pct, label, sold }: { k: RiskKey; pct: number | null; label: string; sold?: boolean }) {
   const thresholds = useSettings((s) => s.display.riskThresholds);
   const tone = sold ? "neutral" : riskTone(k, pct, thresholds);
   return (
@@ -471,7 +472,7 @@ export function MobileHoldersList({ holders, token }: { holders: Holder[]; token
               )}
             </span>
             <span className="zf-num text-fg-1">{fmtPct(h.pct)}</span>
-            <Money sol={h.balance * token.priceSol} unit className="min-w-[8ch] text-right text-fg-2" />
+            <Money sol={token.priceSol === null ? null : h.balance * token.priceSol} unit className="min-w-[8ch] text-right text-fg-2" />
           </li>
         );
       })}

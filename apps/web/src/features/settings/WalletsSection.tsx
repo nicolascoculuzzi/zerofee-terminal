@@ -6,6 +6,7 @@ import { ProgressBar } from "../../components/ui/bits";
 import { CopyButton, Hotkey } from "../../components/ui/controls";
 import { HoldButton } from "../../components/ui/HoldButton";
 import { WalletAvatar } from "../../components/ui/TokenAvatar";
+import { WalletBadge } from "../../components/ui/WalletIcon";
 import { fmtDate, fmtFee, fmtInt, fmtSol, shortAddr } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { getServices } from "../../services";
@@ -21,7 +22,6 @@ import { MODE_INFO, MODES } from "./modes";
 import { Block, InlineStatus, Note, RadioRow, Row, Rows, SectionHeader, SelectMenu, SubHeader, Tag, useTransient } from "./ui";
 import { WithdrawalDestinations } from "./WithdrawalDestinations";
 
-const PROVIDER_NAME = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" } as const;
 const METHOD_LABEL: Record<TradingWallet["unlockMethod"], string> = {
   password: "Passphrase (Argon2id)",
   passkey: "Passkey (WebAuthn PRF)",
@@ -118,28 +118,38 @@ function ExportKey({ wallet, onClose }: { wallet: TradingWallet; onClose: () => 
  */
 function UnlockMethodControl({ current }: { current: UnlockMethod }) {
   const requestUnlock = useUi((s) => s.requestUnlock);
+  // The live signer is passphrase-only and re-keys only with the current passphrase.
+  const { passkey: passkeys, exportNeedsPassword: needsCurrent } = getServices().features;
   const [form, setForm] = useState(false);
+  const [currentPw, setCurrentPw] = useState("");
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useTransient<string>(6000);
   const checks = passphraseChecks(pw);
-  const valid = checks.every((c) => c.met) && pw === confirm;
+  const valid = checks.every((c) => c.met) && pw === confirm && (!needsCurrent || currentPw.length > 0);
 
-  const change = async (method: UnlockMethod, password?: string) => {
+  const change = async (method: UnlockMethod, password?: string, currentPassword?: string) => {
     if (useWallet.getState().service.locked) {
-      requestUnlock("Unlock to change how the keystore unlocks.", () => void change(method, password));
+      requestUnlock("Unlock to change how the keystore unlocks.", () => void change(method, password, currentPassword));
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await getServices().wallet.changeUnlockMethod(method, password);
+      await getServices().wallet.changeUnlockMethod(method, password, currentPassword);
       setForm(false);
+      setCurrentPw("");
       setPw("");
       setConfirm("");
-      setDone(method === "passkey" ? "Now unlocks with your passkey" : "Now unlocks with your passphrase");
+      setDone(
+        method === "passkey"
+          ? "Now unlocks with your passkey"
+          : current === "password"
+            ? "Passphrase changed"
+            : "Now unlocks with your passphrase",
+      );
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -151,13 +161,13 @@ function UnlockMethodControl({ current }: { current: UnlockMethod }) {
     <div className="flex w-full flex-col items-end gap-2">
       <span className="text-data text-fg-2">{METHOD_LABEL[current]}</span>
       {done && <InlineStatus>{done}</InlineStatus>}
-      {current === "password" ? (
+      {current === "password" && passkeys ? (
         <Button size="xs" variant="secondary" disabled={busy} onClick={() => void change("passkey")}>
           {busy ? "Waiting for passkey…" : "Use a passkey"}
         </Button>
       ) : form ? null : (
         <Button size="xs" variant="secondary" onClick={() => setForm(true)}>
-          Use a passphrase
+          {current === "password" ? "Change passphrase" : "Use a passphrase"}
         </Button>
       )}
       {form && (
@@ -165,9 +175,20 @@ function UnlockMethodControl({ current }: { current: UnlockMethod }) {
           className="flex w-full flex-col gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (valid) void change("password", pw);
+            if (valid) void change("password", pw, needsCurrent ? currentPw : undefined);
           }}
         >
+          {needsCurrent && (
+            <input
+              type="password"
+              className="zf-input max-md:h-11"
+              placeholder="Current passphrase"
+              autoComplete="current-password"
+              value={currentPw}
+              onChange={(e) => setCurrentPw(e.target.value)}
+              aria-label="Current passphrase"
+            />
+          )}
           <input
             type="password"
             className="zf-input max-md:h-11"
@@ -197,10 +218,10 @@ function UnlockMethodControl({ current }: { current: UnlockMethod }) {
           </ul>
           <span className="flex justify-end gap-2">
             <Button size="xs" variant="ghost" type="button" onClick={() => setForm(false)}>
-              Keep the passkey
+              {current === "password" ? "Cancel" : "Keep the passkey"}
             </Button>
             <Button size="xs" variant="primary" type="submit" disabled={!valid || busy}>
-              {busy ? "Re-encrypting…" : "Switch to passphrase"}
+              {busy ? "Re-encrypting…" : current === "password" ? "Change passphrase" : "Switch to passphrase"}
             </Button>
           </span>
         </form>
@@ -483,7 +504,7 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
               }
               help={
                 <span className="inline-flex flex-wrap items-center gap-x-1">
-                  Signed in with {PROVIDER_NAME[connected.provider]}
+                  Signed in with <WalletBadge wallet={connected} className="text-fg-2" />
                   <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
                   <CopyButton text={connected.address} label="Copy connected wallet address" />
                   <span>· {session.expiresAt > now ? `expires in ${fmtCountdown(session.expiresAt - now)}` : "expired"}</span>

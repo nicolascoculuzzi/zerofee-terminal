@@ -47,7 +47,8 @@ function TipContent({ tip, mint, column }: { tip: string; mint: string | null; c
   if (!t) return null;
   const updated = `Last trade ${fmtAge(t.lastTradeAt, now)} ago`;
   const inSol = quote === "SOL" && solUsd > 0;
-  const money = (usd: number) => (inSol ? `${fmtSol(usd / solUsd)} SOL` : fmtUsd(usd));
+  // Unknown (null) stays the dash in either quote.
+  const money = (usd: number | null) => (usd === null ? fmtUsd(usd) : inSol ? `${fmtSol(usd / solUsd)} SOL` : fmtUsd(usd));
 
   if (tip.startsWith("risk:")) {
     const chip = riskChip(tip.slice(5) as RiskKey, t.risk, thresholds);
@@ -127,7 +128,7 @@ function TipContent({ tip, mint, column }: { tip: string; mint: string | null; c
             <span
               className={cn(
                 "zf-num text-data font-semibold",
-                nb.nbTone === "buy" ? "text-buy" : nb.nbTone === "sell" ? "text-sell" : "text-fg-3",
+                nb.nbTone === "buy" ? "text-buy" : nb.nbTone === "sell" ? "text-sell" : nb.nbTone === "unknown" ? "text-fg-4" : "text-fg-3",
               )}
             >
               {nb.nb}

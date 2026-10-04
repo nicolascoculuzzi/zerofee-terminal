@@ -115,7 +115,9 @@ const TradeRow = memo(function TradeRow({
   const buy = trade.side === "buy";
   // Decided once at mount: rows scrolled back into view never flash again.
   const [fresh] = useState(() => Date.now() - arrivedAt < 600);
-  const fxAtTrade = trade.priceSol > 0 ? trade.priceUsd / trade.priceSol : solUsd;
+  // The SOL/USD rate at the trade when both prices are known, else the live one. Unknown (null) SOL
+  // values stay unknown: the cells read "–", never 0.
+  const fxAtTrade = trade.priceSol !== null && trade.priceUsd !== null && trade.priceSol > 0 ? trade.priceUsd / trade.priceSol : solUsd;
   const cell = (key: ColKey) => {
     switch (key) {
       case "age":
@@ -134,7 +136,7 @@ const TradeRow = memo(function TradeRow({
       case "mc":
         return (
           <span className="zf-num num-dense text-fg-1">
-            {quote === "USD" ? fmtUsd(trade.marketCapUsd) : fmtSol(trade.priceSol * supply)}
+            {quote === "USD" ? fmtUsd(trade.marketCapUsd) : fmtSol(trade.priceSol === null ? null : trade.priceSol * supply)}
           </span>
         );
       case "price":
@@ -146,7 +148,7 @@ const TradeRow = memo(function TradeRow({
       case "tokens":
         return <span className="zf-num num-dense text-fg-2">{fmtTokens(trade.tokenAmount)}</span>;
       case "usd":
-        return <span className="zf-num num-dense text-fg-2">{fmtUsd(trade.solAmount * fxAtTrade)}</span>;
+        return <span className="zf-num num-dense text-fg-2">{fmtUsd(trade.solAmount === null ? null : trade.solAmount * fxAtTrade)}</span>;
       case "trader":
         return <TraderCell trade={trade} tracked={tracked} onPick={onPick} />;
       case "tx":
@@ -212,7 +214,8 @@ export function TradesTable({ supply }: { supply: number }) {
   const filtered = useMemo(
     () =>
       trades.filter((t) => {
-        if (minSol !== null && t.solAmount < minSol) return false;
+        // An unknown size (null) fails a minimum: unknown is not zero.
+        if (minSol !== null && (t.solAmount === null || t.solAmount < minSol)) return false;
         if (maker && t.maker !== maker) return false;
         if (candle) {
           const sec = t.ts / 1000;
@@ -432,7 +435,7 @@ export function MobileTradesList({ supply }: { supply: number }) {
             </span>
             <Num kind="solTape" value={t.solAmount} unit="SOL" className={cn("relative min-w-[11ch]", buy ? "text-buy" : "text-sell")} />
             <span className="zf-num relative text-fg-2">
-              {quote === "USD" ? fmtUsd(t.marketCapUsd) : fmtSol(t.priceSol * supply)}
+              {quote === "USD" ? fmtUsd(t.marketCapUsd) : fmtSol(t.priceSol === null ? null : t.priceSol * supply)}
               <span className="zf-unit">{quote === "USD" ? " MC" : " SOL MC"}</span>
             </span>
             <span className="relative ml-auto truncate font-mono text-label text-fg-3">

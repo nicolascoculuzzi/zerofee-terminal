@@ -4,8 +4,10 @@
  * Market (public):
  *   GET  /api/health                         HealthResponse
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
+ *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
  *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
  *   GET  /api/program-accounts               ProgramAccountsResponse  (pump Global / FeeConfig, PumpSwap GlobalConfig / FeeConfig)
+ *   GET  /api/lookup-tables?addresses        LookupTablesResponse     (1-8 comma-separated lookup table addresses, read from chain)
  *   GET  /api/img?mint&v&s                   token image (webp / png / jpeg / gif bytes, not JSON): media.ts
  *   POST /api/tx                             TxSubmitRequest -> TxSubmitResponse (503 "halted" while the kill switch is on)
  *
@@ -87,6 +89,15 @@ export interface TokenResponse {
   tradeContext: TradeContext | null;
 }
 
+/**
+ * GET /api/search. A contract address matches that token exactly (in memory or in the database); any other
+ * query matches tickers and names of the tokens the server holds in memory (live and recently active ones),
+ * best first: exact ticker, ticker prefix, then name; ties go to the most recently traded.
+ */
+export interface SearchResponse {
+  tokens: TokenSummary[];
+}
+
 export interface CandlesResponse {
   mint: string;
   tf: Timeframe;
@@ -108,6 +119,27 @@ export interface ProgramAccountsResponse {
   slot: number;
   fetchedAt: number;
   accounts: Record<string, ProgramAccount>;
+}
+
+/**
+ * GET /api/lookup-tables. Address lookup table contents read from chain (only accounts the Address Lookup
+ * Table program owns), so the browser compiles v0 transactions against real contents and hands the signer
+ * firewall the same map. Jupiter routes name their tables and list contents too; the browser checks that
+ * claim against this read. Tables only grow (entries never change), so a briefly cached list is a correct
+ * prefix of the live one. A missing, closed or non-table account is null.
+ */
+export interface LookupTableContents {
+  addresses: string[];
+  /** False once deactivation started (a deactivating table still resolves lookups until it closes). */
+  active: boolean;
+  /** Slot of the last extension (entries added in that slot become usable in the next one). */
+  lastExtendedSlot: number;
+}
+
+export interface LookupTablesResponse {
+  /** Context slot of the read (the newest among cached and fresh entries). */
+  slot: number;
+  tables: Record<string, LookupTableContents | null>;
 }
 
 /**

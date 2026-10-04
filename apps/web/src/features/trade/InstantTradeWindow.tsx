@@ -190,7 +190,7 @@ function WalletPicker() {
                 label={
                   <span className="flex w-44 justify-between gap-2">
                     <span className="truncate">{w.label}</span>
-                    <span className="zf-num text-fg-2">{fmtSol(status[w.address]?.solBalance ?? 0)} SOL</span>
+                    <span className="zf-num text-fg-2">{fmtSol(status[w.address]?.solBalance ?? null)} SOL</span>
                   </span>
                 }
               />
@@ -217,7 +217,7 @@ function TradeGrid({ token, touch }: { token: TokenSummary; touch: boolean }) {
   const { quote, solUsd } = useQuote();
   const wallets = instant.wallets;
   const sellMode = instant.sellMode;
-  const balance = status ? Math.max(0, status.solBalance - status.reservedSol) : 0;
+  const balance = status ? Math.max(0, status.solBalance - status.reservedSol) : null;
   const holding = position?.holdingTokens ?? 0;
   const remaining = position ? position.boughtSol - position.soldSol : 0;
   const pnl = position ? position.realizedPnlSol + position.unrealizedPnlSol : 0;

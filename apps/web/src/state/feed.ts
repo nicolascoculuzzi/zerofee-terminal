@@ -30,6 +30,9 @@ const ORDER_LABEL: Record<Order["kind"], string> = {
   migration_sell: "Migration sell",
   copy_buy: "Copy buy",
   dev_snipe: "Dev snipe",
+  trailing_stop: "Trailing stop",
+  dca_tranche: "DCA tranche",
+  dev_sell_exit: "Dev-sell exit",
 };
 
 /**
@@ -41,20 +44,23 @@ export function startFeed(): () => void {
   const { data, wallet } = services;
   const stops: (() => void)[] = [];
 
-  // Mock-only: render the simulated wallet-extension popup through the UI store.
-  setApprovalRenderer(
-    (request) =>
-      new Promise<boolean>((resolve) => {
-        useUi.getState().setApproval({
-          request,
-          resolve: (ok) => {
-            useUi.getState().setApproval(null);
-            resolve(ok);
-          },
-        });
-      }),
-  );
-  stops.push(() => setApprovalRenderer(null));
+  // Mock-only: render the simulated wallet-extension popup through the UI store (live mode uses the
+  // real extension's own popup).
+  if (services.simulated) {
+    setApprovalRenderer(
+      (request) =>
+        new Promise<boolean>((resolve) => {
+          useUi.getState().setApproval({
+            request,
+            resolve: (ok) => {
+              useUi.getState().setApproval(null);
+              resolve(ok);
+            },
+          });
+        }),
+    );
+    stops.push(() => setApprovalRenderer(null));
+  }
 
   // Connection state.
   useMarket.getState().setConnection(data.getConnectionState());
@@ -156,24 +162,25 @@ export function startFeed(): () => void {
     ),
   );
 
-  // Trackers.
+  // Trackers. The simulation seeds demo wallets and handles; live, the list comes from the server.
   const trackers = useTrackers.getState();
-  trackers.seedDefaults(
-    services.defaults.trackedWallets.map((w, i) => ({
-      address: w.address,
-      name: w.name,
-      emoji: w.emoji,
-      alerts: i === 0,
-      createdAt: Date.now() - (i + 1) * 86_400_000,
-    })),
-    ["curve_hunter", "migration_alpha", "rugradar_sim"].map((handle, i) => ({
-      handle,
-      tweets: true,
-      profile: i !== 2,
-      follows: i === 0,
-      addedAt: Date.now() - (i + 2) * 86_400_000,
-    })),
-  );
+  if (services.simulated)
+    trackers.seedDefaults(
+      services.defaults.trackedWallets.map((w, i) => ({
+        address: w.address,
+        name: w.name,
+        emoji: w.emoji,
+        alerts: i === 0,
+        createdAt: Date.now() - (i + 1) * 86_400_000,
+      })),
+      ["curve_hunter", "migration_alpha", "rugradar_sim"].map((handle, i) => ({
+        handle,
+        tweets: true,
+        profile: i !== 2,
+        follows: i === 0,
+        addedAt: Date.now() - (i + 2) * 86_400_000,
+      })),
+    );
   // Send the tracked sets only when membership changes: renames, tags and alert toggles
   // don't touch the server's subscription (it can hold 10,000 wallets).
   let sentWallets = "";

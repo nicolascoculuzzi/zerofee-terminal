@@ -70,6 +70,8 @@ export interface ServerConfig {
     chainMs: number;
   };
   tokenIdleEvictMs: number;
+  /** wallet:<address> feed: balance re-read period for watched wallets, and the delay after one of their fills. */
+  walletFeed: { refreshMs: number; afterFillMs: number };
   metadataGateways: string[];
   metadataTimeoutMs: number;
   /** Image proxy (GET /api/img): media/config.ts. */
@@ -341,6 +343,10 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       chainMs: int(env, "CHAIN_FLUSH_MS", 250, 10, 5_000),
     },
     tokenIdleEvictMs: int(env, "TOKEN_IDLE_EVICT_MIN", 120, 1, 24 * 60 * 30) * 60_000,
+    walletFeed: {
+      refreshMs: int(env, "WALLET_REFRESH_MS", 20_000, 1_000, 3_600_000),
+      afterFillMs: int(env, "WALLET_AFTER_FILL_MS", 1_500, 0, 60_000),
+    },
     metadataGateways: list(env, "METADATA_GATEWAYS", DEFAULT_IPFS_GATEWAYS),
     metadataTimeoutMs: int(env, "METADATA_TIMEOUT_MS", 6_000, 100, 60_000),
     media: loadMediaConfig(env, str(env, "DB_PATH", "data/market.db")),

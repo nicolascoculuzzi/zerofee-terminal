@@ -1,3 +1,4 @@
+import { compareKnown } from "../../lib/sort";
 import type { TokenRef, TrackedTrade } from "../../protocol";
 import type { MonitorSortKey, SortDir } from "./prefs";
 
@@ -12,13 +13,16 @@ export interface MonitorRow {
   token: TokenRef;
   /** Tracked wallets still holding (bought minus sold, in tokens), most recent buyer first. */
   holders: string[];
-  /** SOL bought minus SOL sold by tracked wallets over the last 15 minutes. */
-  flowSol: number;
+  /**
+   * SOL bought minus SOL sold by tracked wallets over the last 15 minutes; null once a trade in the
+   * window has an unknown SOL size (a quote with no known SOL value): unknown is not zero.
+   */
+  flowSol: number | null;
   /** Earliest tracked buy seen in the feed. */
   firstBuyAt: number | null;
   /** Latest tracked trade and the market cap (USD) it printed. */
   lastTs: number;
-  lastMcUsd: number;
+  lastMcUsd: number | null;
 }
 
 interface Acc {
@@ -67,10 +71,10 @@ export function aggregateMonitor(
       w.bought += trade.tokenAmount;
       w.lastBuy = trade.ts;
       if (row.firstBuyAt === null) row.firstBuyAt = trade.ts;
-      if (inWindow) row.flowSol += trade.solAmount;
+      if (inWindow) row.flowSol = row.flowSol === null || trade.solAmount === null ? null : row.flowSol + trade.solAmount;
     } else {
       w.sold += trade.tokenAmount;
-      if (inWindow) row.flowSol -= trade.solAmount;
+      if (inWindow) row.flowSol = row.flowSol === null || trade.solAmount === null ? null : row.flowSol - trade.solAmount;
     }
   }
   const out: MonitorRow[] = [];
@@ -100,10 +104,10 @@ export function sameMonitorRow(a: MonitorRow, b: MonitorRow): boolean {
 export function compareMonitor(
   key: MonitorSortKey,
   dir: SortDir,
-  mcOf: (row: MonitorRow) => number,
+  mcOf: (row: MonitorRow) => number | null,
 ): (a: MonitorRow, b: MonitorRow) => number {
   const sign = dir === "asc" ? 1 : -1;
-  const value = (r: MonitorRow): number => {
+  const value = (r: MonitorRow): number | null => {
     switch (key) {
       case "holders":
         return r.holders.length;
@@ -116,5 +120,6 @@ export function compareMonitor(
         return mcOf(r);
     }
   };
-  return (a, b) => (value(a) - value(b)) * sign || b.holders.length - a.holders.length || b.lastTs - a.lastTs;
+  // Unknown values (null) sort last in either direction.
+  return (a, b) => compareKnown(value(a), value(b), sign) || b.holders.length - a.holders.length || b.lastTs - a.lastTs;
 }

@@ -24,6 +24,8 @@ export function useAlertWatcher(token: TokenSummary | null): void {
   useEffect(() => {
     if (!token) return;
     const { mint, priceSol: price } = token;
+    // An unknown price neither fires nor re-arms an alert (packages/protocol market.ts).
+    if (price === null) return;
     const before = prev.current?.mint === mint ? prev.current.price : null;
     prev.current = { mint, price };
     if (before === null) return;

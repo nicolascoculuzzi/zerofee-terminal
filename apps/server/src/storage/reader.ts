@@ -96,6 +96,15 @@ export class StorageReader {
     ).map(rowToTrade);
   }
 
+  /** A wallet's most recent trades (as the trade's own wallet), newest first, within trade retention. */
+  tradesByTrader(trader: string, limit: number): Trade[] {
+    return (
+      this.db
+        .query("SELECT * FROM trades WHERE trader = ? ORDER BY block_time DESC, slot DESC, ev_index DESC LIMIT ?")
+        .all(trader, limit) as TradeRow[]
+    ).map(rowToTrade);
+  }
+
   pools(): PoolInfo[] {
     return (this.db.query("SELECT info FROM pools").all() as { info: string }[]).map((r) => JSON.parse(r.info) as PoolInfo);
   }

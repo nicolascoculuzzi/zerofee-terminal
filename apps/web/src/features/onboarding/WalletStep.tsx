@@ -5,6 +5,7 @@ import { Segmented } from "../../components/ui/controls";
 import { cn } from "../../lib/cn";
 import { getServices } from "../../services";
 import type { TradingWallet, UnlockMethod } from "../../services/walletService";
+import { useWallet } from "../../state/wallet";
 import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 import { passphraseChecks } from "./password";
 
@@ -32,14 +33,17 @@ export function WalletStep({
   onNext: () => void;
 }) {
   const { busy, error, run } = useAction(onBusyChange);
-  const [method, setMethod] = useState<UnlockMethod>("passkey");
+  const { simulated, features } = getServices();
+  // The live signer is passphrase-only for now, and its keystore holds every trading wallet: a second
+  // wallet joins the existing keystore under its passphrase instead of a new one.
+  const existing = useWallet((s) => !simulated && s.service.tradingWallets.length > 0);
+  const [method, setMethod] = useState<UnlockMethod>(features.passkey ? "passkey" : "password");
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
   const checks = passphraseChecks(passphrase);
   const matches = confirm.length > 0 && confirm === passphrase;
-  const valid = method === "passkey" || (checks.every((c) => c.met) && matches);
-  const simulated = getServices().simulated;
+  const valid = method === "passkey" || (existing ? passphrase.length > 0 : checks.every((c) => c.met) && matches);
   const lockText = autoLockMinutes > 0 ? `after ${autoLockMinutes} minutes without activity` : "only when you lock it";
 
   const create = async (e: FormEvent) => {
@@ -84,24 +88,43 @@ export function WalletStep({
     <>
       <StepHeader frame={frame} />
       <form id={FORM_ID} onSubmit={(e) => void create(e)}>
-        <Segmented<UnlockMethod>
-          value={method}
-          onChange={setMethod}
-          label="Unlock method"
-          className="w-full max-md:h-11"
-          options={[
-            { value: "passkey", label: "Passkey (recommended)" },
-            { value: "password", label: "Passphrase" },
-          ]}
-        />
+        {features.passkey && (
+          <Segmented<UnlockMethod>
+            value={method}
+            onChange={setMethod}
+            label="Unlock method"
+            className="w-full max-md:h-11"
+            options={[
+              { value: "passkey", label: "Passkey (recommended)" },
+              { value: "password", label: "Passphrase" },
+            ]}
+          />
+        )}
 
-        {method === "passkey" ? (
+        {existing ? (
+          <div className="space-y-2">
+            <p className="text-body text-fg-2">
+              The new wallet joins the keystore you already have in this browser and unlocks with the same passphrase.
+            </p>
+            <label htmlFor="zf-tw-pass" className="zf-label mb-1 block">
+              Keystore passphrase
+            </label>
+            <input
+              id="zf-tw-pass"
+              type="password"
+              autoComplete="current-password"
+              className="zf-input max-md:h-11 max-md:text-title"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+            />
+          </div>
+        ) : method === "passkey" ? (
           <p className="mt-4 text-body text-fg-2">
             Touch ID, Windows Hello or a security key unlocks the wallet. The key is encrypted with a secret from WebAuthn PRF, so there is
             nothing to remember or type.{simulated && " Simulated: no system prompt appears."}
           </p>
         ) : (
-          <div className="mt-4 space-y-3">
+          <div className={cn("space-y-3", features.passkey && "mt-4")}>
             <div>
               <label htmlFor="zf-tw-pass" className="zf-label mb-1 block">
                 Passphrase
