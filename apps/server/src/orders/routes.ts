@@ -6,6 +6,7 @@
 import type {
   ArmOrdersResponse,
   CancelOrderResponse,
+  NonceProbeResponse,
   NonceSlotsResponse,
   OrderDetailResponse,
   OrderLimits,
@@ -14,7 +15,7 @@ import type {
 } from "@zerofee/protocol";
 import { HttpError, json } from "../api/http";
 import type { Route } from "../api/router";
-import { uuid, ValidationError } from "../api/validate";
+import { address, uuid, ValidationError } from "../api/validate";
 import type { RateLimiter } from "../gateway/rateLimit";
 import type { OrderEngine } from "./engine";
 import { IntakeError, type OrderIntake } from "./intake";
@@ -25,6 +26,8 @@ import { parseArmBody } from "./wire";
 export const ARM_BODY_LIMIT = 3 * 1024 * 1024;
 /** Orders per intake request. */
 export const ARM_BATCH_MAX = 10;
+/** Derived nonce slots one probe may read. */
+export const MAX_NONCE_PROBE = 32;
 
 export interface OrderRoutesDeps {
   engine: OrderEngine;
@@ -126,6 +129,24 @@ export function orderRoutes(d: OrderRoutesDeps): Route[] {
       handler: async (c) => {
         const body: NonceSlotsResponse = { slots: await repo.slots(c.session.userId) };
         return json(body);
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/orders/nonce-probe",
+      auth: "session",
+      handler: async (c) => {
+        const wallet = address(c.url.searchParams.get("wallet") ?? "", "wallet");
+        const count = Number(c.url.searchParams.get("count") ?? "8");
+        if (!Number.isInteger(count) || count < 1 || count > MAX_NONCE_PROBE)
+          throw new ValidationError(`count must be 1-${MAX_NONCE_PROBE}`);
+        try {
+          const body: NonceProbeResponse = await intake.probeSlots(c.session.userId, wallet, count);
+          return json(body);
+        } catch (e) {
+          if (e instanceof IntakeError) return reject(e);
+          throw e;
+        }
       },
     },
     {

@@ -10,6 +10,8 @@
  *   GET  /api/orders?status=open|all&limit=100   -> OrdersListResponse (newest first)
  *   GET  /api/orders/limits           -> OrderLimits
  *   GET  /api/orders/nonce-slots      -> NonceSlotsResponse (the user's nonce accounts the server knows)
+ *   GET  /api/orders/nonce-probe?wallet&count -> NonceProbeResponse: one of the user's wallets' derived nonce slots
+ *                                     0..count-1 (count 1-32) read from chain, for the browser to arm against
  *   GET  /api/orders/:id              -> OrderDetailResponse (the order and its event history)
  *   POST /api/orders/:id/cancel       -> CancelOrderResponse: fires the stored pre-signed cancel(s); an order
  *                                     sharing a nonce with others (OCO) cancels them too
@@ -252,4 +254,32 @@ export interface NonceSlot {
 
 export interface NonceSlotsResponse {
   slots: NonceSlot[];
+}
+
+/**
+ *   ready     an initialized durable nonce the wallet is the authority of (armable unless an open order holds it)
+ *   absent    nothing at the address yet: the browser creates it (CreateAccountWithSeed + InitializeNonceAccount)
+ *   foreign   a nonce account whose authority is someone else
+ *   occupied  some other account sits at the address
+ */
+export type NonceProbeState = "ready" | "absent" | "foreign" | "occupied";
+
+/** One derived slot: createWithSeed(wallet, "zerofee-nonce-<index>", System program). */
+export interface NonceSlotProbe {
+  index: number;
+  nonceAccount: string;
+  state: NonceProbeState;
+  /** Durable nonce value (ready / foreign). */
+  nonceValue: string | null;
+  /** Lamports at the address (null when absent). */
+  lamports: string | null;
+  /** An open order of this user holds the slot. */
+  orderId: string | null;
+}
+
+export interface NonceProbeResponse {
+  wallet: string;
+  /** Context slot of the chain read. */
+  slot: number;
+  slots: NonceSlotProbe[];
 }

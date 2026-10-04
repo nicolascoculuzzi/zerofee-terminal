@@ -26,11 +26,12 @@ import {
   JITO_DONT_FRONT,
   JITO_MIN_TIP_LAMPORTS,
   LAMPORTS_PER_SOL,
+  nonceSlotAddresses,
   reviewedTipAccounts,
   validateUserArmedOrders,
   WSOL_MINT,
 } from "@zerofee/core";
-import type { ArmRejection, ArmViolation, Order } from "@zerofee/protocol";
+import type { ArmRejection, ArmViolation, NonceProbeResponse, NonceProbeState, NonceSlotProbe, Order } from "@zerofee/protocol";
 import { isUniqueViolation, LimitExceededError } from "../db/pg";
 import { type ChainReader, nonceSnapshot } from "./chain";
 import type { HaltSource, OrderEngine } from "./engine";
@@ -134,6 +135,38 @@ export class OrderIntake {
     const user = Number.isFinite(sol) && sol > 0 ? BigInt(Math.floor(sol * 1e9)) : 0n;
     const server = this.d.engine.cfg.maxBuyLamports;
     return user < server ? user : server;
+  }
+
+  /**
+   * The wallet's derived nonce slots 0..count-1 as they stand on chain, and which of them this user's open
+   * orders hold. The browser arms against `ready` slots and creates `absent` ones.
+   */
+  async probeSlots(userId: string, wallet: string, count: number): Promise<NonceProbeResponse> {
+    if (!(await this.d.ownsWallet(userId, wallet))) {
+      throw new IntakeError(403, "forbidden", `wallet ${wallet} is not one of your wallets (register the trading wallet first)`);
+    }
+    const addresses = await nonceSlotAddresses(wallet as Address, count);
+    let read: Awaited<ReturnType<ChainReader["accounts"]>>;
+    try {
+      read = await this.d.chain.accounts(addresses);
+    } catch (e) {
+      throw new IntakeError(503, "unavailable", `cannot read the nonce accounts right now (${e instanceof Error ? e.message : e}); retry`);
+    }
+    const held = new Map((await this.d.repo.slots(userId)).filter((s) => s.status === "in-use").map((s) => [s.nonceAccount, s.orderId]));
+    const slots = addresses.map((nonceAccount, index): NonceSlotProbe => {
+      const raw = read.accounts[index] ?? null;
+      const snap = nonceSnapshot(raw);
+      const state: NonceProbeState = snap ? (snap.authority === wallet ? "ready" : "foreign") : raw ? "occupied" : "absent";
+      return {
+        index,
+        nonceAccount,
+        state,
+        nonceValue: snap?.value ?? null,
+        lamports: raw ? raw.lamports.toString() : null,
+        orderId: held.get(nonceAccount) ?? null,
+      };
+    });
+    return { wallet, slot: read.slot, slots };
   }
 
   /** Validates and stores `orders` for `userId`; returns their views. Throws IntakeError on refusal. */
