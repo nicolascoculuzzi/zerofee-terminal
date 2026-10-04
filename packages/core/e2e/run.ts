@@ -45,9 +45,13 @@ if (existsSync(paths.reportPath)) {
   const fmt = (n: string | number) => Number(n).toLocaleString("en-US");
   const ms = (r: ReportLine) =>
     r.stages.landed !== undefined && r.stages.sent !== undefined ? `${(r.stages.landed - r.stages.sent).toFixed(0)} ms` : "-";
-  const header = ["case", "CU used", "CU limit", "size", "fee", "tips", "sent->landed", "slots"];
+  // Armed ladders land failures on purpose (a landed failure still consumes its nonce), hence the result column.
+  const result = (r: ReportLine) =>
+    r.outcome.startsWith("confirmed") ? "ok" : r.outcome.startsWith("failed") ? "failed" : r.outcome || "-";
+  const header = ["case", "result", "CU used", "CU limit", "size", "fee", "tips", "sent->landed", "slots"];
   const table = rows.map((r) => [
     r.label,
+    result(r),
     fmt(r.computeUnits),
     fmt(r.cuLimit),
     `${r.sizeBytes} B`,
