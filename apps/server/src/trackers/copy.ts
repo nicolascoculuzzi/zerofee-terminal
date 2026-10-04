@@ -40,6 +40,7 @@ import {
   type CopyTaskStatus,
   DEFAULT_USER_SETTINGS,
   type Trade,
+  type TradeVenue,
 } from "@zerofee/protocol";
 import type { UserStore } from "../db/pg";
 import { logger } from "../log";
@@ -61,7 +62,7 @@ export interface TokenView {
   mint: string;
   symbol: string;
   decimals: number;
-  venue: "pump" | "pumpswap";
+  venue: TradeVenue;
   /** null = unknown (the token's quote has no known SOL value): MC / liquidity filters then skip. */
   priceSol: number | null;
   mcSol: number | null;
@@ -70,7 +71,7 @@ export interface TokenView {
   liquidityUsd: number | null;
   createdAt: number | null;
   creator: string | null;
-  /** Still on the pump.fun bonding curve. */
+  /** Still on a bonding curve (pump.fun or Raydium LaunchLab). */
   onCurve: boolean;
   /** Curve completed but not migrated yet: not tradable. */
   curveComplete: boolean;

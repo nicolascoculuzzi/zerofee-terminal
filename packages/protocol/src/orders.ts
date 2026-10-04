@@ -44,8 +44,8 @@ export type OrderKind = (typeof ORDER_KINDS)[number];
  *   filled           a variant landed and executed
  *   failed-consumed  a variant landed but failed (or the cancel burned a missed attempt): the nonce is
  *                    consumed, re-arm
- *   stale            pump upgraded, the coin migrated, the creator changed... the signed transactions can
- *                    no longer succeed; re-arm from the browser
+ *   stale            pump upgraded, the coin migrated, the creator changed, a LaunchLab platform moved its
+ *                    graduation pool... the signed transactions can no longer succeed; re-arm from the browser
  *   cancelled        by the user, Panic, the admin kill switch, or because its OCO partner filled
  */
 export const ORDER_STATUSES = ["armed", "submitted", "filled", "failed-consumed", "stale", "cancelled"] as const;
@@ -58,7 +58,14 @@ export function isTerminalOrderStatus(s: OrderStatus): boolean {
 }
 
 export type OrderSide = "buy" | "sell";
-export type OrderVenue = "pump" | "pumpswap";
+/**
+ * Venues an armed order can trade on (same strings as @zerofee/core ArmedVenue): the pump.fun curve, PumpSwap,
+ * a Raydium LaunchLab curve (buy_exact_in / sell_exact_in) and Raydium CPMM (swap_base_input). An order on a
+ * coin that graduates carries variants for both legs (pump + pumpswap, launchlab + cpmm) on one nonce.
+ * Raydium orders must be quoted in wSOL or USDC (other quote mints are refused at intake).
+ */
+export const ORDER_VENUES = ["pump", "pumpswap", "launchlab", "cpmm"] as const;
+export type OrderVenue = (typeof ORDER_VENUES)[number];
 
 /**
  * live        nonce untouched, variants valid
@@ -80,7 +87,10 @@ export type OrderTrigger =
   | { type: "trailing"; trailBps: number; activationQuoteOut: string | null }
   /** DCA tranche: fire after `notBeforeMs` while the quote out is at least `minQuoteOut`. */
   | { type: "time"; notBeforeMs: number; minQuoteOut: string | null }
-  /** Migration snipe: fire once the coin migrated and its canonical PumpSwap pool is live. */
+  /**
+   * Migration snipe: fire once the coin migrated and its graduation pool is live (pump.fun: the canonical PumpSwap
+   * pool; LaunchLab: the CPMM pool on PlatformConfig.cpswap_config).
+   */
   | { type: "migration" }
   /** Dev-sell exit: fire when `creator` sells at least `minTokenAmount` of the coin. */
   | { type: "dev-sell"; creator: string; minTokenAmount: string | null };
