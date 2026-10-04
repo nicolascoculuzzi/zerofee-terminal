@@ -208,5 +208,9 @@ describe("config", () => {
   test("redactUrl hides keys and credentials", () => {
     expect(redactUrl("https://mainnet.helius-rpc.com/?api-key=SECRET")).toBe("https://mainnet.helius-rpc.com/?api-key=***");
     expect(redactUrl("https://user:pass@host.example/x")).not.toContain("pass");
+    // Chainstack-style key in the path
+    const keyInPath = "https://solana-mainnet.core.chainstack.com/0123456789abcdef0123456789abcdef";
+    expect(redactUrl(keyInPath)).toBe("https://solana-mainnet.core.chainstack.com/***");
+    expect(redactUrl("https://api.mainnet-beta.solana.com/")).toBe("https://api.mainnet-beta.solana.com/");
   });
 });
