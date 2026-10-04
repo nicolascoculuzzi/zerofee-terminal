@@ -317,6 +317,42 @@ const MUTATIONS: readonly Mutation[] = [
     },
   },
   {
+    name: "route_v2: the hop's own output slot credits the attacker (Jupiter does not check it; mainnet simulation, NOTES.md)",
+    applies: (t) => t.route === "route_v2",
+    async run(g) {
+      const { built, full, t, label } = await listOf(g);
+      const L = JUPITER_ROUTE_V2_LAYOUT;
+      const destination = full[t]!.accounts![L.destination]!.address;
+      // The hop names the destination ATA once, in its output slot; point that slot elsewhere.
+      const slot = full[t]!.accounts!.findIndex((m, i) => i >= L.fixedAccounts && m.address === destination);
+      expect(slot).toBeGreaterThanOrEqual(L.fixedAccounts);
+      const program = full[t]!.accounts![L.destinationTokenProgram]!.address;
+      const thief = await ata(g.a.attacker, built.side === "buy" ? built.baseMint : built.quoteMint, program);
+      full[t] = setAccount(full[t]!, slot, writable(thief));
+      await expectRefused(
+        compileJupiter(full, built.trade.lookupTables!),
+        shippedContext(g.a, built),
+        new RegExp(
+          `${escapeRegExp(label)}: \\w+ hop: the output slot must be the destination token account \\(position ${slot} is ${thief}\\)`,
+        ),
+      );
+    },
+  },
+  {
+    name: "shared accounts: a hop naming the trading wallet (it would receive the user's signature)",
+    applies: (t) => t.route === "shared_accounts_route_v2",
+    async run(g) {
+      const { built, full, t, label } = await listOf(g);
+      const at = JUPITER_SHARED_ROUTE_V2_LAYOUT.fixedAccounts + 2;
+      full[t] = setAccount(full[t]!, at, { address: g.a.signer, role: AccountRole.READONLY });
+      await expectRefused(
+        compileJupiter(full, built.trade.lookupTables!),
+        shippedContext(g.a, built),
+        new RegExp(`${escapeRegExp(label)}: hop account at position ${at} is the trading wallet`),
+      );
+    },
+  },
+  {
     name: "shared accounts: a substituted program authority and program destination account",
     applies: (t) => t.route === "shared_accounts_route_v2",
     async run(g) {

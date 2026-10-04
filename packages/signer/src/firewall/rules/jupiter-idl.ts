@@ -194,6 +194,8 @@ export interface JupiterRouteStep {
   /** Swap enum variant index and name (e.g. 78 "MeteoraDynamicBondingCurveSwap"). */
   readonly variant: number;
   readonly venue: string;
+  /** The variant's field bytes (e.g. Whirlpool's a_to_b). */
+  readonly fields: Uint8Array;
   readonly bps: number;
   readonly inputIndex: number;
   readonly outputIndex: number;
@@ -292,12 +294,70 @@ export function decodeJupiterRoutePlan(data: Uint8Array, offset: number): Jupite
     const variant = c.u8(what);
     const def = JUPITER_SWAP_VARIANTS[variant];
     if (!def) throw new JupiterRoutePlanError(`${what}: Swap variant ${variant} is not in the reviewed IDL (newer Jupiter venue?)`);
+    const start = c.offset;
     for (const f of def[1] ?? []) c.skip(f, `${what} ${def[0]}`);
-    steps.push({ variant, venue: def[0], bps: c.u16(what), inputIndex: c.u8(what), outputIndex: c.u8(what) });
+    const fields = data.slice(start, c.offset);
+    steps.push({ variant, venue: def[0], fields, bps: c.u16(what), inputIndex: c.u8(what), outputIndex: c.u8(what) });
   }
   if (c.remaining() !== 0) throw new JupiterRoutePlanError(`${c.remaining()} trailing bytes after the route plan`);
   return steps;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Reviewed hops (route_v2)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * route_v2 hops act with the USER's authority: the venue pulls the input from a token account named in
+ * the hop's accounts, with the user's signature, and credits the output to another one. Jupiter checks
+ * neither against user_source / user_destination: on 2026-10-03 a mainnet simulation of a captured
+ * route_v2 (Meteora DAMM v2) with only the hop's output slot pointed at another holder's account
+ * succeeded, crediting that account while the user's destination stayed unchanged. So a route_v2 hop is
+ * accepted only for venues whose hop layout has been reviewed, with its user-side slots pinned.
+ *
+ * Each hop's accounts are [venue program, ...the venue's own swap accounts in its order] (+ remaining
+ * accounts for the *WithRemainingAccounts variants), as every captured route shows. Slots are offsets
+ * from the venue program. Sources: the venues' official swap account lists (Meteora DBC SDK 1.5.13 IDL
+ * `swap`, Meteora cp-amm `swap`, Orca Whirlpool `swap`), matched against every captured /build route.
+ */
+export interface JupiterReviewedHop {
+  /** The venue program the hop must invoke (Jupiter itself checks it against the variant). */
+  readonly program: string;
+  /** Accounts in the hop, the venue program included. */
+  readonly accounts: number;
+  /** *WithRemainingAccounts variants may pass extra accounts after the layout. */
+  readonly remaining: boolean;
+  /** Slot of the account the input is taken from (the user's source ATA). */
+  readonly input: number;
+  /** Slot of the account the output is credited to (the user's destination ATA). */
+  readonly output: number;
+  /** Slot of the user as payer / token authority. */
+  readonly authority: number;
+  /** Whirlpool: input and output slots swap when the a_to_b field is false. */
+  readonly aToB?: true;
+}
+
+/** Meteora DBC swap: pool_authority, config, pool, input_token_account, output_token_account, base_vault, quote_vault, base_mint, quote_mint, payer, token_base_program, token_quote_program, referral_token_account, event_authority, program. */
+const DBC_HOP = { program: "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN", accounts: 16, input: 4, output: 5, authority: 10 } as const;
+/** Meteora DAMM v2 swap: pool_authority, pool, input_token_account, output_token_account, token_a_vault, token_b_vault, token_a_mint, token_b_mint, payer, token_a_program, token_b_program, referral_token_account, event_authority, program. */
+const DAMM_V2_HOP = { program: "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG", accounts: 15, input: 3, output: 4, authority: 9 } as const;
+
+export const JUPITER_REVIEWED_HOPS: Readonly<Record<string, JupiterReviewedHop>> = {
+  MeteoraDynamicBondingCurveSwap: { ...DBC_HOP, remaining: false },
+  MeteoraDynamicBondingCurveSwapWithRemainingAccounts: { ...DBC_HOP, remaining: true },
+  MeteoraDammV2: { ...DAMM_V2_HOP, remaining: false },
+  MeteoraDammV2WithRemainingAccounts: { ...DAMM_V2_HOP, remaining: true },
+  /** Orca Whirlpool swap: token_program, token_authority, whirlpool, token_owner_account_a, token_vault_a, token_owner_account_b, token_vault_b, tick_array_0..2, oracle. */
+  Whirlpool: {
+    program: "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+    accounts: 12,
+    remaining: false,
+    input: 4,
+    output: 6,
+    authority: 2,
+    aToB: true,
+  },
+};
 
 /** Fixed u64 / u16 argument readers for a route instruction (bounds-checked by the caller's length check). */
 export function readRouteArgs(def: JupiterRouteInstruction, data: Uint8Array) {

@@ -16,6 +16,7 @@ import {
   decodeJupiterRoutePlan,
   JUPITER_INSTRUCTION_NAMES,
   JUPITER_REFUSAL_REASONS,
+  JUPITER_REVIEWED_HOPS,
   JUPITER_ROUTE_INSTRUCTIONS,
   JUPITER_SEEDS,
   JUPITER_SWAP_TYPES,
@@ -214,6 +215,16 @@ describe("route_v2 / shared_accounts_route_v2 layouts equal the IDL", () => {
     const pinned = ix("route_v2").accounts.find((a) => a.name === "event_authority")!.address!;
     expect(await findJupiterEventAuthority(JUPITER_PROGRAM)).toBe(address(pinned));
     expect(JUPITER_SEEDS.eventAuthority).toBe("__event_authority");
+  });
+
+  test("reviewed route_v2 hops are IDL Swap variants with the fields the rule reads (Whirlpool: a_to_b first)", () => {
+    const swap = typeDef("Swap").type as { kind: "enum"; variants: { name: string; fields?: IdlField[] }[] };
+    for (const [name, hop] of Object.entries(JUPITER_REVIEWED_HOPS)) {
+      const variant = swap.variants.find((v) => v.name === name);
+      expect(variant).toBeDefined();
+      expect((variant!.fields ?? []).map((f) => [f.name, f.type])).toEqual(hop.aToB ? [["a_to_b", "bool"]] : []);
+      expect(name.endsWith("WithRemainingAccounts")).toBe(hop.remaining);
+    }
   });
 });
 

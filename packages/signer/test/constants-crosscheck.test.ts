@@ -38,11 +38,13 @@ import {
 import { findJupiterEventAuthority, findJupiterProgramAuthority } from "../src/firewall/rules/jupiter";
 import {
   JUPITER_PROGRAM_AUTHORITY_COUNT,
+  JUPITER_REVIEWED_HOPS,
   JUPITER_ROUTE_INSTRUCTIONS,
   JUPITER_ROUTE_V2_LAYOUT,
   JUPITER_SEEDS,
   JUPITER_SHARED_ROUTE_V2_LAYOUT,
   JUPITER_STATIC_POSITIONS,
+  JUPITER_SWAP_VARIANTS,
 } from "../src/firewall/rules/jupiter-idl";
 import { findCanonicalPumpPool } from "../src/firewall/rules/pump";
 import {
@@ -196,6 +198,23 @@ describe("addresses and runtime constants equal core's", () => {
       });
     }
     expect(await findJupiterProgramAuthority(JUPITER_PROGRAM, 0)).not.toBe(await findJupiterProgramAuthority(JUPITER_PROGRAM, 1));
+  });
+
+  test("Jupiter: the reviewed route_v2 hops equal core's (variant, venue program, layout slots)", () => {
+    const fromCore = Object.entries(core.JUPITER_REVIEWED_HOPS).map(([variant, h]) => {
+      const { name, label: _label, ...layout } = h;
+      expect(JUPITER_SWAP_VARIANTS[Number(variant)]![0]).toBe(name);
+      return [name, layout] as const;
+    });
+    expect(Object.fromEntries(fromCore) as Record<string, unknown>).toEqual({ ...JUPITER_REVIEWED_HOPS });
+    // The venue programs are the ones Jupiter's own label map names for these venues.
+    expect(new Set(Object.values(JUPITER_REVIEWED_HOPS).map((h) => h.program))).toEqual(
+      new Set([
+        "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN",
+        "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",
+        "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      ]),
+    );
   });
 });
 

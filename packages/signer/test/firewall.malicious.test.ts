@@ -1438,8 +1438,8 @@ describe("firewall: Jupiter routes (real /build responses, tampered)", () => {
       ctx,
       new RegExp(`#${swap} Jupiter route_v2: platform_fee_bps must be 0, got 50`),
     );
-    // The only other violation: the ATA creation for the bought mint, refused because the trade is.
-    expect(violations.filter((v) => !v.includes("neither trades nor transfers"))).toHaveLength(1);
+    // Also refused: the hop no longer lines up (the fee account shifted it), and the ATA created for the refused trade.
+    expect(violations.filter((v) => !v.includes("neither trades nor transfers") && !v.includes("Whirlpool hop"))).toHaveLength(1);
   });
 
   test("authority != signer: another wallet as user_transfer_authority (it signs), or the connected wallet (it does not)", async () => {
@@ -1523,5 +1523,92 @@ describe("firewall: Jupiter routes (real /build responses, tampered)", () => {
     );
     const surplus = routeTx(a, "normalBuy", (s) => patch(s, (v) => v.setUint16(ROUTE.positiveSlippageOffset, 1, true)));
     await expectRefused(compileJupiter(surplus.full, surplus.tables), surplus.ctx, /positive_slippage_bps must be 0, got 1/);
+  });
+
+  // Jupiter does not check a route_v2 hop's accounts against user_source / user_destination: a mainnet
+  // simulation on 2026-10-03 credited a hop output redirected to another holder (NOTES.md). So the
+  // rule pins the hop's user side, and every one of these leaves the route's own fixed accounts intact.
+  const hop = (s: Instruction, slot: number, address: Address, role = AccountRole.WRITABLE) =>
+    setMeta(s, R.fixedAccounts + slot, { address, role });
+
+  test("route_v2: the hop's output slot credits the attacker while user_destination stays the user's ATA", async () => {
+    const a = jupiterActors();
+    // Whirlpool BONK buy (a_to_b): owner account a (slot 4) is the input, owner account b (slot 6) the output.
+    const thief = await findAssociatedTokenAddress(a.attacker, jupiterCase("normalBuy").request.outputMint, TOKEN_PROGRAM);
+    const whirlpool = routeTx(a, "normalBuy", (s) => hop(s, 6, thief));
+    await expectRefused(
+      compileJupiter(whirlpool.full, whirlpool.tables),
+      whirlpool.ctx,
+      /route_v2: Whirlpool hop: the output slot must be the destination token account \(position 16 is \w+\)/,
+    );
+    // Meteora DBC curve buy: output slot 5.
+    const dbcThief = await findAssociatedTokenAddress(a.attacker, jupiterCase("longtailCurveBuy").request.outputMint, TOKEN_PROGRAM);
+    const dbc = routeTx(a, "longtailCurveBuy", (s) => hop(s, 5, dbcThief));
+    await expectRefused(
+      compileJupiter(dbc.full, dbc.tables),
+      dbc.ctx,
+      /MeteoraDynamicBondingCurveSwapWithRemainingAccounts hop: the output slot must be the destination token account/,
+    );
+  });
+
+  test("route_v2: the hop takes the input from another account, or acts with another authority", async () => {
+    const a = jupiterActors();
+    const other = await findAssociatedTokenAddress(a.signer, MAINNET.usdc, TOKEN_PROGRAM); // the user's USDC, say
+    const input = routeTx(a, "longtail2022Buy", (s) => hop(s, 3, other));
+    await expectRefused(
+      compileJupiter(input.full, input.tables),
+      input.ctx,
+      /MeteoraDammV2WithRemainingAccounts hop: the input slot must be the source token account/,
+    );
+    const authority = routeTx(a, "longtail2022Buy", (s) => hop(s, 9, a.connected, AccountRole.READONLY));
+    await expectRefused(
+      compileJupiter(authority.full, authority.tables),
+      authority.ctx,
+      /MeteoraDammV2WithRemainingAccounts hop: the payer \/ authority slot must be the trading wallet/,
+    );
+    // The user's own source ATA named again in another hop slot (e.g. as a "vault").
+    const source = rawJupiterRoute("longtail2022Buy").instructions.find((ix) => ix.programAddress === PROGRAMS.jupiter)!.accounts![
+      R.source
+    ]!;
+    const stray = routeTx(a, "longtail2022Buy", (s) => hop(s, 5, source.address));
+    await expectRefused(
+      compileJupiter(stray.full, stray.tables),
+      stray.ctx,
+      /names the trading wallet or its token account in an unexpected slot \(position 15\)/,
+    );
+  });
+
+  test("route_v2: an unreviewed venue, or more than one hop", async () => {
+    const a = jupiterActors();
+    // Variant byte of the single step (route_plan at 30: u32 length, then the variant).
+    const raydium = routeTx(a, "longtailCurveBuy", (s) => ({ ...s, data: Uint8Array.from(s.data!, (b, i) => (i === 34 ? 7 : b)) }));
+    await expectRefused(compileJupiter(raydium.full, raydium.tables), raydium.ctx, /hop venue Raydium is not reviewed for route_v2/);
+    const twoHops = routeTx(a, "longtailCurveBuy", (s) => {
+      const d = Uint8Array.from([...s.data!, 88, 0x10, 0x27, 1, 2]);
+      d[30] = 2;
+      return { ...s, data: d };
+    });
+    await expectRefused(
+      compileJupiter(twoHops.full, twoHops.tables),
+      twoHops.ctx,
+      /route_v2 is accepted only as one hop of the whole input \(got 2 step\(s\)\)/,
+    );
+  });
+
+  test("shared accounts: a hop naming the trading wallet (it would get the user's signature) or its token account", async () => {
+    const a = jupiterActors();
+    const wallet = routeTx(a, "usdcBuy", (s) => setMeta(s, 20, { address: a.signer, role: AccountRole.READONLY }));
+    await expectRefused(
+      compileJupiter(wallet.full, wallet.tables),
+      wallet.ctx,
+      /shared_accounts_route_v2: hop account at position 20 is the trading wallet; shared-accounts hops must trade only Jupiter's program accounts/,
+    );
+    const source = rawJupiterRoute("usdcBuy").instructions.find((ix) => ix.programAddress === PROGRAMS.jupiter)!.accounts![2]!.address;
+    const account = routeTx(a, "usdcBuy", (s) => setMeta(s, 17, { address: source, role: AccountRole.WRITABLE }));
+    await expectRefused(
+      compileJupiter(account.full, account.tables),
+      account.ctx,
+      /hop account at position 17 is the trading wallet's token account/,
+    );
   });
 });
