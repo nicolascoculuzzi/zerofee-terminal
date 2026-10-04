@@ -22,6 +22,7 @@ import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
+import { createOrderService, type OrderService, type OrderServiceOverrides } from "./orders";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
@@ -47,6 +48,8 @@ export interface AppOverrides {
    * Without it the gateway is anonymous-only. The app starts it and stops it with itself.
    */
   user?: UserLayer | null;
+  /** Armed-orders engine seams (tests: recording lanes, fake chain reads, pinned lookup tables). */
+  orders?: OrderServiceOverrides;
 }
 
 export interface App {
@@ -63,6 +66,8 @@ export interface App {
   sink: IngestSink;
   reconciler: Reconciler | null;
   user: UserLayer | null;
+  /** Armed-orders engine (with the accounts layer and ORDERS_ENABLED); `ready` settles once it loaded. */
+  orders: (OrderService & { ready: Promise<void> }) | null;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -142,9 +147,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
 
+  let orders: (OrderService & { ready: Promise<void> }) | null = null;
   const sink: IngestSink = {
     tx: (tx) => {
       m.applyTx(tx);
+      orders?.engine.onIngestTx(tx);
       if (reconciler) {
         for (const ev of tx.events) {
           if (ev.kind === "pumpCreate") reconciler.seenPrimary("create", ev.mint, tx.receivedAt);
@@ -267,12 +274,31 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     user,
     onTokensChanged: user ? (mints) => user.alerts.onTokensChanged(mints) : undefined,
   });
+  if (user && cfg.orders.enabled) {
+    const svc = createOrderService({
+      cfg,
+      user,
+      market: m,
+      pools: resolver.pools,
+      programAccounts,
+      chain,
+      rpc,
+      publish: (userId, delta) => gateway?.publishOrders(userId, delta),
+      fetchFn: o.fetchFn,
+      overrides: o.orders,
+    });
+    user.api.add(svc.routes);
+    orders = { ...svc, ready: Promise.resolve() };
+  }
 
   // start
   writer.start();
   resolver.start();
   gateway.start();
   user?.start();
+  if (orders) {
+    orders.ready = orders.start().catch((e) => log.error(`armed-orders engine failed to start: ${e instanceof Error ? e.message : e}`));
+  }
   solUsd?.start();
   if (o.pollers !== false) {
     chain.start();
@@ -287,7 +313,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         pulse.isListed(mint) ||
         pulse.columnOf(mint) !== null ||
         (gateway?.isWatched(mint) ?? false) ||
-        (user?.alerts.watches(mint) ?? false),
+        (user?.alerts.watches(mint) ?? false) ||
+        (orders?.engine.watches(mint) ?? false),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);
@@ -306,9 +333,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     sink,
     reconciler,
     user,
+    orders,
     health,
     async stop() {
       clearInterval(evictTimer);
+      await orders?.engine.stop();
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();
