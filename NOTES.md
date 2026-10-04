@@ -11,6 +11,7 @@ Setup: `https://api.mainnet-beta.solana.com` for everything (feed, re-reads, his
 | Preview server on :8787 (`--db`, 57 min uptime, 20 reconnects, ingest latency p50 28 s) | before | 10 min, 6 coins | 84/127 (66.1%) | 12/26 (46.2%) | - | - | 96/153 (62.7%) |
 | In-process, no outage in the window | before | 4.8 min, 7 coins | 28/28 | 19/19 | 5/5 | 5/5 | 57/57 (100%) |
 | In-process, two socket outages in the window (238 and 122 slots) | after | 4.4 min, 7 coins | 66/66 (100%) | 23/38 (60.5%) | (verifier hit the data allowance) | 23/28 (82.1%) | 112/132 (84.8%) |
+| In-process on merged main (speed pass: writer thread, ingest p50 ~1.1 s), no outage in the window | after | 4.8 min, 8 coins | 77/77 | 78/78 | 22/22 | 5/5 | 182/182 (100%) |
 
 Where trades were lost (instrumented runs: every notification, every decoded transaction and every socket up / down recorded):
 
@@ -25,7 +26,14 @@ What changed:
 - In the after run, the pump coins hit by the two outages were repaired to 100% before verification. The PumpSwap / CPMM ones were not yet: gap-fill on the public RPC runs at ~1 call/s shared with everything else, busy pools need many signature pages, and the background tier is capped at 50 coins. Viewed and listed coins go first; a paid endpoint (`HISTORY_RPC_URL`, `HISTORY_RPS`, `HISTORY_BATCH`) repairs the rest.
 - Holder shares: a trade-only book that missed sells only grows (top 10 at 109% on DONALDMAXX). Shares are now scaled to what can be in circulation (curve: tokens sold, plus a mayhem coin's second 1e15; pool: supply minus pool base), never above 100%. An overcounted book on a viewed / listed coin triggers a gap-fill, and the rebuild from the full history makes it exact again.
 
-FLOP_BACKFILL_PLACEHOLDER
+Whole-history backfill of FLOP (`--backfill-only`, server never saw the coin: discovered from its curve PDA; created 2026-09-26, 97% bonding, 439 curve signatures of which 10 failed):
+
+| Run | Fetched | Stored trades | Chain successful txs | Missing with FLOP trades | Holders / top 10 |
+|---|---|---|---|---|---|
+| 1 (first code) | 393 in 64 min | 156 | 429 | 199 | 19 / 35.2% (wrong: built on 156 trades) |
+| 2 (fixed) | FLOP_RUN2 |
+
+Run 1 found two bugs. (1) The 72 h trade-retention prune (every minute) deleted the backfilled trades of a coin older than 72 h while its backfill ran, because the retention exemption was only written when the job finished. It is now written when the job starts. (2) A getTransaction batch that still failed after the reader's retries (429) was dropped. It is now put back and retried after a 15 s pause. The public RPC gave this run ~0.1-0.2 getTransaction/s: the preview server on the same IP kept a 500-deep Raydium re-read queue.
 ## 2026-10-04: follow-ups (CSP style-src, one loop-lag monitor, WS_COMPRESSION on)
 
 Setup: Apple M3 laptop, Bun 1.3.14, `DRY_RUN=true`, headless Chromium (Playwright 1.63) at 1440x900.
