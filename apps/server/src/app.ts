@@ -26,8 +26,9 @@ import { PROGRAM_IDS, type RaydiumTxFetchOptions, RpcLogsSource } from "./ingest
 import type { IngestSink, Source } from "./ingest/types";
 import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
+import { JupiterPricer, jupiterQuoter, jupiterRouteProbe } from "./market/jupiterPrice";
 import { PulseBoard } from "./market/pulse";
-import { jupiterRouteProbe, MintResolver } from "./market/resolve";
+import { MintResolver } from "./market/resolve";
 import { MarketState } from "./market/state";
 import { ImageProxy } from "./media";
 import { HostPacer, PRIORITY, type Priority } from "./media/pacer";
@@ -345,7 +346,12 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     });
   }
 
-  // Any mint by address: on-demand chain resolves (GET /api/tokens/:mint, token:<mint> subscriptions).
+  // Any mint by address: on-demand chain resolves (GET /api/tokens/:mint, token:<mint> subscriptions). Jupiter-only
+  // coins are priced from a keyless /build quote: one serialized quoter for the route probe and the refreshes.
+  const jupiterQuote = cfg.resolve.jupiterProbe ? jupiterQuoter(o.fetchFn) : null;
+  const jupiterPricer = jupiterQuote
+    ? new JupiterPricer({ quote: jupiterQuote, market: m, watched: () => (gateway?.hub ? watchedMints(gateway.hub) : []) })
+    : null;
   const resolve = new MintResolver({
     cfg: cfg.resolve,
     market: m,
@@ -353,7 +359,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     accounts: resolver,
     raydium,
     history,
-    jupiterRoutes: cfg.resolve.jupiterProbe ? jupiterRouteProbe(o.fetchFn) : null,
+    jupiterRoutes: jupiterQuote ? jupiterRouteProbe(jupiterQuote) : null,
+    jupiterPrime: jupiterPricer ? (mint) => jupiterPricer.prime(mint) : null,
   });
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
@@ -634,6 +641,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const reconcileTimer = reconciler ? setInterval(() => reconciler.sweep(), 5_000) : null;
   // LaunchLab platform / global configs and CPMM AmmConfigs: fee rates and graduation pools can change.
   const raydiumTimer = o.pollers !== false ? setInterval(() => raydium.refreshConfigs(), 10 * 60_000) : null;
+  // viewed Jupiter-only coins: one re-quote per tick at most, each coin about every 30 s
+  const jupiterTimer = jupiterPricer && o.pollers !== false ? setInterval(() => void jupiterPricer.tick(), 5_000) : null;
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
@@ -679,6 +688,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       clearInterval(evictTimer);
       await history?.stop();
       if (raydiumTimer) clearInterval(raydiumTimer);
+      if (jupiterTimer) clearInterval(jupiterTimer);
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
       metrics.stop();

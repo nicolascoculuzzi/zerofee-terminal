@@ -215,6 +215,13 @@ export interface TokenSummary {
   netBuyUsd: number | null;
   /** Live: the server's trade-history coverage ("backfilling" while it reads older trades from chain). */
   historyState?: "complete" | "partial" | "backfilling" | "unknown";
+  /**
+   * Live: holder metrics (holders, top 10, dev, snipers, bundlers) are being computed by a history backfill and
+   * arrive when it reaches the creation; their nulls mean "computing", not "unknown" (mirrors packages/protocol).
+   */
+  holdersPending?: boolean;
+  /** Live: price and market cap come from a Jupiter quote (Jupiter-only coins), not from reserves. */
+  priceSource?: "jupiter_quote";
   lastTradeAt: number;
   /** Price change over the last 5 minutes, %. */
   change5mPct: number | null;

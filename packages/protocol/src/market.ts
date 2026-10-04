@@ -230,6 +230,14 @@ export interface TokenSummary {
    * "computing" instead of guessing with timers.
    */
   holdersPending?: boolean;
+  /**
+   * Where `priceSol` / `mcSol` (and their USD values) come from when it is not the venue's own reserves:
+   * "jupiter_quote" = a Jupiter quote of a 0.01 SOL buy (Jupiter-only coins, launchpad "other"), re-quoted about
+   * every 30 s while someone views the coin; market cap = that price x supply. Absent: the reserves.
+   */
+  priceSource?: "jupiter_quote";
+  /** When the quote behind a "jupiter_quote" price was taken (ms). */
+  priceAt?: number;
   /** Last time any field changed. */
   updatedAt: number;
 }

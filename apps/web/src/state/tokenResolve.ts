@@ -1,13 +1,15 @@
 /**
  * Opening a token the live set doesn't hold (pasted mint, shared link, a coin the server pruned): the gateway
  * reads it from chain on GET /api/tokens/:mint (packages/protocol rest.ts TokenResponse / TokenNotFoundBody).
- * Only a definitive answer ends the wait: 404 with a reason ("not_a_token", "no_venue") or 400 (malformed).
+ * Only a definitive answer ends the wait: 404 with a reason ("not_a_token", "no_venue") or 400 (malformed). A
+ * "not_a_token" address the server read as a wallet (`account: "wallet"`) comes back as "wallet".
  * 429 / 503 / network errors are retried (Retry-After, else a growing backoff) while the page stays open.
  */
 import type { TokenNotFoundBody, TokenResponse } from "@zerofee/protocol";
 import { ApiError, api } from "../services/live/api";
 
-export type MissingReason = "not_a_token" | "no_venue" | "invalid" | "not_found";
+/** "wallet": not a token, a wallet (a System-owned account): the page offers the wallet view. */
+export type MissingReason = "not_a_token" | "wallet" | "no_venue" | "invalid" | "not_found";
 
 export type ResolveAnswer =
   | { kind: "found"; response: TokenResponse }
@@ -27,7 +29,12 @@ export async function askServer(mint: string, attempt: number, signal?: AbortSig
     if (e.status === 400) return { kind: "missing", reason: "invalid", redirect: null };
     if (e.status === 404) {
       const b = (e.body ?? {}) as Partial<TokenNotFoundBody>;
-      const reason: MissingReason = b.reason === "not_a_token" || b.reason === "no_venue" ? b.reason : "not_found";
+      const reason: MissingReason =
+        b.reason === "not_a_token" && b.account === "wallet"
+          ? "wallet"
+          : b.reason === "not_a_token" || b.reason === "no_venue"
+            ? b.reason
+            : "not_found";
       return { kind: "missing", reason, redirect: typeof b.redirect === "string" && b.redirect !== mint ? b.redirect : null };
     }
     const ra = Number((e.body as { retryAfterSec?: unknown } | null)?.retryAfterSec);

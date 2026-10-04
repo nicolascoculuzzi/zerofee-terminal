@@ -1,0 +1,77 @@
+{
+  "_note": "Keyless Jupiter GET https://api.jup.ag/swap/v2/build (0.01 SOL -> JUP, taker = system program), recorded 2026-10-04. Instructions and lookup tables trimmed; only the quote fields are used. noRoute: the 400 body for a mint Jupiter cannot route.",
+  "request": {
+    "inputMint": "So11111111111111111111111111111111111111112",
+    "outputMint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "amount": "10000000",
+    "slippageBps": "500",
+    "taker": "11111111111111111111111111111111"
+  },
+  "outputDecimals": 6,
+  "response": {
+    "inputMint": "So11111111111111111111111111111111111111112",
+    "outputMint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "inAmount": "10000000",
+    "outAmount": "3687950",
+    "otherAmountThreshold": "3503553",
+    "swapMode": "ExactIn",
+    "slippageBps": 500,
+    "priceImpactPct": "0.0038189555163555613138601138",
+    "routePlan": [
+      {
+        "percent": 11.69,
+        "bps": 1169,
+        "swapInfo": {
+          "ammKey": "5YPxToTobawvkbn5rkWKYDhZqHf5v6LAtRLNPGiq6U2A",
+          "label": "PancakeSwap",
+          "inputMint": "So11111111111111111111111111111111111111112",
+          "outputMint": "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+          "inAmount": "1169012",
+          "outAmount": "22649187"
+        }
+      },
+      {
+        "percent": 100,
+        "bps": 10000,
+        "swapInfo": {
+          "ammKey": "FkGgvNwKBMkDAWStXx7C9CbYiwTCHq2pFrkWHkvS9eJg",
+          "label": "GoonFi V2",
+          "inputMint": "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+          "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "inAmount": "22649187",
+          "outAmount": "141965"
+        }
+      },
+      {
+        "percent": 100,
+        "bps": 10000,
+        "swapInfo": {
+          "ammKey": "AkxuRa1soguFpVRjnDrRsXAcfTkZjRv1XyNXySzVivmC",
+          "label": "GoonFi V2",
+          "inputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "outputMint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+          "inAmount": "141965",
+          "outAmount": "431152"
+        }
+      },
+      {
+        "percent": 88.31,
+        "bps": 8831,
+        "swapInfo": {
+          "ammKey": "C8Gr6AUuq9hEdSYJzoEpNcdjpojPZwqG5MtQbeouNNwg",
+          "label": "Meteora DLMM",
+          "inputMint": "So11111111111111111111111111111111111111112",
+          "outputMint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+          "inAmount": "8830988",
+          "outAmount": "3256798"
+        }
+      }
+    ]
+  },
+  "noRoute": {
+    "status": 400,
+    "body": {
+      "error": "No routes found"
+    }
+  }
+}

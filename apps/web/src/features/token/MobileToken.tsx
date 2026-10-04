@@ -76,19 +76,39 @@ const RISK_NAME: Record<(typeof RISK_CHIPS)[number]["key"], string> = {
  * on the value only, 0% dim) with room for the full name under each value, as one stat strip with
  * hairline dividers rather than five chips (after Fey's stats row:
  * https://mobbin.com/screens/7f8ae731-3b5f-42c7-bc83-dd04ecbd04f2). A metric the server hasn't
- * computed keeps its cell with the name dimmed and no value: never a dash.
+ * computed keeps its cell with the name dimmed and no value: never a dash. While the server is still
+ * computing them (`pending`: a history backfill runs) each value is a static skeleton; when none is
+ * known and none is coming the strip is left out (five bare glyphs would say nothing).
  */
-function RiskStrip({ risk }: { risk: TokenRisk | null }) {
+function RiskStrip({ risk, pending }: { risk: TokenRisk | null; pending: boolean }) {
   const thresholds = useSettings((s) => s.display.riskThresholds);
   const colored = useSettings((s) => s.display.metricColors);
+  const chips = RISK_CHIPS.map(({ key }) => riskChip(key, risk, thresholds));
+  if (!pending && chips.every((c) => c.unknown)) return null;
   return (
     // Under 360 px of strip the names drop (the aria-label keeps them) and each glyph sits over its value:
     // values never truncate.
-    <div className="@container border-b border-hairline bg-surface-1">
+    <div className="@container border-b border-hairline bg-surface-1" aria-busy={pending || undefined}>
       <div className="grid h-12 grid-cols-5 divide-x divide-hairline">
-        {RISK_CHIPS.map(({ key }) => {
-          const chip = riskChip(key, risk, thresholds);
+        {chips.map((chip) => {
+          const key = chip.key;
           const Icon = RISK_ICON[key];
+          if (pending && chip.unknown) {
+            return (
+              <div
+                key={key}
+                role="img"
+                aria-label={`${RISK_NAME[key]}: computing`}
+                className="flex min-w-0 flex-col justify-center gap-1 px-2.5 @max-[359px]:items-center @max-[359px]:px-1"
+              >
+                <span className="flex h-4 items-center gap-1 @max-[359px]:h-auto @max-[359px]:flex-col @max-[359px]:gap-0.5">
+                  <Icon aria-hidden="true" className="icon-xs shrink-0 text-fg-4" />
+                  <Skeleton width={24} />
+                </span>
+                <span className="truncate text-micro font-medium text-fg-4 @max-[359px]:hidden">{RISK_NAME[key]}</span>
+              </div>
+            );
+          }
           const tone = chip.devSold ? "text-fg-2" : chip.text === "0%" ? "text-fg-3" : colored ? TONE_TEXT[chip.tone] : "text-fg-2";
           return (
             <div
@@ -324,8 +344,13 @@ export function MobileToken({ detail }: { detail: TokenDetail }) {
           </div>
           <div className="flex items-center gap-1 text-data text-fg-2">
             Price <Num kind="price" usd={quote === "USD"} value={quote === "USD" ? token.priceUsd : token.priceSol} />
-            <span className="text-fg-3">·</span>
-            Liq <Money usd={token.liquidityUsd} unit />
+            {/* Unknown liquidity (a Jupiter-only coin's pools are not read): left out rather than "Liq –". */}
+            {token.liquidityUsd !== null && (
+              <>
+                <span className="text-fg-3">·</span>
+                Liq <Money usd={token.liquidityUsd} unit />
+              </>
+            )}
           </div>
         </div>
 
@@ -369,7 +394,7 @@ export function MobileToken({ detail }: { detail: TokenDetail }) {
           </div>
         </div>
 
-        <RiskStrip risk={token.risk} />
+        <RiskStrip risk={token.risk} pending={token.holdersPending === true} />
 
         <div
           role="tablist"

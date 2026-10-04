@@ -90,6 +90,10 @@ function TokenPageSkeleton({ label = "Loading token…" }: { label?: string }) {
 /** What a definitive "no token here" means, in the user's words. */
 const MISSING_COPY: Record<MissingReason, { title: string; body: string }> = {
   not_a_token: { title: "Not a token", body: "This address isn't an SPL token mint. Paste the token's contract address (CA)." },
+  wallet: {
+    title: "This is a wallet address",
+    body: "Not a token mint. Open it in the wallet view to see its holdings and trades.",
+  },
   no_venue: {
     title: "No market for this token",
     body: "It has no pump.fun, PumpSwap or Raydium pool, and Jupiter has no route for it right now.",
@@ -202,18 +206,30 @@ export default function TokenPage() {
 
   if (!mint || status === "missing") {
     const copy = MISSING_COPY[missingReason ?? "not_found"];
+    const wallet = mint && missingReason === "wallet" ? mint : null;
     return (
       <div className="flex h-full items-start justify-center bg-surface-1 px-4 pt-10">
         <EmptyState
           title={copy.title}
           body={copy.body}
           action={
-            <Link
-              to="/pulse"
-              className="inline-flex h-6 items-center rounded-sm border border-hairline-strong bg-surface-3 px-2 text-data font-medium text-fg-1 transition-colors hover:bg-surface-3-hover"
-            >
-              Back to Pulse
-            </Link>
+            <div className="flex items-center gap-2">
+              {wallet && (
+                <Link
+                  to={`/portfolio?wallet=${encodeURIComponent(wallet)}`}
+                  replace
+                  className="inline-flex h-6 items-center rounded-sm bg-accent px-2 text-data font-medium text-ink transition-colors hover:bg-accent-hover active:bg-accent-press"
+                >
+                  View wallet
+                </Link>
+              )}
+              <Link
+                to="/pulse"
+                className="inline-flex h-6 items-center rounded-sm border border-hairline-strong bg-surface-3 px-2 text-data font-medium text-fg-1 transition-colors hover:bg-surface-3-hover"
+              >
+                Back to Pulse
+              </Link>
+            </div>
           }
         />
       </div>

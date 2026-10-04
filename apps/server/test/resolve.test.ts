@@ -43,6 +43,8 @@ const GRAD_COIN = "7dmcQ9TyPDcfTTjfCfcZhuwK79FThVuKqmzVM9uKpRhK";
 const GRAD_CPMM = "92WCdsbayLJNUFAL3EQypWJLTL8gvmSpXMh6qZxo6PHh";
 /** SPL mint with Metaplex metadata and no venue. */
 const BARE_MINT = metaSnap.legacyMint;
+/** A wallet: a System-owned account with no data (lamports only). */
+const WALLET = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
 /** No account at all (a fresh keypair-like address). */
 const NOBODY = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
 
@@ -209,22 +211,31 @@ describe("on-demand resolve per venue", () => {
   test("a pool address is not a token, and names the coin's mint", async () => {
     const w = world();
     const out = await w.r.resolve(POOL, "client");
-    expect(out).toMatchObject({ ok: false, status: 404, reason: "not_a_token", redirect: POOL_COIN });
+    expect(out).toMatchObject({ ok: false, status: 404, reason: "not_a_token", redirect: POOL_COIN, account: "other" });
     const cp = await w.r.resolve(GRAD_CPMM, "client");
     expect(cp).toMatchObject({ ok: false, reason: "not_a_token", redirect: GRAD_COIN });
   });
 
   test("an address with no account is not a token; the answer is cached (no second read)", async () => {
     const w = world();
-    expect(await w.r.resolve(NOBODY, "client")).toMatchObject({ ok: false, status: 404, reason: "not_a_token" });
+    expect(await w.r.resolve(NOBODY, "client")).toMatchObject({ ok: false, status: 404, reason: "not_a_token", account: "none" });
     const reads = w.calls.length;
     expect(await w.r.resolve(NOBODY, "client")).toMatchObject({ ok: false, reason: "not_a_token" });
     expect(w.calls.length).toBe(reads);
     expect(w.market.tokens.has(NOBODY)).toBe(false);
   });
 
+  test("a wallet (an account the System program owns) is not a token, and says it is a wallet", async () => {
+    // what getMultipleAccounts returns for a wallet: System-owned, no data
+    const w = world({ fixtures: { [WALLET]: { owner: "11111111111111111111111111111111", lamports: "2500000000", data: "" } } });
+    const out = await w.r.resolve(WALLET, "client");
+    expect(out).toMatchObject({ ok: false, status: 404, reason: "not_a_token", account: "wallet" });
+    expect(out.ok ? null : out.redirect).toBeUndefined();
+    expect(w.market.tokens.has(WALLET)).toBe(false);
+  });
+
   test("a mint with no venue: 'no_venue' without a Jupiter route, a Jupiter-routed 'other' record with one", async () => {
-    const none = world({ jupiterRoutes: async () => false });
+    const none = world({ jupiterRoutes: async () => null });
     expect(await none.r.resolve(BARE_MINT, "client")).toMatchObject({ ok: false, status: 404, reason: "no_venue" });
     expect(none.market.tokens.has(BARE_MINT)).toBe(false);
 
@@ -232,14 +243,49 @@ describe("on-demand resolve per venue", () => {
     const jup = world({
       jupiterRoutes: async (m) => {
         asked.push(m);
-        return true;
+        return 3_687_950n; // the probe's quote: 0.01 SOL buys this many base units
       },
     });
     const out = ok(await jup.r.resolve(BARE_MINT, "client"));
     expect(asked).toEqual([BARE_MINT]);
-    expect(out.token).toMatchObject({ launchpad: "other", symbol: "TALUN", priceSol: null });
+    expect(out.token).toMatchObject({ launchpad: "other", symbol: "TALUN", priceSource: "jupiter_quote", liquidity: null });
+    // priced from the quote, market cap from the mint supply, USD from SOL/USD (150 in this world)
+    const price = 0.01 / (3_687_950 / 10 ** out.token.decimals);
+    expect(out.token.priceSol).toBeCloseTo(price, 12);
+    expect(out.token.mcSol).toBeCloseTo(price * out.token.supply, 6);
+    expect(out.token.priceUsd).toBeCloseTo(price * 150, 9);
     expect(out.tradeContext).toBeNull();
     expect(jup.requested).toHaveLength(0); // nothing to walk
+  });
+
+  test("a Jupiter-only coin found in memory without a price is primed before answering", async () => {
+    const primed: string[] = [];
+    const w = world({ jupiterRoutes: async () => 3_687_950n });
+    ok(await w.r.resolve(BARE_MINT, "client"));
+    const rec = w.market.tokens.get(BARE_MINT);
+    if (!rec) throw new Error("no record");
+    rec.quotePrice = null; // e.g. reloaded from storage (quotes are not persisted)
+    const again = world({ jupiterRoutes: async () => 3_687_950n });
+    again.market.tokens.set(BARE_MINT, rec);
+    const r = new MintResolver({
+      cfg: CFG,
+      market: again.market,
+      store: again.reader,
+      accounts: again.resolver,
+      raydium: null,
+      history: null,
+      jupiterPrime: async (m) => {
+        primed.push(m);
+        again.market.setJupiterQuote(m, 10_000_000n, 3_687_950n, 7);
+      },
+    });
+    const out = ok(await r.resolve(BARE_MINT, "client"));
+    expect(out.source).toBe("memory");
+    expect(primed).toEqual([BARE_MINT]);
+    expect(out.token).toMatchObject({ priceSource: "jupiter_quote", priceAt: 7 });
+    // priced now: no second prime
+    ok(await r.resolve(BARE_MINT, "client"));
+    expect(primed).toHaveLength(1);
   });
 
   test("a completed curve without a PumpSwap pool (graduated to Raydium AMM v4) is not priced from the curve", async () => {
@@ -247,10 +293,13 @@ describe("on-demand resolve per venue", () => {
     const raw = Buffer.from((ACCOUNTS[curvePda] as Acc).data, "base64");
     raw[48] = 1; // BondingCurve.complete
     const accounts = { [curvePda]: { ...(ACCOUNTS[curvePda] as Acc), data: raw.toString("base64") } };
-    const none = world({ fixtures: accounts, jupiterRoutes: async () => false });
+    const none = world({ fixtures: accounts, jupiterRoutes: async () => null });
     expect(await none.r.resolve(CURVE_COIN, "client")).toMatchObject({ ok: false, reason: "no_venue" });
-    const jup = world({ fixtures: accounts, jupiterRoutes: async () => true });
-    expect(ok(await jup.r.resolve(CURVE_COIN, "client")).token).toMatchObject({ launchpad: "other", priceSol: null });
+    const jup = world({ fixtures: accounts, jupiterRoutes: async () => 1_000_000_000n });
+    const t = ok(await jup.r.resolve(CURVE_COIN, "client")).token;
+    // the Jupiter quote prices it, never the completed curve: 0.01 SOL for 1000 tokens (6 decimals)
+    expect(t).toMatchObject({ launchpad: "other", priceSource: "jupiter_quote" });
+    expect(t.priceSol).toBeCloseTo(0.00001, 12);
   });
 
   test("a coin already priced in memory answers without any read", async () => {
