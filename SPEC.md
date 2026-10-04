@@ -193,7 +193,7 @@ Terminal default gas (0.002–0.022 SOL per side) is 100–1,000× what calm mar
   - price, market cap and volume;
   - bonding progress = `1 − real_token_reserves_now / real_token_reserves_initial`, which handles mayhem coins with 2B supply and non-SOL quotes.
 - **Holders:** tracked incrementally from token balances and reconciled periodically (the program-filtered stream misses wallet-to-wallet transfers).
-- **Metadata:** from `CreateEvent`, JSON from public IPFS gateways (ipfs.io, dweb.link), cached by CID forever.
+- **Metadata:** from `CreateEvent`, JSON fetched from the URI's own IPFS gateway or the configured ones (ipfs.io and dweb.link retired on 2026-09-21; pump.fun launches are served by pump.mypinata.cloud), cached by CID forever. Images and socials are normalized server-side; token images reach the browser only through the same-origin image proxy (`GET /api/img`, packages/protocol `media.ts`).
 - **Wallet tracking and copy detection:** match signers in the firehose in memory against the deduplicated union of all users' lists. No per-wallet subscriptions for trades.
 - **Storage:**
   - SQLite holds tokens, trades for 24–72 h, and candles.

@@ -7,6 +7,7 @@ export * from "./admin";
 export * from "./alerts";
 export * from "./chain";
 export * from "./market";
+export * from "./media";
 export * from "./messages";
 export * from "./orders";
 export * from "./rest";

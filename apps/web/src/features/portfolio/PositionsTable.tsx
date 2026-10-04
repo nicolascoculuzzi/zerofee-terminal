@@ -3,6 +3,7 @@ import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import { Link, useNavigate } from "react-router";
 import { Age } from "../../components/ui/Age";
 import { Button, IconButton } from "../../components/ui/Button";
+import { LaunchpadMark } from "../../components/ui/Logo";
 import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { Tooltip } from "../../components/ui/Tooltip";
@@ -173,6 +174,7 @@ const PositionRow = memo(function PositionRow({
         >
           <TokenAvatar mint={p.mint} symbol={p.symbol} imageUri={p.imageUri} size="xs" badge={false} />
           <span className="truncate font-medium text-fg-1 group-hover:underline">{p.symbol}</span>
+          <LaunchpadMark launchpad={p.launchpad} />
           {!compact && <span className="min-w-0 truncate text-fg-3">{p.name}</span>}
         </Link>
       </td>

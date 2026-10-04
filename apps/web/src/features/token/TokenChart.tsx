@@ -14,6 +14,8 @@ import {
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Hotkey } from "../../components/ui/controls";
+import { PlatformMark } from "../../components/ui/Logo";
+import { type PlatformLogo, VENUE_LOGO } from "../../components/ui/logos";
 import { Num } from "../../components/ui/Num";
 import { MenuItem, Popover } from "../../components/ui/Popover";
 import { chartColors, useChartThemeKey, withAlpha } from "../../lib/chartTheme";
@@ -104,6 +106,7 @@ function Legend({
   symbol,
   pair,
   venue,
+  venueLogo,
   tf,
   mode,
   quote,
@@ -113,6 +116,7 @@ function Legend({
   symbol: string;
   pair: string;
   venue: string;
+  venueLogo: PlatformLogo | null;
   tf: string;
   mode: "mc" | "price";
   quote: "USD" | "SOL";
@@ -129,8 +133,9 @@ function Legend({
     );
   return (
     <div className="pointer-events-none absolute top-2 left-2 z-chart-ui flex max-w-[calc(100%-96px)] flex-wrap items-center gap-x-2 gap-y-0.5 text-label">
-      <span className="text-fg-3">
-        {symbol}/{pair} · {venue} · {tf}
+      <span className="inline-flex items-center gap-1 text-fg-3">
+        {symbol}/{pair} ·{venueLogo && <PlatformMark logo={venueLogo} size={12} label="" />}
+        {venue} · {tf}
       </span>
       {d && (
         <>
@@ -753,6 +758,7 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
           symbol={token.symbol}
           pair={token.quote === "OTHER" ? "quote" : token.quote}
           venue={VENUE_LEGEND[token.venue]}
+          venueLogo={VENUE_LOGO[token.venue]}
           tf={ui.tf}
           mode={ui.mode}
           quote={quote}

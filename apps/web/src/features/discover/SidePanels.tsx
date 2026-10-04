@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { Age } from "../../components/ui/Age";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
+import { LaunchpadMark } from "../../components/ui/Logo";
 import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { copyText } from "../../lib/clipboard";
@@ -59,6 +60,7 @@ const CompactTokenRow = memo(function CompactTokenRow({ mint, fresh, active }: {
         </Link>
         <TokenAvatar mint={t.mint} symbol={t.symbol} imageUri={t.imageUri} size="2xs" />
         <span className="truncate font-semibold text-fg-1">{t.symbol}</span>
+        <LaunchpadMark launchpad={t.launchpad} />
         <Age ts={t.createdAt} className={cn("shrink-0", COL.age)} />
       </Cell>
       <Cell className={cn("shrink-0 font-medium text-fg-1", COL.mc)}>
@@ -92,6 +94,7 @@ const MobileTokenRow = memo(function MobileTokenRow({ mint, fresh }: { mint: str
       <Cell className="min-w-0 flex-1 flex-col gap-1">
         <span className="flex h-5 min-w-0 items-center gap-2">
           <span className="truncate text-amount font-semibold text-fg-1">{t.symbol}</span>
+          <LaunchpadMark launchpad={t.launchpad} size={14} />
           <Age ts={t.createdAt} className="shrink-0 text-data" />
         </span>
         <span className="flex h-5 items-center gap-2 text-data">

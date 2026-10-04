@@ -18,6 +18,7 @@ function summary(mint: string, o: Partial<TokenSummary> = {}): TokenSummary {
     name: mint,
     symbol: mint,
     image: null,
+    imageProxied: null,
     description: null,
     launchpad: "pump",
     quoteMint: "So11111111111111111111111111111111111111112",

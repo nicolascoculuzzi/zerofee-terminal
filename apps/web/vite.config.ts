@@ -4,7 +4,9 @@ import { defineConfig, type Plugin } from "vite";
 
 /**
  * Strict Content-Security-Policy for production builds (SPEC.md, "Front-end integrity").
- * The app runs on simulated data, so nothing needs a network origin besides 'self'.
+ * Images are same-origin only: token images through the server's image proxy (GET /api/img), platform
+ * logos bundled in public/venues/; data: is for the Pulse card icon masks, blob: for chart and share-card
+ * previews. The edge (deploy/docker/Caddyfile) sends the same img-src.
  * Dev builds skip it because Vite injects inline styles for HMR.
  */
 const CSP = [

@@ -11,7 +11,7 @@ import {
   USDC_MINT,
   WSOL_MINT,
 } from "@zerofee/core";
-import type { Launchpad, TokenSocials, TokenSummary, Trade, TradeContext } from "@zerofee/protocol";
+import { imageProxyUrl, type Launchpad, type TokenSocials, type TokenSummary, type Trade, type TradeContext } from "@zerofee/protocol";
 import type { PoolInfo } from "../accounts/resolver";
 import type { OrderKey } from "./candles";
 import type { HolderBook } from "./holders";
@@ -242,6 +242,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     name: rec.name,
     symbol: rec.symbol,
     image: rec.image,
+    imageProxied: imageProxyUrl(rec.mint, rec.image),
     description: rec.description,
     launchpad: rec.launchpad,
     quoteMint: rec.quoteMint,

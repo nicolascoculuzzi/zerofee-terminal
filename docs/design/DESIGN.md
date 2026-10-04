@@ -43,7 +43,7 @@ Each row is a blocking review finding.
 | 7 | Decorative illustrations | 3D coins and rockets (the art on [Binance's share poster](https://mobbin.com/screens/fa184fc0-d47a-4ad5-a927-fd920bc4808f)), mascots, empty-state art | Text, plus an optional 16 px icon | Visual review |
 | 8 | Airy padding | Panel padding above 12 px, desktop table rows above 32 px, gutters between tiled panels, roomy consumer tables like [Uniswap Tokens](https://mobbin.com/screens/e39f0d0f-bed1-49ff-92e0-c53d36d34de6) (rows around 60 px) | Density tokens (2.10) | Measure in devtools |
 | 9 | Centered hero layouts in-app | A big centred headline, subtitle and CTA inside the product, like Uniswap's "Swap anytime, anywhere" ([flow](https://mobbin.com/flows/9aaa402b-0d7a-4960-8261-57602073bb6c)) | Top-left aligned content. Empty states are centred only inside their own panel. | Visual review |
-| 10 | Decorative colour | Colour that encodes nothing: brand-coloured launchpad badges (the current `LAUNCHPADS` map), coloured column tops like [Basecamp's card table](https://mobbin.com/screens/52476c45-1afb-415f-826e-6f8ef09182df), rainbow chips, coloured icons | Greyscale chrome. Colour means buy, sell, risk, status or focus, nothing else. | Every coloured pixel maps to a token in 2.1 with a meaning |
+| 10 | Decorative colour | Colour that encodes nothing: invented brand colours for launchpad letters, coloured column tops like [Basecamp's card table](https://mobbin.com/screens/52476c45-1afb-415f-826e-6f8ef09182df), rainbow chips, coloured icons | Greyscale chrome. Colour means buy, sell, risk, status or focus, nothing else. The one exception: a platform's own logo at 12-16 px (2.11), which identifies it. | Every coloured pixel maps to a token in 2.1 with a meaning, or is inside a platform logo |
 | 11 | Inconsistent icon sizes | Icons at 10, 11, 13, 15 or 18 px, mixed stroke widths | 12, 14 and 16 px only, with a 1.5 px absolute stroke (2.11) | `grep -rn "size={" src` values are in {12, 14, 16} |
 | 12 | Fake round numbers | Hard-coded demo values such as "$1,000,000", "+100%" or "1.2K holders" in components, docs or screenshots | Real or simulated, irregular data. Missing values show "–". | `grep` for currency literals in `src/components` and `src/features` |
 | 13 | Generic card grids | Three or four identical rounded KPI tiles with an icon in the corner, like [Railway's usage tiles](https://mobbin.com/screens/00864e08-5edc-414f-9cea-ab40465e0cb7) | One stat strip with hairline dividers, like [Fey's stats row](https://mobbin.com/screens/7f8ae731-3b5f-42c7-bc83-dd04ecbd04f2) | Visual review |
@@ -62,6 +62,7 @@ Chrome is greyscale. Colour appears only when it carries a meaning the trader mu
 - Observed: [OKX spot](https://mobbin.com/screens/c3ca83ef-f1de-4703-abbf-aa02ff6fa1ff) runs a black, white and grey interface where green and red appear only in prices and the order book. [Vercel deployments](https://mobbin.com/screens/e9576405-bcef-419a-922a-8fb84b044a54) colour nothing except status dots. [Linear in dark mode](https://mobbin.com/screens/e142df2a-3527-499c-8f81-1b715947ac0c) keeps meta grey and small.
 - Rules:
   - The brand accent is neutral ink (`accent` = `text-1`). There is no brand hue in the UI. The logo mark is monochrome.
+  - Exception: third-party platform logos (launchpads, AMMs, aggregators, DexScreener) keep their own colours at badge sizes, 12-16 px (2.11), because they identify the platform rather than decorate. Everything else stays monochrome, including the social marks.
   - Prices, market caps, volumes and balances render in `text-1` or `text-2`. Only changes, PnL, sides and risk get colour.
   - Low-risk values don't shout: no fill, only a dimmer green value (`risk-low`).
 
@@ -226,6 +227,7 @@ Colour never carries meaning alone, in any palette. Side is also written ("B"/"S
 4. `info`: informational icons, the "TRK" tag, links inside long-form help.
 5. `focus`: the focus ring only.
 6. Monogram fills (4.22): muted identity colours, chroma 0.05 or less.
+7. Platform logos (2.11): the platform's own colours, at 12-16 px only.
 
 Nothing else is coloured.
 
@@ -416,9 +418,10 @@ Mobile (below 768 px) ignores these and uses touch sizes: 44 px minimum targets,
 - Sizes: 12 px (inline in data and chips), 14 px (controls, menus, buttons), 16 px (top bar, modal close, empty states).
 - Stroke: `strokeWidth={1.5}` with `absoluteStrokeWidth`, so every icon has a 1.5 px stroke at any size.
 - Colour: `currentColor`. `text-3` at rest, `text-1` on hover or when active. Coloured icons only for status (warn triangle, failed X) and side arrows.
-- No brand logos (X, Telegram, launchpads). X links show the letter "X" in Plex Sans 600; Telegram uses `Send`; websites use `Globe`. The one exception: in the connect step, wallets show the icon they supply through Wallet Standard, so users can recognise their own wallet.
+- Platform logos: each launchpad, AMM and aggregator shows its own logo, in its own colours, at 12-16 px only (the launchpad badge on avatars, filter and menu rows, the token header, the chart legend, Discover and position rows). They are 64 px WebP files bundled under `apps/web/public/venues/` (same origin; sources in `LOGOS.md`, refreshed by `scripts/fetch-venue-logos.ts`), drawn by `PlatformMark` (`components/ui/Logo.tsx`). Ids without a logo ("other") keep a neutral letter. Mapping and tests: `components/ui/logos.ts`.
+- Social and link marks: X, Telegram and Discord marks from simple-icons (CC0 path data), the Solana mark for the SOL unit, `Globe` for other websites, and the pump.fun and DexScreener logos for a token's own pages. Marks are monochrome in `currentColor` (`text-3`, hover `text-1`) like every icon; links open in a new tab with `rel="noopener noreferrer"` and only ever point at https URLs (`components/ui/socials.ts`). In the connect step, wallets show the icon they supply through Wallet Standard.
 - An icon alone is allowed only with a tooltip and an `aria-label`. Destructive actions always carry a text label.
-- Token images: real images (proxied) render in a 4 px-radius square with a 1 px inner `hairline`. Missing images use monograms (4.22), never generated art.
+- Token images: real images (through our image proxy, `GET /api/img`) render in a 4 px-radius square with a 1 px inner `hairline`. Missing images use monograms (4.22), never generated art.
 
 ---
 
@@ -684,11 +687,11 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
 
 - **Avatar** (4.22): 40 px square, 4 px radius.
   - Bonding ring: a 2 px stroke around the square, track `hairline-strong`, fill `text-2`, length equal to progress.
-  - Launchpad badge: 16 px, bottom-right, offset −3 px, `surface-3` with a 2 px `bg` ring, one 10 px letter in `text-2`: P pump, M Mayhem, B Bonk, G Bags, S StonkFun, R LaunchLab, D Meteora DBC, O Moonit, X other.
+  - Launchpad badge: 16 px, bottom-right, offset −3 px, 2 px `bg` ring, the launchpad's logo (2.11) on `surface-3`: pump.fun, Mayhem (pump.fun's mark), BONK.fun, Bags, StonkFun, Raydium LaunchLab, Meteora DBC, Moonit, Boop, Heaven. "Other" keeps a 10 px "X" in `text-2`.
 - **Line 1 (18 px):** ticker at 13/600 `text-1` (max 10 characters, ellipsis), name at 12/400 `text-3` (truncates first), copy-CA icon button (`Copy` 12 px in a 20 × 20 hit area, `text-3`, hover `text-1`).
 - **Line 2 (16 px):**
   - Age (3.7), reserving 4ch.
-  - Socials: X letter, `Globe`, `Send`, each 12 px in a 16 × 16 hit area, `text-3`. Hover shows the handle or URL. A tweet link shows the tweet preview popover.
+  - Socials: the X mark, `Globe` (the Discord mark for discord links), the Telegram mark, each 12 px in a 16 × 16 hit area, `text-3`, as links opening in a new tab. Hover shows the handle or URL. A tweet link shows the tweet preview popover.
   - Counters: `Users` 12 px + holders; `BadgeCheck` 12 px + pro traders; `Eye` 12 px + tracked wallets holding (only when above 0, value in `info`). Counter values are 11/500 `text-2`.
 - **Line 3 (18 px):** five risk chips T D S I B (4.5), 4 px apart, then flags (DEX, T22, LP).
 - **Metrics (72 px, right-aligned):**
@@ -1310,7 +1313,8 @@ Borrowed from:
 
 ### 4.22 Token avatars and monograms
 
-- **Token image:** a square with 4 px radius (sizes 16, 20, 28, 32, 40, 48 px) and a 1 px inner `hairline` (`box-shadow: inset 0 0 0 1px`), `object-fit: cover`, `loading="lazy"`, `decoding="async"`. Images come through our image proxy (CSP `img-src 'self'`).
+- **Token image:** a square with 4 px radius (sizes 16, 20, 28, 32, 40, 48 px) and a 1 px inner `hairline` (`box-shadow: inset 0 0 0 1px`, on an overlay so the image can't cover it), `object-fit: cover`, `loading="lazy"`, `decoding="async"`. Images come through our image proxy only (`GET /api/img?mint&v&s`, contract in `packages/protocol/src/media.ts`; CSP `img-src 'self'`), requested at the box size times the device pixel ratio capped at 2.
+- **Loading and failure:** the monogram is drawn first and stays until the image has loaded; the image then fades in over it (opacity, `dur-1`; no fade with reduced motion) inside the same fixed box, so nothing shifts. A failed image keeps the monogram and is retried after 20 s and 60 s (a brand-new token's image can take a few seconds to reach the proxy). Simulated coins have no images: they always show the monogram, through the same code path.
 - **Missing image:** a monogram. One or two characters (the ticker's first characters, uppercase; digits allowed), Plex Sans 600 at 40% of the box height, `text-1`, on one of 8 muted backgrounds picked by `hash(mint) % 8`:
   - Dark: `#603D3C` `#5B422A` `#494A2A` `#31503C` `#225052` `#304B61` `#474361` `#593D52` (`text-1` contrast 7.5–7.9:1)
   - Light: `#F5D5D4` `#EFDAC6` `#DFE1C6` `#CDE5D4` `#C4E6E7` `#CCE1F4` `#DDDBF4` `#EED6E7` (13.3–13.7:1)
@@ -1411,8 +1415,8 @@ y=876  +------------------------------------------------------------------+-----
 
 - **Token header (48 px):**
   - Left block: two 20 px lines.
-    - Line 1: avatar 28, ticker 14/600, name 12 `text-3`.
-    - Line 2: CA (mono) with copy, age, socials.
+    - Line 1: avatar 28, ticker 14/600, name 12 `text-3`, the launchpad logo at 14 px (plus the venue's when the token migrated to another brand).
+    - Line 2: CA (mono) with copy, age, socials, then the token's pump.fun page (pump coins) and DexScreener chart.
   - Stats strip, each cell a micro label over a data value, with hairline dividers between cells: MC (`display-2`), Price, Liquidity, Volume 24h, 5m / 1h / 24h change, Holders, and on the curve "BC 87%" with a 32 × 2 px bar.
   - Actions on the right: watchlist `Star`, alert `Bell`, `Share2`, and an "Instant" toggle for the Instant Trade window.
 - **Main area (88–876, 788 px):**
@@ -1775,9 +1779,9 @@ Target WCAG 2.2 AA, with these specifics:
 | Fonts | 92.9 KB woff2 on first load (Plex Sans latin plus Plex Mono 400 and 500). latin-ext only via `unicode-range`. Plex Sans latin is preloaded. | Network panel |
 | CSS | Up to 25 KB gzip | Build report |
 | Icons | Named lucide imports only; no icon font, no `import *` | `grep` for `from "lucide-react"` patterns |
-| Images | Token images proxied, at most 2× the display size, lazy-loaded, decoded async; monograms render with no network | Network panel |
+| Images | Token images through `/api/img` only, WebP at most 2× the display size (sizes 32-256, about 2 KB at 96 px), lazy-loaded, decoded async, cached immutably per image version; monograms and bundled platform logos render with no third-party network | Network panel |
 
-**Card icons as CSS masks.** An inline lucide SVG costs 2 to 5 nodes, and a wide card shows up to nine icons (socials, counters, copy, the pill's `Zap` or `Lock`, the menu), which alone would spend most of the 45-node budget. So the Pulse page renders each lucide icon it needs once, hidden, serialises it with a 3-unit stroke (1.5 px at 12 px on lucide's 24-unit grid), and publishes it as a custom property on the page root (`--zfp-<name>: url("data:image/svg+xml,…")`). A card icon is the host element's `::before`: 12 × 12 px, `background: currentColor`, `mask: var(--zfp-<name>) center/contain no-repeat`. It is still the lucide glyph at 12 px with a 1.5 px stroke, follows the text colour for hover and states, and costs zero nodes. A missing variable falls back to an empty mask, never a solid square. Use the technique only where a node budget applies (Pulse cards and phone rows); everywhere else icons stay inline lucide components. The CSP already allows `data:` images. Implementation: `apps/web/src/features/pulse/icons.tsx`.
+**Card icons as CSS masks.** An inline lucide SVG costs 2 to 5 nodes, and a wide card shows up to nine icons (socials, counters, copy, the pill's `Zap` or `Lock`, the menu), which alone would spend most of the 45-node budget. So the Pulse page renders each lucide icon it needs once, hidden, serialises it with a 3-unit stroke (1.5 px at 12 px on lucide's 24-unit grid), and publishes it as a custom property on the page root (`--zfp-<name>: url("data:image/svg+xml,…")`). A card icon is the host element's `::before`: 12 × 12 px, `background: currentColor`, `mask: var(--zfp-<name>) center/contain no-repeat`. It is still the lucide glyph at 12 px with a 1.5 px stroke, follows the text colour for hover and states, and costs zero nodes. A missing variable falls back to an empty mask, never a solid square. Use the technique only where a node budget applies (Pulse cards and phone rows); everywhere else icons stay inline lucide components. The X, Telegram and Discord marks on cards are published the same way from their simple-icons path data (filled, not stroked). The CSP already allows `data:` images. Implementation: `apps/web/src/features/pulse/icons.tsx`.
 
 Lightweight Charts runs with `autoSize`. Candle updates use `series.update()`, never `setData()` per tick. Marker sets update at most 4 times per second.
 
@@ -2211,4 +2215,4 @@ Run this on every screen and PR that changes UI. Any "no" blocks the merge unles
 27. Do loading states keep exact row heights under real headers, with no shimmer and no spinner placeholders for data?
 28. Is the screen free of hard-coded demo values or placeholder copy ("$1,000,000", "+100%", "Lorem")?
 29. Do buttons say what they do ("Buy WIF · 0.50 SOL", "Cancel orders"), never "Submit", "OK" or "Are you sure?"?
-30. Is the brand clean: no other product's logo, wordmark or signature colour, and the zerofee mark monochrome?
+30. Is the brand clean: no other product's logo, wordmark or signature colour (except platform logos at 12-16 px and monochrome social marks, 2.11), and the zerofee mark monochrome?

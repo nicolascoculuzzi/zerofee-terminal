@@ -21,6 +21,14 @@
 /** Where the token trades / launched. More launchpads (LaunchLab, Meteora DBC) arrive in later phases. */
 export type Launchpad = "pump" | "pumpswap";
 
+/**
+ * Links from the token's metadata JSON, each null or an absolute `https://` URL (never javascript:, data:
+ * or any other scheme; no credentials; no IP-literal or local hosts). Render them as links with
+ * `target="_blank" rel="noopener noreferrer"`.
+ *  - x: an x.com URL (profile, status or community); twitter.com links are rewritten to x.com.
+ *  - telegram: a t.me URL (handle, +invite or joinchat).
+ *  - website: any other https URL (http:// is upgraded).
+ */
 export interface TokenSocials {
   x: string | null;
   telegram: string | null;
@@ -44,8 +52,18 @@ export interface TokenSummary {
   /** "" until the CreateEvent (or metadata bootstrap) is seen. */
   name: string;
   symbol: string;
-  /** Image URL from the metadata JSON (IPFS URLs rewritten to a public gateway); null until fetched. */
+  /**
+   * Image URL from the metadata JSON (`image`, `image_uri`, `properties.files` ...), normalized to http(s):
+   * ipfs:// and retired IPFS gateways (ipfs.io, dweb.link, Cloudflare) rewritten to the server's first
+   * gateway, ar:// to arweave.net. null until the metadata is fetched, or when it names no usable image.
+   * Never load it directly (CSP blocks it): use `imageProxied`.
+   */
   image: string | null;
+  /**
+   * Same-origin image proxy URL for `image` (media.ts `imageProxyUrl(mint, image)`), null when `image` is.
+   * Append `&s=<px>` for the display size.
+   */
+  imageProxied: string | null;
   description: string | null;
   launchpad: Launchpad;
   /** Normalized quote mint: wSOL for SOL pairs, USDC mint for USDC pairs. */

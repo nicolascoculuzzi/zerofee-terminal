@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { SolGlyph } from "../../components/ui/bits";
+import { type LinkIcon, type SafeLink, type SocialKind, socialLink } from "../../components/ui/socials";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import type { PulseColumnId } from "../../protocol";
@@ -82,46 +83,58 @@ export function MoreButton({ mint, symbol, column, shown }: { mint: string; symb
   );
 }
 
-const SOCIAL_MASK: Record<"web" | "tg", MaskIcon> = { web: "globe", tg: "send" };
+type CardSocial = "x" | "web" | "tg";
+const SOCIAL_KIND: Record<CardSocial, SocialKind> = { x: "x", web: "website", tg: "telegram" };
+/** Card masks per link logo: brand marks for X / Telegram / Discord, the globe for any other site. */
+const LINK_MASK: Record<LinkIcon, MaskIcon> = {
+  x: "x",
+  telegram: "telegram",
+  discord: "discord",
+  pump: "globe",
+  dexscreener: "globe",
+  globe: "globe",
+};
 
-function socialUrl(kind: "x" | "web" | "tg", value: string): string {
-  if (kind === "x") return `https://x.com/${value}`;
-  if (kind === "web") return `https://${value}`;
-  return `https://t.me/${value}`;
+/** Safe https link for a card social, or null (not rendered). */
+function cardLink(kind: CardSocial, value: string): SafeLink | null {
+  return socialLink(SOCIAL_KIND[kind], value);
 }
 
-export function socialLabel(kind: "x" | "web" | "tg", value: string): string {
-  if (kind === "x") return value.includes("/status/") ? "Tweet" : `@${value}`;
-  if (kind === "web") return value;
-  return `t.me/${value}`;
+export function socialLabel(kind: CardSocial, value: string): string {
+  return cardLink(kind, value)?.label ?? value;
 }
 
 /**
- * Social link: X letter, Globe or Send at 12 px in a 16 × 16 box with a 24 px hit area. On
- * simulated data the handles are fictional, so a click copies the link (no network calls).
+ * Social link (DESIGN.md 2.11): the X or Telegram mark, Discord's for discord links, else the globe, at
+ * 12 px in a 16 × 16 box with a 24 px hit area; opens in a new tab. On simulated data the handles are
+ * fictional, so a click copies the link instead (no network calls).
  */
-function SocialButton({ kind, value, first }: { kind: "x" | "web" | "tg"; value: string; first: boolean }) {
+function SocialButton({ kind, value, first }: { kind: CardSocial; value: string; first: boolean }) {
   const [copied, flash] = useFlag();
-  const url = socialUrl(kind, value);
+  const link = cardLink(kind, value);
+  if (!link) return null;
   return (
-    <button
-      type="button"
+    // biome-ignore lint/a11y/useAnchorContent: the mark is a ::before mask (card node budget); aria-label names the link
+    <a
+      href={link.href}
+      target="_blank"
+      rel="noopener noreferrer"
       data-tip={`social:${kind}`}
-      aria-label={copied ? "Copied" : socialLabel(kind, value)}
+      aria-label={copied ? "Copied" : link.label}
       onClick={(e) => {
         e.stopPropagation();
-        if (getServices().simulated) void copyText(url).then((ok) => ok && flash());
-        else window.open(url, "_blank", "noopener,noreferrer");
+        if (!getServices().simulated) return;
+        e.preventDefault();
+        void copyText(link.href).then((ok) => ok && flash());
       }}
+      onAuxClick={(e) => e.stopPropagation()}
       className={cn(
         "relative inline-flex size-4 shrink-0 items-center justify-center transition-colors after:absolute after:-inset-1 after:content-['']",
+        ICON,
         first && "ml-1",
-        copied ? cn(ICON, MASK.check, "text-fg-1") : "text-fg-3 hover:text-fg-1",
-        !copied && (kind === "x" ? "text-label font-semibold" : cn(ICON, MASK[SOCIAL_MASK[kind]])),
+        copied ? cn(MASK.check, "text-fg-1") : cn(MASK[LINK_MASK[link.icon]], "text-fg-3 hover:text-fg-1"),
       )}
-    >
-      {kind === "x" && !copied ? "X" : null}
-    </button>
+    />
   );
 }
 

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Checkbox } from "../../components/ui/controls";
+import { PlatformName } from "../../components/ui/Logo";
 import type { AuditRanges, MoneyRanges, PulseFilter } from "../../lib/filters";
 import { fmtCount } from "../../lib/format";
 import { LAUNCHPADS, QUOTES } from "../../lib/metrics";
@@ -123,7 +124,7 @@ export function FilterSections({
               <Checkbox
                 checked={draft.protocols.includes(l.id)}
                 onChange={() => patch({ protocols: toggle<Launchpad>(draft.protocols, l.id) })}
-                label={l.label}
+                label={<PlatformName id={l.id} label={l.label} />}
               />
               <span className="zf-num text-label text-fg-3">{fmtCount(counts.protocols[l.id] ?? 0)}</span>
             </div>
