@@ -6,6 +6,7 @@ import { CountBadge } from "../components/ui/bits";
 import { Hotkey, NumberInput, Segmented } from "../components/ui/controls";
 import { MenuItem, MenuSeparator, Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
+import { WalletBadge } from "../components/ui/WalletIcon";
 import { cn } from "../lib/cn";
 import { fmtSol, fmtSolShort, shortAddr } from "../lib/format";
 import { compactLabel } from "../lib/hotkeys";
@@ -161,7 +162,8 @@ function WalletMenu({ compact }: { compact?: boolean }) {
   const requestUnlock = useUi((s) => s.requestUnlock);
   const wallets = service.tradingWallets.filter((w) => !w.archived);
   const active = wallets.find((w) => w.address === activeAddress);
-  const balance = activeAddress ? (status[activeAddress]?.solBalance ?? 0) : 0;
+  // Unknown until the wallet feed reports it: "–", never a made-up 0.
+  const balance = activeAddress ? (status[activeAddress]?.solBalance ?? null) : null;
   const locked = service.locked;
 
   if (!service.connected || wallets.length === 0) {
@@ -219,7 +221,7 @@ function WalletMenu({ compact }: { compact?: boolean }) {
               </span>
               <span className="zf-num text-right">
                 <span className="block font-semibold text-fg-1">
-                  {fmtSol(st?.solBalance ?? 0)}
+                  {fmtSol(st?.solBalance ?? null)}
                   <span className="zf-unit font-normal">{" "}SOL</span>
                 </span>
                 {st && st.reservedSol > 0 && <span className="block text-label text-fg-3">{fmtSol(st.reservedSol)} reserved</span>}
@@ -249,8 +251,10 @@ function WalletMenu({ compact }: { compact?: boolean }) {
           <ModeSwitch />
         </div>
         <div className="px-2 pt-1 pb-2 text-label text-fg-3">
-          Connected <span className="text-fg-2 capitalize">{service.connected.provider}</span>{" "}
-          <span className="font-mono">{shortAddr(service.connected.address)}</span>
+          <span className="inline-flex items-center gap-1">
+            Connected <WalletBadge wallet={service.connected} className="text-fg-2" />
+            <span className="font-mono">{shortAddr(service.connected.address)}</span>
+          </span>
           {service.session ? " · signed in" : <span className="text-warn"> · not signed in</span>}
         </div>
         <MenuSeparator />

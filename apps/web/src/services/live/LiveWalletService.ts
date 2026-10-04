@@ -200,12 +200,18 @@ export class LiveWalletService implements WalletService {
   // connected wallet + SIWS
   // -------------------------------------------------------------------------------------------
 
+  /** Supported wallets, installed ones first, each with the name and logo its extension registered. */
   providers(): ProviderInfo[] {
     const found = new Map(detectWallets().map((w) => [w.provider, w]));
-    return PROVIDERS.map((provider) => {
+    const all = PROVIDERS.map((provider) => {
       const w = found.get(provider);
       return { provider, name: w?.name ?? PROVIDER_NAME[provider], icon: w?.icon ?? null, installed: !!w };
     });
+    return [...all.filter((p) => p.installed), ...all.filter((p) => !p.installed)];
+  }
+
+  private connectedOf(conn: ConnectedSession, address: string): ConnectedWallet {
+    return { provider: conn.provider, address, name: conn.wallet.name, icon: conn.wallet.icon ?? null };
   }
 
   private adopt(conn: ConnectedSession): ConnectedWallet {
@@ -221,9 +227,9 @@ export class LiveWalletService implements WalletService {
       this.conn = new ConnectedSession(conn.provider, conn.wallet, account);
       // Another account in the extension: it has to sign in on its own.
       const session = this.state.session?.address === account.address ? this.state.session : null;
-      this.set({ connected: { provider: conn.provider, address: account.address }, session });
+      this.set({ connected: this.connectedOf(conn, account.address), session });
     });
-    const connected = { provider: conn.provider, address: conn.address };
+    const connected = this.connectedOf(conn, conn.address);
     const session = this.state.session?.address === conn.address ? this.state.session : null;
     this.set({ connected, session });
     return connected;

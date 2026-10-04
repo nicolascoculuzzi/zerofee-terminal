@@ -4,9 +4,13 @@ export type WalletProvider = "phantom" | "solflare" | "backpack";
 export interface ConnectedWallet {
   provider: WalletProvider;
   address: string;
+  /** The wallet's own name ("Phantom"), as it registered through Wallet Standard. */
+  name: string;
+  /** The wallet's official logo, a data: URI from Wallet Standard; null when it has none (the simulation). */
+  icon: string | null;
 }
 
-/** A wallet the connect step can offer. */
+/** A wallet the connect step can offer (installed ones first). */
 export interface ProviderInfo {
   provider: WalletProvider;
   name: string;

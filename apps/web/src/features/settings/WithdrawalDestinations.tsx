@@ -3,6 +3,7 @@ import { useState } from "react";
 import { IconButton } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
 import { HoldButton } from "../../components/ui/HoldButton";
+import { WalletBadge } from "../../components/ui/WalletIcon";
 import { isBase58Address } from "../../lib/address";
 import { fmtDate, shortAddr } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
@@ -12,7 +13,6 @@ import { useWallet } from "../../state/wallet";
 import { errorMessage, fmtCountdown } from "./format";
 import { Block, InlineStatus, Row, Rows, SubHeader, Tag, useTransient } from "./ui";
 
-const PROVIDER_NAME = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" } as const;
 const LABEL_MAX = 24;
 
 /*
@@ -120,7 +120,7 @@ export function WithdrawalDestinations() {
           help={
             connected ? (
               <span className="inline-flex items-center gap-1">
-                {PROVIDER_NAME[connected.provider]} <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
+                <WalletBadge wallet={connected} /> <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
                 <CopyButton text={connected.address} label="Copy connected wallet address" />
               </span>
             ) : (

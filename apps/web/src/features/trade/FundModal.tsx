@@ -22,7 +22,6 @@ import { PresetChips, solStep } from "./AmountField";
  * https://mobbin.com/screens/09a5bbe0-2943-4077-9f53-eddf516df513
  */
 
-const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
 /** Left in the connected wallet for its own network fees. */
 const FEE_RESERVE_SOL = 0.001;
 
@@ -41,7 +40,7 @@ function FundFromConnected({ address }: { address: string }) {
   const [busy, setBusy] = useState(false);
   const connected = useWallet((s) => s.service.connected);
   const close = useUi((s) => s.closeFund);
-  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "your wallet";
+  const provider = connected?.name ?? "your wallet";
 
   useEffect(() => {
     void getServices()
@@ -155,7 +154,7 @@ function Withdraw({ address }: { address: string }) {
   const [dest, setDest] = useState<string>("connected");
   const [busy, setBusy] = useState(false);
   const available = balance === null ? null : Math.max(0, balance - reserved - 0.00001);
-  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "Connected wallet";
+  const provider = connected?.name ?? "Connected wallet";
   const over = amount !== null && available !== null && amount > available;
   const other = destinations.find((d) => d.id === dest) ?? null;
 

@@ -10,7 +10,7 @@ import type { ConnectedWallet, TradingWallet } from "../../services/walletServic
 import { useMarket } from "../../state/market";
 import { useWallet } from "../../state/wallet";
 import { useTransient } from "../settings/ui";
-import { InlineError, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 import { QrCode } from "./QrCode";
 
 const CHIPS = [0.5, 1, 2, 5] as const;
@@ -81,7 +81,7 @@ export function FundStep({
   const [copied, setCopied] = useTransient<true>(1200);
   /** The server only simulated the transfer (DRY_RUN): nothing arrives on-chain. */
   const [simulated, setSimulated] = useState(false);
-  const name = PROVIDER_NAME[connected.provider];
+  const name = connected.name;
   const balance = useDepositWatcher(wallet.address, onFunded, funded === null);
 
   const refresh = useCallback(() => {

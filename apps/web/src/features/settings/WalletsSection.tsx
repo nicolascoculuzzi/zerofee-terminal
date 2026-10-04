@@ -6,6 +6,7 @@ import { ProgressBar } from "../../components/ui/bits";
 import { CopyButton, Hotkey } from "../../components/ui/controls";
 import { HoldButton } from "../../components/ui/HoldButton";
 import { WalletAvatar } from "../../components/ui/TokenAvatar";
+import { WalletBadge } from "../../components/ui/WalletIcon";
 import { fmtDate, fmtFee, fmtInt, fmtSol, shortAddr } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { getServices } from "../../services";
@@ -21,7 +22,6 @@ import { MODE_INFO, MODES } from "./modes";
 import { Block, InlineStatus, Note, RadioRow, Row, Rows, SectionHeader, SelectMenu, SubHeader, Tag, useTransient } from "./ui";
 import { WithdrawalDestinations } from "./WithdrawalDestinations";
 
-const PROVIDER_NAME = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" } as const;
 const METHOD_LABEL: Record<TradingWallet["unlockMethod"], string> = {
   password: "Passphrase (Argon2id)",
   passkey: "Passkey (WebAuthn PRF)",
@@ -504,7 +504,7 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
               }
               help={
                 <span className="inline-flex flex-wrap items-center gap-x-1">
-                  Signed in with {PROVIDER_NAME[connected.provider]}
+                  Signed in with <WalletBadge wallet={connected} className="text-fg-2" />
                   <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
                   <CopyButton text={connected.address} label="Copy connected wallet address" />
                   <span>· {session.expiresAt > now ? `expires in ${fmtCountdown(session.expiresAt - now)}` : "expired"}</span>

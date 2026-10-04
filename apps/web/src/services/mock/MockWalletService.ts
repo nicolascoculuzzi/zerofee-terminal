@@ -17,6 +17,8 @@ import type { SimEngine } from "./engine";
 import { mockBackupPhrase } from "./names";
 import { simulatedSecretKey } from "./simulatedKey";
 
+const MOCK_NAMES: Record<WalletProvider, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
+
 export interface DemoWalletSeed {
   id: string;
   label: string;
@@ -43,7 +45,7 @@ export class MockWalletService implements WalletService {
   ) {
     const now = Date.now();
     this.state = {
-      connected: { provider: "phantom", address: demo.connected },
+      connected: { provider: "phantom", address: demo.connected, name: "Phantom", icon: null },
       session: this.buildSession(demo.connected, now - 3 * 60_000, "demo"),
       tradingWallets: demo.wallets.map((w) => ({
         id: w.id,
@@ -96,6 +98,7 @@ export class MockWalletService implements WalletService {
 
   /** The simulation offers every provider as installed; none has a real logo. */
   providers(): ProviderInfo[] {
+    // The simulation has no extensions to read logos from: letter squares stand in.
     return [
       { provider: "phantom", name: "Phantom", icon: null, installed: true },
       { provider: "solflare", name: "Solflare", icon: null, installed: true },
@@ -105,7 +108,7 @@ export class MockWalletService implements WalletService {
 
   async connect(provider: WalletProvider): Promise<ConnectedWallet> {
     await wait(650);
-    const connected = { provider, address: fakeAddress(this.engine.rng) };
+    const connected: ConnectedWallet = { provider, address: fakeAddress(this.engine.rng), name: MOCK_NAMES[provider], icon: null };
     this.connectedSol = 25 + Math.round(this.engine.rng.next() * 4000) / 100;
     this.set({ connected, session: null });
     return connected;

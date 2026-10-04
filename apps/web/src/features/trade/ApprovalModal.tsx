@@ -5,8 +5,6 @@ import { shortAddr } from "../../lib/format";
 import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
 
-const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
-
 /**
  * Stand-in for the external wallet's own approval popup in direct mode (Phantom, Solflare,
  * Backpack). In production the extension renders this; here it keeps direct mode and sign-in
@@ -16,7 +14,7 @@ const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solfla
 export function ApprovalModal() {
   const approval = useUi((s) => s.approval);
   const connected = useWallet((s) => s.service.connected);
-  const provider = PROVIDER[connected?.provider ?? "phantom"] ?? "Wallet";
+  const provider = connected?.name ?? "Wallet";
   return (
     <Modal
       open={approval !== null}

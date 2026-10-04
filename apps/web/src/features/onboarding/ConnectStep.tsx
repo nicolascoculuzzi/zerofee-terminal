@@ -2,9 +2,10 @@ import { ArrowRight, Check } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
+import { WalletBadge, WalletIcon } from "../../components/ui/WalletIcon";
 import { cn } from "../../lib/cn";
 import { getServices } from "../../services";
-import type { ConnectedWallet, WalletProvider } from "../../services/walletService";
+import type { ConnectedWallet, ProviderInfo, WalletProvider } from "../../services/walletService";
 import { Tag } from "../settings/ui";
 import { InlineError, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
@@ -16,8 +17,9 @@ const PROVIDERS: WalletProvider[] = ["phantom", "solflare", "backpack"];
  * Wallet rows with a spinner after Uniswap; badges after Tally:
  * https://mobbin.com/flows/9aaa402b-0d7a-4960-8261-57602073bb6c
  * https://mobbin.com/flows/7791b9e6-611e-4cb0-ae5c-b767bd662931
- * Real wallets supply their icon through Wallet Standard; the simulation has none, so each row
- * shows a neutral 24 px letter square instead of a brand logo.
+ * Real wallets supply their official icon through Wallet Standard (`wallet.icon`, a data: URI), shown
+ * with the name the wallet registered; installed wallets are listed first. The simulation has no
+ * extensions, so each row shows a neutral 24 px letter square instead of a brand logo.
  */
 export function ConnectStep({
   frame,
@@ -35,13 +37,22 @@ export function ConnectStep({
   const { busy, error, run } = useAction(onBusyChange);
   const [pending, setPending] = useState<WalletProvider | null>(null);
   const simulated = getServices().simulated;
-  // Extensions register through Wallet Standard as they load: look again shortly after mount.
+  // Extensions register through Wallet Standard as they load (or get installed meanwhile): keep looking.
   const [providers, setProviders] = useState(() => getServices().wallet.providers());
   useEffect(() => {
-    const t = setTimeout(() => setProviders(getServices().wallet.providers()), 600);
-    return () => clearTimeout(t);
+    const t = setInterval(() => {
+      const next = getServices().wallet.providers();
+      setProviders((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+    }, 1_000);
+    return () => clearInterval(t);
   }, []);
-  const info = new Map(providers.map((p) => [p.provider, p]));
+  const known = new Set(providers.map((p) => p.provider));
+  const rows: ProviderInfo[] = [
+    ...providers,
+    ...PROVIDERS.filter((id) => !known.has(id)).map((id) => ({ provider: id, name: PROVIDER_NAME[id], icon: null, installed: false })),
+  ];
+  // Installed first, otherwise in the service's order.
+  rows.sort((a, b) => Number(b.installed) - Number(a.installed));
 
   const connect = async (provider: WalletProvider) => {
     setPending(provider);
@@ -54,10 +65,10 @@ export function ConnectStep({
     <>
       <StepHeader frame={frame} />
       <ul className="divide-y divide-hairline border-y border-hairline">
-        {PROVIDERS.map((id) => {
-          const p = info.get(id);
-          const name = p?.name ?? PROVIDER_NAME[id];
-          const installed = p?.installed ?? false;
+        {rows.map((p) => {
+          const id = p.provider;
+          const name = p.name;
+          const installed = p.installed;
           const isConnected = connected?.provider === id;
           return (
             <li key={id}>
@@ -71,16 +82,7 @@ export function ConnectStep({
                   isConnected && "bg-surface-2",
                 )}
               >
-                {p?.icon ? (
-                  <img src={p.icon} alt="" className="size-6 shrink-0 rounded-sm" />
-                ) : (
-                  <span
-                    aria-hidden="true"
-                    className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-label font-semibold text-fg-1"
-                  >
-                    {name.charAt(0)}
-                  </span>
-                )}
+                <WalletIcon icon={p.icon} name={name} className={cn(!installed && "opacity-60")} />
                 <span className={cn("min-w-0 flex-1 truncate text-body font-medium", installed ? "text-fg-1" : "text-fg-3")}>{name}</span>
                 {pending === id ? (
                   <span className="flex items-center gap-1 text-label text-fg-2">
@@ -104,7 +106,9 @@ export function ConnectStep({
 
       {connected && (
         <div className="mt-4">
-          <div className="zf-label">Connected address · {PROVIDER_NAME[connected.provider]}</div>
+          <div className="zf-label flex items-center gap-1">
+            Connected address · <WalletBadge wallet={connected} className="normal-case" />
+          </div>
           <div className="mt-1 flex items-start gap-1 font-mono text-data break-all text-fg-2">
             {connected.address}
             <CopyButton text={connected.address} label="Copy connected address" />
