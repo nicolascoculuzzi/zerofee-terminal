@@ -2,7 +2,6 @@ import { type ComponentType, lazy, type ReactNode, Suspense } from "react";
 import { ApprovalModal } from "../features/trade/ApprovalModal";
 import { UnlockModal } from "../features/trade/UnlockModal";
 import { useUi } from "../state/ui";
-import { HotkeysHelp } from "./HotkeysHelp";
 import { PanicDialog } from "./PanicDialog";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
 import { Toasts } from "./Toasts";
@@ -25,6 +24,7 @@ const FundModal = lazyNamed(() => import("../features/trade/FundModal"), "FundMo
 const InstantTradeWindow = lazyNamed(() => import("../features/trade/InstantTradeWindow"), "InstantTradeWindow");
 const TrackerDock = lazyNamed(() => import("../features/trackers/TrackerDock"), "TrackerDock");
 const SettingsDrawer = lazy(() => import("../features/settings/SettingsDrawer"));
+const HotkeysHelp = lazyNamed(() => import("./HotkeysHelp"), "HotkeysHelp");
 
 function Lazy({ children }: { children: ReactNode }) {
   return <Suspense fallback={null}>{children}</Suspense>;
@@ -47,7 +47,9 @@ export function GlobalOverlays() {
       </Lazy>
       <UnlockModal />
       <ApprovalModal />
-      <HotkeysHelp />
+      <Lazy>
+        <HotkeysHelp />
+      </Lazy>
       <PanicDialog />
       <RiskConfirmDialog />
       <TradeReviewSheet />

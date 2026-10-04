@@ -6,7 +6,6 @@ import { CountBadge } from "../components/ui/bits";
 import { Hotkey, NumberInput, Segmented } from "../components/ui/controls";
 import { MenuItem, MenuSeparator, Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
-import { openSettingsAt } from "../features/settings/sections";
 import { cn } from "../lib/cn";
 import { fmtSol, fmtSolShort, shortAddr } from "../lib/format";
 import { compactLabel } from "../lib/hotkeys";
@@ -38,6 +37,9 @@ export const NAV_ITEMS = [
  */
 export function LandingIndicator() {
   const preset = useSettings((s) => s.presets[s.activePreset]);
+  // openSettings("landing") lands on the Landing section like openSettingsAt("landing"), without
+  // pulling the settings search index into the shell bundle.
+  const openSettings = useUi((s) => s.openSettings);
   const info = LANDING_INFO[preset.buy.landing];
   const Icon = info.risky ? Zap : ShieldCheck;
   return (
@@ -55,7 +57,7 @@ export function LandingIndicator() {
     >
       <button
         type="button"
-        onClick={() => openSettingsAt("landing")}
+        onClick={() => openSettings("landing")}
         className={cn(
           "flex h-control items-center gap-1 rounded-sm px-2 text-data font-medium transition-colors hover:bg-surface-3",
           info.risky ? "text-warn" : "text-fg-2",
