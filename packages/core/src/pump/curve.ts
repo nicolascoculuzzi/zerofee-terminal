@@ -238,7 +238,22 @@ export function curveSpotPrice(
   return Number(curve.virtualQuoteReserves) / 10 ** quoteDecimals / (Number(curve.virtualTokenReserves) / 10 ** baseDecimals);
 }
 
-/** Market cap in quote base units using the real mint supply (1e15 normal, 2e15 mayhem). */
+/**
+ * Mint supply of a pump coin from its curve's `token_total_supply` (CreateEvent / BondingCurve account),
+ * for when the mint account has not been read. `create_v2` of a mayhem coin mints `token_total_supply` to the
+ * curve and the same amount again to the Mayhem program's vault (two MintTo of 1e15 in tx 2FCBGU2a…,
+ * 2026-10-04), so the mint holds 2e15 while the curve, the CreateEvent and PumpSwap's `base_supply` all say
+ * 1e15. Normal coins mint exactly `token_total_supply`. The live mint supply (burns) wins when known.
+ */
+export function curveMintSupply(curve: { tokenTotalSupply: bigint; isMayhemMode: boolean }): bigint {
+  return curve.isMayhemMode ? curve.tokenTotalSupply * 2n : curve.tokenTotalSupply;
+}
+
+/**
+ * Market cap in quote base units using the real mint supply (1e15 normal, 2e15 mayhem). Mayhem curves can
+ * legitimately sit far below the ~28 SOL a standard curve starts at: the Mayhem agent's trades rewrite the
+ * curve's virtual SOL reserves (offsets of 0.009-0.5 SOL instead of 30 SOL were seen on 2026-10-04).
+ */
 export function curveMarketCapForDisplay(
   curve: Pick<CurveState, "virtualQuoteReserves" | "virtualTokenReserves">,
   mintSupply: bigint,
