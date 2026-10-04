@@ -11,7 +11,6 @@ import { IconMasks } from "./icons";
 import { MobilePulse } from "./MobilePulse";
 import { PulseColumn } from "./PulseColumn";
 import { PulseToolbar } from "./PulseToolbar";
-import { ReviewSheet } from "./ReviewSheet";
 import { usePulseUi } from "./store";
 import { TipLayer } from "./TipLayer";
 import { ConfirmDevDialog, TokenMenu } from "./TokenMenu";
@@ -42,7 +41,7 @@ function SecondColumnSwitch({ column, options }: { column: PulseColumnId; option
  * Pulse (DESIGN.md 5.1, 5.8): the 32 px toolbar over three equal columns tiled with 1 px
  * hairlines from 1024 px; two from 768 px (column 2 switches between the rest); tabs and 64 px
  * rows on phones. The page owns the card tooltip layer, the icon masks, the hotkeys and the
- * overlays (filters, blacklist, card menu, dev confirm, touch review).
+ * overlays (filters, blacklist, card menu, dev confirm). The touch review sheet is global (tradeActions).
  */
 export default function PulsePage() {
   const root = useRef<HTMLDivElement>(null);
@@ -115,7 +114,6 @@ export default function PulsePage() {
       )}
       <TokenMenu />
       <ConfirmDevDialog />
-      <ReviewSheet />
     </div>
   );
 }

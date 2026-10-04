@@ -50,8 +50,6 @@ export interface TokenCardProps {
   open: boolean;
   /** When the card entered the column (0 for the initial snapshot): drives the highlight fade. */
   insertedAt: number;
-  /** Confirm trades on touch devices: the pill opens the review sheet. */
-  review: boolean;
 }
 
 /** Grid tracks (DESIGN.md 4.4): avatar | main | [chart 64] | metrics 72 | [F/NB 72] | pill, 8 px gaps. */
@@ -193,14 +191,7 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
       {fees && <FeesCell view={view} stale={stale} />}
 
       <Cell className="flex items-center justify-end">
-        <QuickBuyPill
-          mint={view.mint}
-          symbol={view.symbol}
-          column={column}
-          sol={props.quickBuySol}
-          preset={props.preset}
-          review={props.review}
-        />
+        <QuickBuyPill mint={view.mint} symbol={view.symbol} sol={props.quickBuySol} preset={props.preset} />
       </Cell>
     </div>
   );

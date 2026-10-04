@@ -52,40 +52,35 @@ export function useGlobalHotkeys(): void {
       }
       const now = performance.now();
       // The same key can mean different things per page ("L": next column on Pulse, Limit on a
-      // token page); only actions with a live handler count, sequences before single keys.
-      let matched: HotkeyAction | null = null;
+      // token page); only actions with a live handler count, sequences before single keys, and
+      // a handler that declines (returns false) passes the key on to the next candidate.
+      const candidates: HotkeyAction[] = [];
       if (last && now - last.at < SEQUENCE_WINDOW_MS && !typing) {
         const prev = last.e;
         for (const s of sequences) {
           const [first, second] = s.binding;
           if (first && second && hasHandler(s.action) && chordMatches(first, prev, false) && chordMatches(second, e, false)) {
-            matched = s.action;
-            break;
+            candidates.push(s.action);
           }
         }
       }
-      if (!matched) {
-        for (const s of single) {
-          const [chord] = s.binding;
-          if (chord && hasHandler(s.action) && chordMatches(chord, e, spaceHeld)) {
-            matched = s.action;
-            break;
-          }
-        }
+      for (const s of single) {
+        const [chord] = s.binding;
+        if (chord && hasHandler(s.action) && chordMatches(chord, e, spaceHeld)) candidates.push(s.action);
       }
       const plain = !e.metaKey && !e.ctrlKey && !e.altKey && !spaceHeld && eventKey(e).length === 1;
       last = plain && !typing ? { e, at: now } : null;
-      if (!matched) return;
-      if (typing && !TYPING_ALLOWED.has(matched)) return;
-      // With a modal, drawer, palette or menu open, only Esc reaches the app (DESIGN.md 6.4).
-      if (overlayOpen() && matched !== "ui.close") return;
-      if (TRADE_ACTIONS.has(matched)) {
-        if (!tradeHotkeys || e.repeat) return;
-      }
-      if (dispatchHotkey(matched)) {
-        e.preventDefault();
-        e.stopPropagation();
-        last = null;
+      for (const action of candidates) {
+        if (typing && !TYPING_ALLOWED.has(action)) continue;
+        // With a modal, drawer, palette or menu open, only Esc reaches the app (DESIGN.md 6.4).
+        if (overlayOpen() && action !== "ui.close") continue;
+        if (TRADE_ACTIONS.has(action) && (!tradeHotkeys || e.repeat)) continue;
+        if (dispatchHotkey(action)) {
+          e.preventDefault();
+          e.stopPropagation();
+          last = null;
+          return;
+        }
       }
     };
 

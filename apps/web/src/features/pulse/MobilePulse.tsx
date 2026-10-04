@@ -3,7 +3,6 @@ import { SlidersHorizontal } from "lucide-react";
 import { useRef } from "react";
 import { cn } from "../../lib/cn";
 import { activeFilterCount, emptyFilter } from "../../lib/filters";
-import { useMediaQuery } from "../../lib/useMediaQuery";
 import type { PulseColumnId } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
@@ -92,7 +91,6 @@ function MobileList({ column }: { column: PulseColumnId }) {
   const setColumn = useSettings((s) => s.setColumn);
   const solUsd = useMarket((s) => s.solUsd);
   const anyTokens = useMarket((s) => s.columns.new.length + s.columns.final.length + s.columns.migrated.length > 0);
-  const coarse = useMediaQuery("(pointer: coarse)");
   const tracked = useTrackedHolding();
   const virtualizer = useVirtualizer({
     count: list.shown.length,
@@ -102,7 +100,6 @@ function MobileList({ column }: { column: PulseColumnId }) {
     getItemKey: (i) => list.shown[i] ?? i,
   });
   const ctx = { quote: display.quote, solUsd, showRing: display.showProgressRing, thresholds: display.riskThresholds };
-  const review = display.confirmOnTouch && coarse;
 
   return (
     <section ref={pause.ref} aria-label={TAB_LABEL[column]} className="relative flex min-h-0 flex-1 flex-col" {...pause.handlers}>
@@ -150,7 +147,6 @@ function MobileList({ column }: { column: PulseColumnId }) {
                   preset={preset}
                   colored={display.metricColors}
                   insertedAt={list.inserted.get(mint) ?? 0}
-                  review={review}
                 />
               );
             })}

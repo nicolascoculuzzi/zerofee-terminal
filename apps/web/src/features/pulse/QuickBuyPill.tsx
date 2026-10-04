@@ -2,12 +2,10 @@ import { memo, useEffect, useState } from "react";
 import { cn } from "../../lib/cn";
 import { fmtSolShort } from "../../lib/format";
 import { buy } from "../../lib/tradeActions";
-import type { PulseColumnId } from "../../protocol";
 import { useMarket } from "../../state/market";
 import type { PresetId } from "../../state/settings";
 import { useWallet } from "../../state/wallet";
 import { ICON, MASK } from "./icons";
-import { usePulseUi } from "./store";
 
 /** Mis-click guard: a card's quick-buy ignores clicks for its first 250 ms on screen (DESIGN.md 6.7). */
 const GUARD_MS = 250;
@@ -19,28 +17,23 @@ const HOLD_MS = 300;
  * 12/600), buy-tint on hover, solid buy on press, no spinner (the toast carries progress). Lock
  * replaces Zap while the keystore is locked in Instant mode; tradeActions opens unlock and
  * retries, shows the countdown confirm for flagged tokens and refuses trades while the feed is
- * down, which disables the pill. With "Confirm trades on touch devices", a tap opens the review
- * sheet instead. Outlined quick-buy pills after Axiom's Instant Trade; one Buy action per card
+ * down, which disables the pill. With "Confirm trades on touch devices", tradeActions shows the
+ * review sheet before buying. Outlined quick-buy pills after Axiom's Instant Trade; one Buy action per card
  * after Binance Meme Rank: https://mobbin.com/screens/55442959-3968-4340-9c27-3efe6dfffeb5
  */
 export const QuickBuyPill = memo(function QuickBuyPill({
   mint,
   symbol,
-  column,
   sol,
   preset,
   touch,
-  review,
 }: {
   mint: string;
   symbol: string;
-  column: PulseColumnId;
   sol: number;
   preset: PresetId;
   /** Phone layout: a 44 px hit area around the 24 px pill. */
   touch?: boolean;
-  /** Open the review sheet instead of buying (confirm on touch). */
-  review?: boolean;
 }) {
   const locked = useWallet((s) => s.service.locked && s.mode === "instant");
   const feedUp = useMarket((s) => s.connection === "live" || s.connection === "degraded");
@@ -62,10 +55,6 @@ export const QuickBuyPill = memo(function QuickBuyPill({
         e.stopPropagation();
         if (performance.now() - mountedAt < GUARD_MS) return;
         setPressed(true);
-        if (review) {
-          usePulseUi.getState().openReview({ mint, column });
-          return;
-        }
         void buy({ mint, sol, preset, source: "pulse" });
       }}
       className={cn(

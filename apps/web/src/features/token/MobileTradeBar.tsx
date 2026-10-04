@@ -70,7 +70,8 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
 
   const doBuy = () => {
     setSheet(null);
-    void buy({ mint, sol: quickBuy, source: "mobile" });
+    // Its own review sheet (with the live quote) already ran when the setting is on.
+    void buy({ mint, sol: quickBuy, source: "mobile", reviewed: true });
   };
   const onBuy = () => {
     if (locked) {

@@ -6,6 +6,7 @@ import { HotkeysHelp } from "./HotkeysHelp";
 import { PanicDialog } from "./PanicDialog";
 import { RiskConfirmDialog } from "./RiskConfirmDialog";
 import { Toasts } from "./Toasts";
+import { TradeReviewSheet } from "./TradeReviewSheet";
 
 /** React.lazy for a named export. */
 function lazyNamed<M, K extends keyof M>(load: () => Promise<M>, name: K) {
@@ -16,8 +17,8 @@ function lazyNamed<M, K extends keyof M>(load: () => Promise<M>, name: K) {
  * Overlays that aren't needed for the first paint load in their own chunks, keeping the shell
  * plus Pulse inside the initial-JS budget (DESIGN.md 8). They stay mounted, so their chunks load
  * right after start-up and open instantly; each has its own boundary so a slow chunk never hides
- * another overlay. The trade-critical ones (unlock, wallet approval, risk confirm, Panic, toasts)
- * stay in the main bundle.
+ * another overlay. The trade-critical ones (unlock, wallet approval, risk confirm, touch review,
+ * Panic, toasts) stay in the main bundle.
  */
 const SearchModal = lazyNamed(() => import("../features/search/SearchModal"), "SearchModal");
 const FundModal = lazyNamed(() => import("../features/trade/FundModal"), "FundModal");
@@ -49,6 +50,7 @@ export function GlobalOverlays() {
       <HotkeysHelp />
       <PanicDialog />
       <RiskConfirmDialog />
+      <TradeReviewSheet />
       <Lazy>
         <InstantTradeWindow />
       </Lazy>

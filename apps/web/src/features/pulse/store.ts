@@ -67,6 +67,8 @@ interface PulseUiState {
   activeColumn: PulseColumnId | null;
   /** Card under the pointer (trade-hotkey target). */
   hover: PulseTarget | null;
+  /** Keyboard-cursor card per column (published by each column for the Instant Trade window). */
+  cursors: Record<PulseColumnId, string | null>;
   /** Manual pause per column (P) and for every column (Shift+P). */
   paused: Record<PulseColumnId, boolean>;
   pausedAll: boolean;
@@ -80,11 +82,11 @@ interface PulseUiState {
   blacklistOpen: boolean;
   menu: MenuTarget | null;
   confirmDev: string | null;
-  review: PulseTarget | null;
 
   setOrder(order: PulseColumnId[]): void;
   setActiveColumn(column: PulseColumnId | null): void;
   setHover(target: PulseTarget | null): void;
+  setCursor(column: PulseColumnId, mint: string | null): void;
   togglePause(column: PulseColumnId): void;
   togglePauseAll(): void;
   setSort(column: PulseColumnId, sort: SortKey): void;
@@ -94,13 +96,13 @@ interface PulseUiState {
   openBlacklist(open: boolean): void;
   openMenu(target: MenuTarget | null): void;
   askBlacklistDev(mint: string | null): void;
-  openReview(target: PulseTarget | null): void;
 }
 
 export const usePulseUi = create<PulseUiState>()((set, get) => ({
   order: ["new", "final", "migrated"],
   activeColumn: null,
   hover: null,
+  cursors: { new: null, final: null, migrated: null },
   paused: { new: false, final: false, migrated: false },
   pausedAll: false,
   sort: loadSort(),
@@ -110,7 +112,6 @@ export const usePulseUi = create<PulseUiState>()((set, get) => ({
   blacklistOpen: false,
   menu: null,
   confirmDev: null,
-  review: null,
 
   setOrder: (order) => {
     const prev = get().order;
@@ -127,6 +128,9 @@ export const usePulseUi = create<PulseUiState>()((set, get) => ({
     // The Instant Trade window and other shared code read the hovered card from the UI store.
     useUi.getState().setHoverMint(target?.mint ?? null);
   },
+  setCursor: (column, mint) => {
+    if (get().cursors[column] !== mint) set((s) => ({ cursors: { ...s.cursors, [column]: mint } }));
+  },
   togglePause: (column) => set((s) => ({ paused: { ...s.paused, [column]: !s.paused[column] } })),
   togglePauseAll: () =>
     set((s) => (s.pausedAll ? { pausedAll: false, paused: { new: false, final: false, migrated: false } } : { pausedAll: true })),
@@ -141,7 +145,6 @@ export const usePulseUi = create<PulseUiState>()((set, get) => ({
   openBlacklist: (open) => set({ blacklistOpen: open }),
   openMenu: (target) => set({ menu: target }),
   askBlacklistDev: (mint) => set({ confirmDev: mint }),
-  openReview: (target) => set({ review: target }),
 }));
 
 /** Element the per-card menu anchors to (the card's "more" button or the card itself). */
@@ -187,6 +190,16 @@ export function pulseTarget(): PulseTarget | null {
   const column = s.activeColumn;
   const mint = columnHandle(column)?.cursor() ?? null;
   return column && mint ? { mint, column } : null;
+}
+
+/** The same target as a store selector (hovered card, else the active column's cursor card), for React. */
+export function selectPulseMint(s: {
+  hover: PulseTarget | null;
+  activeColumn: PulseColumnId | null;
+  cursors: Record<PulseColumnId, string | null>;
+}): string | null {
+  if (s.hover) return s.hover.mint;
+  return s.activeColumn ? s.cursors[s.activeColumn] : null;
 }
 
 // ---------------------------------------------------------------------------

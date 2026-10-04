@@ -361,7 +361,12 @@ export function compactLabel(text: string | undefined): string {
 // Runtime registry: components register handlers; the shell owns the listener.
 // ---------------------------------------------------------------------------
 
-type Handler = () => void;
+/**
+ * A hotkey handler. Return `false` to decline (nothing to act on here): the next handler down
+ * the stack gets the key, and if none takes it the key event is left alone (no preventDefault),
+ * so the browser or a focused control still sees it.
+ */
+type Handler = () => unknown;
 const handlers = new Map<HotkeyAction, Handler[]>();
 
 /** Last registration wins (a stack), so a focused panel can override a page. */
@@ -381,12 +386,15 @@ export function hasHandler(action: HotkeyAction): boolean {
   return (handlers.get(action)?.length ?? 0) > 0;
 }
 
+/** Runs the newest handler that accepts the key; returns whether one did. */
 export function dispatchHotkey(action: HotkeyAction): boolean {
   const list = handlers.get(action);
-  const handler = list?.[list.length - 1];
-  if (!handler) return false;
-  handler();
-  return true;
+  if (!list) return false;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const handler = list[i];
+    if (handler && handler() !== false) return true;
+  }
+  return false;
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {

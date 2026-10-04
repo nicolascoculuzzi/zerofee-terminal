@@ -61,6 +61,19 @@ function confirmRiskyBuy(mint: string, symbol: string, actionLabel: string): Pro
   return new Promise((resolve) => useUi.getState().setRiskConfirm({ request: { symbol, actionLabel, reasons }, resolve }));
 }
 
+/**
+ * Touch review (DESIGN.md 5.8 "Confirm on touch"): with the setting on (default), a buy tapped on
+ * a coarse-pointer device opens a compact cost summary with one CTA before it goes out. Hotkeys
+ * never get it; callers that already showed their own review pass `reviewed`.
+ */
+function confirmTouchReview(args: BuyArgs, symbol: string, preset: PresetId): Promise<boolean> {
+  if (args.reviewed || args.source === "hotkey" || args.source === "paste") return Promise.resolve(true);
+  if (!useSettings.getState().display.confirmOnTouch) return Promise.resolve(true);
+  if (typeof window === "undefined" || !window.matchMedia("(pointer: coarse)").matches) return Promise.resolve(true);
+  if (useUi.getState().tradeReview) return Promise.resolve(false);
+  return new Promise((resolve) => useUi.getState().setTradeReview({ request: { symbol, sol: args.sol, preset }, resolve }));
+}
+
 function blocked(title: string, body: string, action?: { label: string; run: () => void }): void {
   playTone("fail", useSettings.getState().display.soundVolume);
   useToasts.getState().push({ kind: "error", title, body, ttl: 7000, action });
@@ -150,6 +163,8 @@ export interface BuyArgs {
   preset?: PresetId | null;
   source: TradeSource;
   wallets?: string[];
+  /** The caller already showed a review sheet (skips the touch review). */
+  reviewed?: boolean;
 }
 
 export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
@@ -160,7 +175,8 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
   }
   let clickedAt = Date.now();
   const settingsState = useSettings.getState();
-  const settings = settingsState.presets[args.preset ?? settingsState.activePreset].buy;
+  const presetId = args.preset ?? settingsState.activePreset;
+  const settings = settingsState.presets[presetId].buy;
   const { symbol, priceSol } = tokenInfo(args.mint);
   const wallets = resolveWallets(args.wallets);
   if (wallets.length === 0) {
@@ -203,6 +219,7 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
     }
   }
   if (!ensureUnlocked(`Unlock to buy $${symbol}`, () => void buy(args), args.source)) return [];
+  if (!(await confirmTouchReview(args, symbol, presetId))) return [];
   const confirmed = await confirmRiskyBuy(args.mint, symbol, `Buy ${symbol} · ${fmtSol(args.sol)} SOL`);
   if (!confirmed) return [];
   const approved = await approveDirect(`Buy $${symbol} for ${fmtSol(args.sol)} SOL`, costLines(settings));
@@ -227,7 +244,7 @@ export async function buy(args: BuyArgs): Promise<TradeReceipt[]> {
         startedAt: clickedAt,
         landing: LANDING_INFO[settings.landing].label,
         amountSol: args.sol,
-        retry: () => void buy({ ...args, wallets: [address] }),
+        retry: () => void buy({ ...args, wallets: [address], reviewed: true }),
       });
       try {
         const receipt = await trade.buy(

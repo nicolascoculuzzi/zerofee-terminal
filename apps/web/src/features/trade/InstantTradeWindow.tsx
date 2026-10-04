@@ -16,6 +16,7 @@ import { useSettings } from "../../state/settings";
 import { useToken } from "../../state/token";
 import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
+import { selectPulseMint, usePulseUi } from "../pulse/store";
 import { fmtMoney, toQuote, useQuote } from "../token/money";
 import { PresetSwitch, SettingsLine } from "./PresetSettings";
 
@@ -124,17 +125,24 @@ export function hintFor(bindings: (string | undefined)[]): string {
   return labels.map((l, i) => (i === 0 || !prefix ? l : l.slice(prefix.length))).join(" · ");
 }
 
-/** The token Instant Trade acts on: the open token page, else the hovered Pulse card (sticky), else the last viewed. */
+/**
+ * The token Instant Trade acts on: the open token page; on Pulse the trade-hotkey target (the
+ * hovered card, else the keyboard-cursor card, see pulseTarget); elsewhere the hovered row. The
+ * last target sticks while the pointer travels to the window, then the last token viewed.
+ */
 function useTarget(): TokenSummary | null {
   const location = useLocation();
+  const onPulse = location.pathname.startsWith("/pulse");
   const hoverMint = useUi((s) => s.hoverMint);
+  const pulseMint = usePulseUi(selectPulseMint);
   const focusedMint = useUi((s) => s.focusedMint);
-  const [lastHover, setLastHover] = useState<string | null>(null);
+  const live = onPulse ? pulseMint : hoverMint;
+  const [lastTarget, setLastTarget] = useState<string | null>(null);
   useEffect(() => {
-    if (hoverMint) setLastHover(hoverMint);
-  }, [hoverMint]);
+    if (live) setLastTarget(live);
+  }, [live]);
   const routeMint = location.pathname.startsWith("/t/") ? decodeURIComponent(location.pathname.slice(3)) : null;
-  const mint = routeMint ?? hoverMint ?? lastHover ?? focusedMint;
+  const mint = routeMint ?? live ?? lastTarget ?? focusedMint;
   const detail = useToken((s) => (s.detail && s.detail.summary.mint === mint ? s.detail.summary : null));
   const market = useMarket((s) => (mint ? s.tokens[mint] : undefined));
   return detail ?? market ?? null;

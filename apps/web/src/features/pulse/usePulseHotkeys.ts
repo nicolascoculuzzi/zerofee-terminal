@@ -38,17 +38,19 @@ function columnTrade(column: PulseColumnId) {
  * the card cursor, C copies, X hides (Undo toast), Shift+X asks to blacklist the dev, F opens
  * filters, P / Shift+P pause, and the Space trade keys act on the hovered card, else the cursor
  * card. With no target nothing is bought. Enter, Mod+Enter, Home and End are registered by the
- * focused column itself. Lock, feed-loss and risk-confirm rules live in tradeActions.
+ * focused column itself. Lock, feed-loss and risk-confirm rules live in tradeActions. Keys with
+ * nothing to act on decline (return false), so arrows still reach a focused control.
  */
 export function usePulseHotkeys(): void {
   useEffect(() => {
     const ui = usePulseUi.getState;
     const withTarget = (fn: (mint: string, column: PulseColumnId) => void) => () => {
       const t = pulseTarget();
-      if (t) fn(t.mint, t.column);
+      if (!t) return false;
+      fn(t.mint, t.column);
     };
     const step = (dir: 1 | -1) => () => {
-      if (arrowsOwned()) return;
+      if (arrowsOwned()) return false;
       const order = ui().order;
       const current = activeColumn();
       const at = columnHandle(current)?.cursorIndex() ?? -1;
@@ -60,10 +62,12 @@ export function usePulseHotkeys(): void {
       registerHotkey("pulse.prevCol", step(-1)),
       registerHotkey("pulse.nextCol", step(1)),
       registerHotkey("pulse.down", () => {
-        if (!arrowsOwned()) columnHandle(activeColumn())?.move(1);
+        if (arrowsOwned()) return false;
+        columnHandle(activeColumn())?.move(1);
       }),
       registerHotkey("pulse.up", () => {
-        if (!arrowsOwned()) columnHandle(activeColumn())?.move(-1);
+        if (arrowsOwned()) return false;
+        columnHandle(activeColumn())?.move(-1);
       }),
       registerHotkey(
         "pulse.copy",

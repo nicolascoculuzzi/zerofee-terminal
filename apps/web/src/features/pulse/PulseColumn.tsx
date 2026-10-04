@@ -6,7 +6,6 @@ import { useCssPx } from "../../lib/cssVar";
 import { activeFilterCount, emptyFilter } from "../../lib/filters";
 import { fmtMs } from "../../lib/format";
 import { isTypingTarget, registerHotkey } from "../../lib/hotkeys";
-import { useMediaQuery } from "../../lib/useMediaQuery";
 import { useYoungerThan } from "../../lib/useNow";
 import type { PulseColumnId } from "../../protocol";
 import { useMarket } from "../../state/market";
@@ -56,7 +55,6 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
   const display = useSettings((s) => s.display);
   const setColumn = useSettings((s) => s.setColumn);
   const setColumnFilter = useSettings((s) => s.setColumnFilter);
-  const coarse = useMediaQuery("(pointer: coarse)");
   const solUsd = useMarket((s) => s.solUsd);
   const anyTokens = useMarket((s) => s.columns.new.length + s.columns.final.length + s.columns.migrated.length > 0);
   const lag = useMarket((s) => s.feed.lagMs);
@@ -87,6 +85,12 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // The Instant Trade window follows the keyboard cursor too (selectPulseMint).
+  useEffect(() => {
+    usePulseUi.getState().setCursor(column, cursor);
+  }, [column, cursor]);
+  useEffect(() => () => usePulseUi.getState().setCursor(column, null), [column]);
 
   // Keyboard cursor (DESIGN.md 6.4): J/K, arrows, Home/End move it; the column scrolls to keep it in view.
   const cursorRef = useRef(cursor);
@@ -163,7 +167,6 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
 
   const anchor = useScrollAnchor(scrollRef, list.shown, rowH);
 
-  const review = display.confirmOnTouch && coarse;
   const ctx = { quote: display.quote, solUsd, showRing: display.showProgressRing, thresholds: display.riskThresholds };
   const cursorShown = cursor !== null && list.shown.includes(cursor);
   const loading = !anyTokens;
@@ -275,7 +278,6 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
                     cursor={cursor === mint}
                     open={focusedMint === mint}
                     insertedAt={list.inserted.get(mint) ?? 0}
-                    review={review}
                   />
                 );
               })}

@@ -44,4 +44,20 @@ describe("hotkey bindings", () => {
     expect(dispatchHotkey("buy.1")).toBe(false);
     expect(calls).toEqual(["token", "pulse"]);
   });
+
+  test("a handler can decline; the next one down the stack gets the key", () => {
+    const calls: string[] = [];
+    const offA = registerHotkey("buy.2", () => {
+      calls.push("page");
+    });
+    const offB = registerHotkey("buy.2", () => {
+      calls.push("panel declined");
+      return false;
+    });
+    expect(dispatchHotkey("buy.2")).toBe(true);
+    offA();
+    expect(dispatchHotkey("buy.2")).toBe(false);
+    offB();
+    expect(calls).toEqual(["panel declined", "page", "panel declined"]);
+  });
 });

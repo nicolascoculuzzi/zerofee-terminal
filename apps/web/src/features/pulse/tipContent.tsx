@@ -124,7 +124,12 @@ function TipContent({ tip, mint, column }: { tip: string; mint: string | null; c
         <span className="block">
           <span className="flex items-baseline justify-between gap-3">
             <span className="text-data font-semibold text-fg-1">Net buy</span>
-            <span className={cn("zf-num text-data font-semibold", nb.nbTone === "buy" ? "text-buy" : nb.nbTone === "sell" ? "text-sell" : "text-fg-3")}>
+            <span
+              className={cn(
+                "zf-num text-data font-semibold",
+                nb.nbTone === "buy" ? "text-buy" : nb.nbTone === "sell" ? "text-sell" : "text-fg-3",
+              )}
+            >
               {nb.nb}
             </span>
           </span>
