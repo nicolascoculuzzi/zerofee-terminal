@@ -278,8 +278,8 @@ This document uses ≥, ≤, → and ⌘ for brevity in prose and tables. String
 | Token | Size / line height | Weight | Tracking | Use |
 |---|---|---|---|---|
 | `display-1` | 28 / 32 px | 600 | −0.01em | Portfolio balance (one per screen) |
-| `display-2` | 20 / 24 px | 600 | −0.005em | Token header market cap; mobile price block |
-| `title` | 16 / 22 px | 600 | 0 | Onboarding step titles |
+| `display-2` | 20 / 24 px | 600 | −0.005em | Token header market cap; mobile price block; onboarding step titles |
+| `title` | 16 / 22 px | 600 | 0 | Section titles in long panels |
 | `heading` | 14 / 20 px | 600 | 0 | Modal and drawer titles, page header labels |
 | `body` | 13 / 18 px | 400 | 0 | Prose, toasts, form labels, settings rows |
 | `data` | 12 / 16 px | 400, 500, 600 | 0 | Table cells, card values, control text, menu items |
@@ -419,7 +419,7 @@ Mobile (below 768 px) ignores these and uses touch sizes: 44 px minimum targets,
 - Stroke: `strokeWidth={1.5}` with `absoluteStrokeWidth`, so every icon has a 1.5 px stroke at any size.
 - Colour: `currentColor`. `text-3` at rest, `text-1` on hover or when active. Coloured icons only for status (warn triangle, failed X) and side arrows.
 - Platform logos: each launchpad, AMM and aggregator shows its own logo, in its own colours, at 12-16 px only (the launchpad badge on avatars, filter and menu rows, the token header, the chart legend, Discover and position rows). They are 64 px WebP files bundled under `apps/web/public/venues/` (same origin; sources in `LOGOS.md`, refreshed by `scripts/fetch-venue-logos.ts`), drawn by `PlatformMark` (`components/ui/Logo.tsx`). Ids without a logo ("other") keep a neutral letter. Mapping and tests: `components/ui/logos.ts`.
-- Social and link marks: X, Telegram and Discord marks from simple-icons (CC0 path data), the Solana mark for the SOL unit, `Globe` for other websites, and the pump.fun and DexScreener logos for a token's own pages. Marks are monochrome in `currentColor` (`text-3`, hover `text-1`) like every icon; links open in a new tab with `rel="noopener noreferrer"` and only ever point at https URLs (`components/ui/socials.ts`). In the connect step, wallets show the icon they supply through Wallet Standard.
+- Social and link marks: X, Telegram and Discord marks from simple-icons (CC0 path data), the Solana mark for the SOL unit, `Globe` for other websites, and the pump.fun and DexScreener logos for a token's own pages. Marks are monochrome in `currentColor` (`text-3`, hover `text-1`) like every icon; links open in a new tab with `rel="noopener noreferrer"` and only ever point at https URLs (`components/ui/socials.ts`). Wallet logos: an installed wallet shows the icon it supplies through Wallet Standard; Phantom, Solflare and Backpack otherwise show their official logos bundled under `apps/web/public/wallets/` (sources in `LOGOS.md`, mapping in `components/ui/walletLogos.ts`). Like platform logos they keep their own colours, because they identify the wallet. Never a letter monogram for a wallet we have a logo for.
 - An icon alone is allowed only with a tooltip and an `aria-label`. Destructive actions always carry a text label.
 - Token images: real images (through our image proxy, `GET /api/img`) render in a 4 px-radius square with a 1 px inner `hairline`. Missing images use monograms (4.22), never generated art.
 
@@ -688,12 +688,12 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
 - **Avatar** (4.22): 40 px square, 4 px radius.
   - Bonding ring: a 2 px stroke around the square, track `hairline-strong`, fill `text-2`, length equal to progress.
   - Launchpad badge: 16 px, bottom-right, offset −3 px, 2 px `bg` ring, the launchpad's logo (2.11) on `surface-3`: pump.fun, Mayhem (pump.fun's mark), BONK.fun, Bags, StonkFun, Raydium LaunchLab, Meteora DBC, Moonit, Boop, Heaven. "Other" keeps a 10 px "X" in `text-2`.
-- **Line 1 (18 px):** ticker at 13/600 `text-1` (max 10 characters, ellipsis), name at 12/400 `text-3` (truncates first), copy-CA icon button (`Copy` 12 px in a 20 × 20 hit area, `text-3`, hover `text-1`).
+- **Line 1 (18 px):** ticker at 13/600 `text-1` (max 10 characters, ellipsis), name at 12/400 `text-3` (truncates first), copy-CA icon button (`Copy` 12 px in a 20 × 20 hit area, `text-3`, hover `text-1`), then the flags (DEX, T22, LP), so line 3 always fits five chips.
 - **Line 2 (16 px):**
   - Age (3.7), reserving 4ch.
   - Socials: the X mark, `Globe` (the Discord mark for discord links), the Telegram mark, each 12 px in a 16 × 16 hit area, `text-3`, as links opening in a new tab. Hover shows the handle or URL. A tweet link shows the tweet preview popover.
   - Counters: `Users` 12 px + holders; `BadgeCheck` 12 px + pro traders; `Eye` 12 px + tracked wallets holding (only when above 0, value in `info`). Counter values are 11/500 `text-2`.
-- **Line 3 (18 px):** five risk chips T D S I B (4.5), 4 px apart, then flags (DEX, T22, LP).
+- **Line 3 (18 px):** five risk chips T D S I B (4.5), 4 px apart. Missing data stays quiet: when no chip is computed yet the line is empty, and a single uncomputed chip keeps its slot showing only its letter in `text-4` (no dash). Unknown counters and ages are omitted, never shown as "–".
 - **Metrics (72 px, right-aligned):**
   - Line 1: "MC" in micro `text-3`, value at 12/600 `text-1`.
   - Line 2: "V" in micro `text-3`, value at 12/400 `text-2`.
@@ -1205,7 +1205,7 @@ Borrowed from:
 
 ### 4.19 Onboarding steps
 
-**Desktop layout:** no top-bar nav and no status bar. The logo sits top-left, 24 px from the edges. A left rail (280 px) holds a vertical stepper. The content column is at most 440 px wide and starts 64 px from the top.
+**Desktop layout:** no top-bar nav and no status bar. The logo sits in a 56 px header, 24 px from the left. One setup card (max 920 px wide, at least 600 px tall, 8 px radius, 1 px `hairline`, `surface-1`) starts 5vh below the header, centred horizontally like a login or connect modal ([OpenSea connect](https://mobbin.com/screens/642f1d7c-e592-45ef-9dc9-85a0dcc2cbdc)). Its left rail (260 px, `bg`, `hairline` on the right, padding 24 px) holds "Set up zerofee", the vertical stepper and, at the bottom, two quiet trust lines (non-custodial key, platform fee 0). The content pane (padding 24 / 48 px) holds a column at most 480 px wide, top-left aligned inside the card. Step content groups into `Panel`s (6 px radius, `hairline` border, `hairline` row dividers), and the step's actions are full width across the column.
 
 **Stepper:**
 - Items 44 px tall. Numbered circles 20 px:
@@ -1216,7 +1216,7 @@ Borrowed from:
 - Labels at 12/500 (`text-1` when current, `text-3` otherwise), with an 11 px `text-3` sub-label once done ("Phantom · 7xKX…sAsU").
 
 **Steps:**
-1. **Connect wallet.** 44 px rows: the wallet's icon (24 px, supplied by Wallet Standard), the name at 13/500, and a "Detected" tag (`text-2` on `surface-3`), or "Not installed" in `text-3` with an install link. The row being connected shows a spinner on its right.
+1. **Connect wallet.** A grouped list (one `Panel`) of 56 px rows: the wallet's real logo at 32 px (2.11), the name at 13/500 over a status line at 11 `text-3`. Installed wallets come first with a "Detected" tag and a chevron; the row being connected shows a spinner and "Approve in Phantom". A wallet that is not installed shows "Not installed" and an "Install" button (`ArrowUpRight` 12 px) that opens its official site in a new tab (phantom.com, solflare.com, backpack.app).
 2. **Sign in.** A mono block (`surface-2`, 4 px radius, padding 12 px, mono 11/400 `text-2`) showing the exact SIWS message: domain, full address, statement, nonce, issued at, expires at. Copy: "This signature proves you own this wallet. It can't move funds." Primary: "Sign in with Phantom".
 3. **Create the trading wallet.** Segmented "Passkey (recommended) | Passphrase". The passphrase path has an input, a confirm input, and a live checklist ("12+ characters", "Not a common password"; `Check` 12 px turns `buy` when met). Note in `text-3`: "The key is generated and encrypted in this browser. zerofee never receives it." Primary: "Create wallet".
 4. **Back up.**
@@ -1551,20 +1551,22 @@ A right drawer, 720 px wide.
 
 ```
 +----------------------------------------------------------------------------------+
-| [mark] zerofee      (24, 24)                                                     |
-|                                                                                  |
-|  (rail x 24, y 96, w 280)       (content x 344, y 64, max-w 440)                 |
-|  (1) Connect wallet              Step title 16/600                               |
-|  (2) Sign in                     One-line description 13 text-2                  |
-|  (3) Trading wallet              [step body]                                     |
-|  (4) Back up                     [one primary action]                            |
-|  (5) Limits                                                                      |
-|  (6) Fund                                                                        |
-|  (7) Done                                                                        |
+| [mark] zerofee   (header 56)                                                     |
+|          +----------------------+---------------------------------------+        |
+|          | Set up zerofee       | [Back]                                |        |
+|          | (1) Connect wallet   | Step title 20/600                     |        |
+|          | (2) Sign in          | One-line description 13 text-2        |        |
+|          | (3) Trading wallet   | [step body in Panels, max-w 480]      |        |
+|          | (4) Back up          | [primary action, full width]          |        |
+|          | (5) Limits           |                                       |        |
+|          | (6) Fund             |                                       |        |
+|          | (7) Done             |                                       |        |
+|          | trust lines          |                                       |        |
+|          +----------------------+---------------------------------------+        |
 +----------------------------------------------------------------------------------+
 ```
 
-Behaviour and step content: 4.19. Content stays top-left aligned, never vertically centred.
+Behaviour and step content: 4.19. The card is centred horizontally and starts near the top (never vertically centred); content inside it is top-left aligned.
 
 ### 5.7 Armed orders
 

@@ -8,7 +8,7 @@ import type { LandingPreset } from "../../protocol";
 import type { ExecutionSettings } from "../../services/tradeService";
 import { useSettings } from "../../state/settings";
 import { Row, Rows } from "../settings/ui";
-import { StepActions, type StepFrame, StepHeader } from "./parts";
+import { Panel, StepActions, type StepFrame, StepHeader } from "./parts";
 
 const AUTO_LOCK = [
   { value: "5", label: "5 min" },
@@ -129,27 +129,36 @@ export function LimitsStep({ frame, onDone }: { frame: StepFrame; onDone: () => 
         </Row>
       </Rows>
 
-      <div className="mt-4">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-data font-medium text-fg-1">Default preset · P1 {p1.label}</span>
-          <button
-            type="button"
-            aria-expanded={editing}
-            onClick={() => setEditing((e) => !e)}
-            className="text-data font-medium text-fg-1 underline-offset-2 hover:underline max-md:min-h-11"
-          >
+      <Panel className="mt-6">
+        <div className="flex h-10 items-center justify-between gap-2 border-b border-hairline px-3">
+          <span className="text-data font-medium text-fg-1">
+            Default preset <span className="text-fg-3">· P1 {p1.label}</span>
+          </span>
+          <Button size="sm" variant="ghost" aria-expanded={editing} onClick={() => setEditing((e) => !e)} className="-mr-1.5 max-md:h-11">
             {editing ? "Done" : "Edit"}
-          </button>
+          </Button>
         </div>
         {editing ? (
-          <PresetEditor />
+          <div className="px-3 pb-2">
+            <PresetEditor />
+          </div>
         ) : (
-          <p className="mt-0.5 text-label text-fg-3">
-            Slippage {p1.buy.slippagePct}% buy · {p1.sell.slippagePct}% sell · priority fee {fmtFee(p1.buy.priorityFeeSol)} SOL · tip{" "}
-            {fmtFee(p1.buy.tipSol)} SOL · {landing.label} landing. P2 and P3 are in Settings.
-          </p>
+          <dl className="grid grid-cols-2 gap-px bg-hairline sm:grid-cols-4">
+            {[
+              ["Slippage", `${p1.buy.slippagePct}% / ${p1.sell.slippagePct}%`],
+              ["Priority fee", `${fmtFee(p1.buy.priorityFeeSol)} SOL`],
+              ["Tip", `${fmtFee(p1.buy.tipSol)} SOL`],
+              ["Landing", landing.label],
+            ].map(([k, v]) => (
+              <div key={k} className="bg-surface-1 px-3 py-2">
+                <dt className="text-label text-fg-3">{k}</dt>
+                <dd className="zf-num mt-0.5 truncate text-data font-medium text-fg-1">{v}</dd>
+              </div>
+            ))}
+          </dl>
         )}
-      </div>
+      </Panel>
+      <p className="mt-2 text-label text-fg-3">Slippage is buy / sell. P2 and P3 are in Settings.</p>
 
       <StepActions>
         <Button size="xl" variant="primary" onClick={onDone}>

@@ -1,8 +1,9 @@
 /**
  * Armed orders from the browser, offline: the server's trade context and program accounts shaped from
  * core's mainnet snapshots, nonce slots from a stubbed probe, every variant and cancel signed by the
- * shipped signer policy in an in-process worker, and the POSTed orders checked with core's assertArmable
- * (the signature and structure checks the server's intake runs before its chain reads).
+ * shipped signer policy in an in-process worker, and the POSTed orders checked with core's assertArmable and
+ * the server intake's own rules (serverRules: the checks its intake runs before its chain reads). Raydium
+ * LaunchLab / CPMM contexts come from core's Raydium mainnet snapshot (raydiumTestkit.ts).
  */
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { type Address, getBase58Decoder } from "@solana/kit";
@@ -20,19 +21,25 @@ import {
   PUMP_AMM_GLOBAL_CONFIG,
   PUMP_FEE_CONFIG,
   PUMP_GLOBAL,
+  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  USDC_MINT,
   WSOL_MINT,
 } from "@zerofee/core";
 import type {
+  CpmmTradeContext,
   CurveTradeContext,
+  LaunchLabTradeContext,
   NonceProbeResponse,
   OrderLimits,
   ProgramAccountsResponse,
+  TradeContext,
   TxSubmitResponse,
   Order as WireOrder,
 } from "@zerofee/protocol";
 import { operatorTables } from "../../../../../packages/core/test/armedTestKit";
 import { CURVE_MINT, fixture } from "../../../../../packages/core/test/fixtures";
+import { serverRules } from "../../../../server/src/orders/intake";
 import type { ExecutionSettings } from "../tradeService";
 import { setApiFetch } from "./api";
 import { LiveArmedOrders } from "./armed";
@@ -40,6 +47,7 @@ import { firstSignature, toBase64 } from "./bytes";
 import { wireChain, wireToken } from "./fixtures";
 import { LiveDataSource } from "./LiveDataSource";
 import { ProgramAccounts } from "./programs";
+import { CPMM, cpmmContext, LL, launchLabContext } from "./raydiumTestkit";
 import { signerConfigFromSettings } from "./signerConfig";
 import { SignerHost } from "./signerHost";
 import { type FakeSocket, inProcessSignerFactory, ManualClock, socketFactory } from "./testkit";
@@ -108,6 +116,9 @@ async function curveContext(): Promise<CurveTradeContext> {
     pool: null,
   };
 }
+
+/** The user's per-trade cap the server applies to armed buys (maxTradeSol 1). */
+const USER_BUY_CAP = 1_000_000_000n;
 
 const nonceValue = () => getBase58Decoder().decode(crypto.getRandomValues(new Uint8Array(32)));
 
@@ -225,7 +236,11 @@ async function harness(ready: number) {
       const parsed = JSON.parse(raw, armedJsonReviver) as ArmedOrder | { orders: ArmedOrder[] };
       const orders = "orders" in parsed ? parsed.orders : [armedOrderFromJson(raw)];
       // What the server's intake checks before reading the chain: structure, caps, signatures, firewall-like rules.
-      for (const order of orders) await assertArmable(order, { lookupTables: tables });
+      for (const order of orders) {
+        await assertArmable(order, { lookupTables: tables });
+        // The intake's rules on top (operator tables, Jito-only, reservation, quote asset, the user's buy cap).
+        expect(serverRules(order, tables, USER_BUY_CAP)).toEqual([]);
+      }
       server.armed.push(orders);
       return { orders: orders.map(view) } as T;
     }
@@ -247,7 +262,7 @@ async function harness(ready: number) {
   return { server, rest, submit };
 }
 
-async function armed(ready: number, ctx: CurveTradeContext) {
+async function armed(ready: number, ctx: TradeContext) {
   const h = await harness(ready);
   const contexts = { get: async () => ({ ctx, token: wireToken({ mint: ctx.mint }) }), close: () => {} } as unknown as TradeContexts;
   const svc = new LiveArmedOrders({
@@ -262,13 +277,13 @@ async function armed(ready: number, ctx: CurveTradeContext) {
   return { svc, ...h };
 }
 
-async function holdTokens(ctx: CurveTradeContext, amount: bigint): Promise<void> {
+async function holdTokens(ctx: TradeContext, amount: bigint): Promise<void> {
   const ata = await findAssociatedTokenAddress(wallet as Address, ctx.mint as Address, ctx.tokenProgram as Address);
   ds.subscribe(`wallet:${wallet}`, () => {});
   s.snapshot(`wallet:${wallet}`, 1, {
     address: wallet,
     lamports: "2000000000",
-    tokens: [{ mint: ctx.mint, account: ata, amount: amount.toString(), decimals: 6, tokenProgram: ctx.tokenProgram }],
+    tokens: [{ mint: ctx.mint, account: ata, amount: amount.toString(), decimals: ctx.decimals, tokenProgram: ctx.tokenProgram }],
     fills: [],
     slot: 1,
   });
@@ -384,5 +399,173 @@ describe("arming in the browser", () => {
     await svc.cancel("order-1");
     expect(await svc.panic()).toEqual({ cancelled: 2 });
     expect(server.calls).toEqual(["POST /api/orders/order-1/cancel", "POST /api/orders/panic"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Raydium LaunchLab and CPMM
+// ---------------------------------------------------------------------------------------------
+
+/** SOL per whole token at the context's reserves (curve sides / net pool reserves). */
+function raydiumPriceOf(ctx: LaunchLabTradeContext | CpmmTradeContext): number {
+  if (ctx.venue === "launchlab") {
+    const quote = BigInt(ctx.virtualQuote) + BigInt(ctx.realQuote);
+    const base = BigInt(ctx.virtualBase) - BigInt(ctx.realBase);
+    return Number(quote) / 1e9 / (Number(base) / 10 ** ctx.decimals);
+  }
+  const baseIs0 = ctx.token0Mint === ctx.mint;
+  const base = BigInt(baseIs0 ? ctx.token0Reserve : ctx.token1Reserve);
+  const quote = BigInt(baseIs0 ? ctx.token1Reserve : ctx.token0Reserve);
+  return Number(quote) / 1e9 / (Number(base) / 10 ** ctx.decimals);
+}
+
+describe("arming Raydium coins in the browser", () => {
+  test("a LaunchLab limit buy: signed by the worker's firewall, within the buy-variant cap, accepted by the intake", async () => {
+    const ctx = await launchLabContext(LL.bonk);
+    const { svc, server } = await armed(1, ctx);
+    const order = await svc.placeLimit({
+      mint: ctx.mint,
+      wallet,
+      side: "buy",
+      trigger: { metric: "price", direction: "below", value: raydiumPriceOf(ctx) * 0.8 },
+      size: { kind: "sol", sol: 0.1 },
+      settings: SETTINGS,
+    });
+    expect(order.kind).toBe("limit_buy");
+    const o = server.armed[0]?.[0];
+    expect(o?.kind).toBe("limit-buy");
+    expect(o?.trigger.type).toBe("quote-at-least");
+    expect(o?.frozen.quoteMint).toBe(WSOL_MINT as Address);
+    expect(o?.frozen.venues).toEqual([
+      expect.objectContaining({ venue: "launchlab", market: ctx.pool, config: ctx.platformConfig, creator: ctx.creator }),
+    ]);
+    const variants = o?.attempts.reduce((n, a) => n + a.variants.length, 0) ?? 0;
+    expect(variants).toBeGreaterThan(0);
+    expect(variants).toBeLessThanOrEqual(LIMITS.maxBuyVariants);
+    // The buy pays for the temporary wSOL account and the coin's token account.
+    expect(o?.reservation.lamports).toBeGreaterThanOrEqual(100_000_000n + 2n * 2_039_280n);
+    // The trigger sits about 20% under the arming quote's price (more tokens for the same spend).
+    if (o?.trigger.type === "quote-at-least") expect(Number(o.trigger.threshold) / Number(o.armingQuoteOut)).toBeGreaterThan(1.1);
+  });
+
+  test("a full-exit LaunchLab stop-loss closes the SPL coin's token account", async () => {
+    const ctx = await launchLabContext(LL.trix);
+    await holdTokens(ctx, 5_000_000_000n);
+    const { svc, server } = await armed(1, ctx);
+    await svc.placeLimit({
+      mint: ctx.mint,
+      wallet,
+      side: "sell",
+      trigger: { metric: "price", direction: "below", value: raydiumPriceOf(ctx) * 0.7 },
+      size: { kind: "pct", pct: 100 },
+      settings: SETTINGS,
+    });
+    const o = server.armed[0]?.[0];
+    expect(o?.kind).toBe("stop-loss");
+    expect(o?.fullExit).toBe(true);
+    expect(o?.amount).toBe(5_000_000_000n);
+    expect(o?.frozen.venues.map((v) => v.venue)).toEqual(["launchlab"]);
+  });
+
+  test("selling all of a Token-2022 coin with a transfer fee keeps its token account (withheld fees block CloseAccount)", async () => {
+    const ctx = await launchLabContext(LL.stonkFee);
+    expect(ctx.tokenProgram).toBe(TOKEN_2022_PROGRAM_ID);
+    expect(ctx.baseTransferFee).not.toBeNull();
+    await holdTokens(ctx, 5_000_000_000n);
+    const { svc, server } = await armed(1, ctx);
+    await svc.placeLimit({
+      mint: ctx.mint,
+      wallet,
+      side: "sell",
+      trigger: { metric: "price", direction: "above", value: raydiumPriceOf(ctx) * 2 },
+      size: { kind: "pct", pct: 100 },
+      settings: SETTINGS,
+    });
+    const o = server.armed[0]?.[0];
+    expect(o?.kind).toBe("limit-sell");
+    expect(o?.amount).toBe(5_000_000_000n);
+    expect(o?.fullExit).toBe(false);
+  });
+
+  test("a CPMM take-profit / stop-loss pair shares one nonce (OCO)", async () => {
+    const ctx = cpmmContext(CPMM.bonk, LL.graduated);
+    await holdTokens(ctx, 5_000_000_000n);
+    const { svc, server } = await armed(2, ctx);
+    const orders = await svc.armTpSl({
+      mint: ctx.mint,
+      wallet,
+      entryPriceSol: raydiumPriceOf(ctx),
+      legs: [
+        { kind: "take_profit", triggerPct: 50, sellPct: 50 },
+        { kind: "stop_loss", triggerPct: 30, sellPct: 100 },
+      ],
+      settings: SETTINGS,
+      oco: true,
+    });
+    expect(orders).toHaveLength(2);
+    const [batch] = server.armed;
+    expect(batch?.map((o) => o.kind)).toEqual(["take-profit", "stop-loss"]);
+    expect(batch?.[0]?.ocoGroup).toBe(batch?.[1]?.ocoGroup);
+    expect(batch?.[0]?.attempts[0]?.nonce.account).toBe(batch?.[1]?.attempts[0]?.nonce.account as Address);
+    for (const o of batch ?? []) {
+      expect(o.frozen.venues).toEqual([expect.objectContaining({ venue: "cpmm", market: ctx.pool, config: ctx.ammConfig })]);
+    }
+    expect(batch?.[1]?.fullExit).toBe(true);
+  });
+
+  test("a CPMM limit buy on a Token-2022 coin with a transfer fee", async () => {
+    const ctx = cpmmContext(CPMM.stonk);
+    const { svc, server } = await armed(1, ctx);
+    await svc.placeLimit({
+      mint: ctx.mint,
+      wallet,
+      side: "buy",
+      trigger: { metric: "price", direction: "below", value: raydiumPriceOf(ctx) * 0.9 },
+      size: { kind: "sol", sol: 0.05 },
+      settings: SETTINGS,
+    });
+    const o = server.armed[0]?.[0];
+    expect(o?.kind).toBe("limit-buy");
+    expect(o?.frozen.venues.map((v) => v.venue)).toEqual(["cpmm"]);
+  });
+
+  test("a Raydium buy above the per-trade cap is refused by the signer firewall", async () => {
+    const ctx = await launchLabContext(LL.bonk);
+    const { svc, server } = await armed(1, ctx);
+    const err = await svc
+      .placeLimit({
+        mint: ctx.mint,
+        wallet,
+        side: "buy",
+        trigger: { metric: "price", direction: "below", value: raydiumPriceOf(ctx) * 0.8 },
+        size: { kind: "sol", sol: 1.5 },
+        settings: SETTINGS,
+      })
+      .catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/signer firewall.*Raydium LaunchLab buy_exact_in.*above the per-trade cap/);
+    expect(server.armed).toHaveLength(0);
+  });
+
+  test("refused: migration snipes on Raydium coins and coins not quoted in SOL", async () => {
+    const ll = await launchLabContext(LL.bonk);
+    const snipe = { wallet, side: "buy" as const, size: { kind: "sol" as const, sol: 0.05 }, settings: SETTINGS };
+    const a = await armed(1, ll);
+    await expect(a.svc.armMigration({ ...snipe, mint: ll.mint })).rejects.toThrow("LaunchLab");
+    const cp = cpmmContext(CPMM.bonk);
+    const b = await armed(1, cp);
+    await expect(b.svc.armMigration({ ...snipe, mint: cp.mint })).rejects.toThrow("already trades on Raydium CPMM");
+    const usdc = await armed(1, { ...ll, quoteMint: USDC_MINT });
+    await expect(
+      usdc.svc.placeLimit({
+        mint: ll.mint,
+        wallet,
+        side: "buy",
+        trigger: { metric: "price", direction: "below", value: 1e-9 },
+        size: { kind: "sol", sol: 0.1 },
+        settings: SETTINGS,
+      }),
+    ).rejects.toThrow("quoted in SOL");
+    expect([...a.server.armed, ...b.server.armed, ...usdc.server.armed]).toHaveLength(0);
   });
 });

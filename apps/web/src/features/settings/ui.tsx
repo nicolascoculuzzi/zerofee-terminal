@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Info, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Info, TriangleAlert } from "lucide-react";
 import { type KeyboardEvent, type PointerEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { MenuItem, Popover } from "../../components/ui/Popover";
 import { cn } from "../../lib/cn";
@@ -211,6 +211,19 @@ export function InlineStatus({ children, onUndo, className }: { children: ReactN
   );
 }
 
+/** A disclosure row: a 12 px chevron that turns when open, no native triangle (fallback glyph). */
+export function Disclosure({ summary, children, className }: { summary: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <details className={cn("group/disc", className)}>
+      <summary className="zf-summary inline-flex items-center gap-1 rounded-xs text-label text-fg-2 transition-colors hover:text-fg-1">
+        <ChevronRight className="icon-xs text-fg-3 transition-transform duration-(--zf-dur-2) group-open/disc:rotate-90" />
+        {summary}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Select (4.23): the input frame with a 12 px chevron; opens a menu (4.17).
 // ---------------------------------------------------------------------------
@@ -374,6 +387,7 @@ export function UnderlineTabs<T extends string>({
   onChange,
   label,
   idPrefix,
+  bare,
 }: {
   value: T;
   options: { value: T; label: ReactNode }[];
@@ -381,6 +395,8 @@ export function UnderlineTabs<T extends string>({
   label: string;
   /** Tab ids are `${idPrefix}-${value}`; the panel uses aria-labelledby. */
   idPrefix: string;
+  /** Drop the bottom hairline (the parent row draws one at full width). */
+  bare?: boolean;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const move = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -397,7 +413,12 @@ export function UnderlineTabs<T extends string>({
     refs.current[next]?.focus();
   };
   return (
-    <div role="tablist" aria-label={label} onKeyDown={move} className="flex h-panel-header items-stretch gap-4 border-b border-hairline">
+    <div
+      role="tablist"
+      aria-label={label}
+      onKeyDown={move}
+      className={cn("flex h-panel-header items-stretch gap-4", bare ? "-mb-px" : "border-b border-hairline")}
+    >
       {options.map((o, i) => {
         const active = o.value === value;
         return (

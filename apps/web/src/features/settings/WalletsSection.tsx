@@ -19,7 +19,7 @@ import { ExportedKeyView } from "../onboarding/ExportedKeyView";
 import { MIN_PASSPHRASE, passphraseChecks } from "../onboarding/password";
 import { errorMessage, fmtCountdown, fmtDateTime } from "./format";
 import { MODE_INFO, MODES } from "./modes";
-import { Block, InlineStatus, Note, RadioRow, Row, Rows, SectionHeader, SelectMenu, SubHeader, Tag, useTransient } from "./ui";
+import { Block, Disclosure, InlineStatus, Note, RadioRow, Row, Rows, SectionHeader, SelectMenu, SubHeader, Tag, useTransient } from "./ui";
 import { WithdrawalDestinations } from "./WithdrawalDestinations";
 
 const METHOD_LABEL: Record<TradingWallet["unlockMethod"], string> = {
@@ -257,20 +257,22 @@ function WalletRow({
           </span>
         }
         help={
-          <span className="inline-flex flex-wrap items-center gap-x-1">
-            <span className="font-mono text-fg-2">{shortAddr(wallet.address)}</span>
-            <CopyButton text={wallet.address} label={`Copy ${wallet.label} address`} />
-            <span>
-              {[
-                balance !== null ? `${fmtSol(balance)} SOL` : null,
-                METHOD_LABEL[wallet.unlockMethod],
-                wallet.backedUpAt !== null ? `backed up ${fmtDate(wallet.backedUpAt)}` : `created ${fmtDate(wallet.createdAt)}`,
-              ]
-                .filter(Boolean)
-                .map((part) => `· ${part}`)
-                .join(" ")}
+          <>
+            <span className="flex items-center gap-1">
+              <span className="font-mono text-fg-2">{shortAddr(wallet.address)}</span>
+              <CopyButton text={wallet.address} label={`Copy ${wallet.label} address`} />
+              {balance !== null && (
+                <span className="zf-num text-fg-2">
+                  {fmtSol(balance)}
+                  <span className="text-fg-3"> SOL</span>
+                </span>
+              )}
             </span>
-          </span>
+            <span className="block">
+              {METHOD_LABEL[wallet.unlockMethod]} ·{" "}
+              {wallet.backedUpAt !== null ? `backed up ${fmtDate(wallet.backedUpAt)}` : `created ${fmtDate(wallet.createdAt)}`}
+            </span>
+          </>
         }
       >
         {!active && (
@@ -516,8 +518,7 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
               </Button>
             </Row>
             <Block>
-              <details className="group">
-                <summary className="cursor-pointer text-label text-fg-2 hover:text-fg-1">Session details and signed message</summary>
+              <Disclosure summary="Session details and signed message">
                 <dl className="mt-2 grid grid-cols-[96px_minmax(0,1fr)] gap-x-4 gap-y-1 text-label">
                   <dt className="text-fg-3">Domain</dt>
                   <dd className="truncate font-mono text-fg-2">{session.domain}</dd>
@@ -531,7 +532,7 @@ export function WalletsSection({ initialExport }: { initialExport?: boolean }) {
                 <pre className="mt-2 overflow-x-auto rounded-sm bg-surface-2 p-3 font-mono text-label whitespace-pre-wrap break-all text-fg-2">
                   {session.message}
                 </pre>
-              </details>
+              </Disclosure>
             </Block>
           </>
         ) : (

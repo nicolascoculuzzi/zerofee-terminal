@@ -20,7 +20,7 @@ import { navigateTo } from "../../lib/nav";
 import type { TokenSummary } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
-import { MetaCount, PaneToolbar, PausedChip, SearchField } from "../trackers/bits";
+import { MetaCount, PaneToolbar, PausedChip, SearchField, SkeletonGridRows } from "../trackers/bits";
 import { hoverTarget, MOBILE_ROW_PX, useIsMobile, useLivePause } from "../trackers/hooks";
 import { QuoteValue, useQuote } from "../trackers/money";
 import { QuickBuyPill, WatchStar } from "../trackers/QuickBuyButton";
@@ -87,8 +87,8 @@ const COL = {
   liq: "w-[9ch] justify-end @max-[640px]:hidden",
   vol: "w-[9ch] justify-end @max-[560px]:hidden",
   txns: "w-[7ch] justify-end @max-[880px]:hidden",
-  holders: "w-[7ch] justify-end @max-[940px]:hidden",
-  top10: "w-[6ch] justify-end @max-[800px]:hidden",
+  holders: "w-[9ch] justify-end @max-[940px]:hidden",
+  top10: "w-[8ch] justify-end @max-[800px]:hidden",
   dex: "w-[5ch] justify-center @max-[1120px]:hidden",
   pill: "w-16 justify-end",
   star: "w-6 justify-center",
@@ -96,9 +96,26 @@ const COL = {
 
 const ROW = "flex items-center gap-2 px-2";
 
+/** Loading rows under the real header while the live market connects (DESIGN.md 4.18). */
+const SKELETON = [
+  { className: COL.rank, kind: "num" },
+  { className: "min-w-0 flex-1 shrink", kind: "avatar" },
+  { className: COL.price, kind: "num" },
+  { className: COL.change, kind: "num" },
+  { className: COL.mc, kind: "num" },
+  { className: COL.liq, kind: "num" },
+  { className: COL.vol, kind: "num" },
+  { className: COL.txns, kind: "num" },
+  { className: COL.holders, kind: "num" },
+  { className: COL.top10, kind: "num" },
+  { className: COL.dex, kind: "none" },
+  { className: COL.pill, kind: "none" },
+  { className: COL.star, kind: "none" },
+] as const;
+
 /** "DEX" in a neutral outline chip (Dex Paid says nothing about safety, DESIGN.md 3.11). */
 function DexChip({ paid }: { paid: boolean }) {
-  if (!paid) return <Num kind="count" value={null} />;
+  if (!paid) return null;
   return (
     <span className="inline-flex h-4 items-center rounded-xs border border-hairline-strong px-1 text-micro font-semibold text-fg-2">
       DEX
@@ -144,7 +161,8 @@ const TrendingRow = memo(function TrendingRow({ fallback, rank, active }: { fall
         <Num kind="price" value={quote === "USD" ? t.priceUsd : t.priceSol} usd={quote === "USD"} />
       </Cell>
       <Cell className={cn("shrink-0", COL.change)}>
-        <Num kind="pct" value={t.change5mPct} signed />
+        {/* No 5m change yet (young tokens, windowed stats not served): an empty cell, not a dash column. */}
+        {t.change5mPct !== null && <Num kind="pct" value={t.change5mPct} signed />}
       </Cell>
       <Cell className={cn("shrink-0 font-medium text-fg-1", COL.mc)}>
         <QuoteValue usd={t.marketCapUsd} sol={t.marketCapSol} />
@@ -471,9 +489,18 @@ export function TrendingPanel() {
         }
         empty={
           total === 0 ? (
-            <EmptyState title="Waiting for the live market" body="Tokens show up as soon as the feed connects." />
+            mobile ? (
+              <EmptyState
+                className="text-balance"
+                title="Waiting for the live market"
+                body="Tokens show up as soon as the feed connects."
+              />
+            ) : (
+              <SkeletonGridRows cols={SKELETON} rowClassName={cn(ROW, "h-row")} />
+            )
           ) : filtered || searching ? (
             <EmptyState
+              className="text-balance"
               icon={<ListFilter />}
               title={searching ? `No tokens match “${deferredQuery.trim()}”` : "No tokens match these filters"}
               body="Loosen a filter or clear the search."
@@ -486,7 +513,7 @@ export function TrendingPanel() {
               }
             />
           ) : (
-            <EmptyState title="Nothing is trending yet" body="The ranking fills in as tokens trade." />
+            <EmptyState className="text-balance" title="Nothing is trending yet" body="The ranking fills in as tokens trade." />
           )
         }
         paused={paused}

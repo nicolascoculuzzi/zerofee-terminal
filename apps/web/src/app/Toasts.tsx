@@ -95,7 +95,7 @@ function TradeToastBody({ trade, onDismiss }: { trade: ClientTrade; onDismiss: (
             {fmtMs(receipt.latency.landedMs)}
             {receipt.latency.slot !== null && ` · slot ${fmtInt(receipt.latency.slot)}`}
             {receipt.simulated ? " · dry run, nothing sent" : trade.landing && ` · ${trade.landing}`}
-            {receipt.route && receipt.route.length > 0 && ` · via ${receipt.route.join(" → ")}`}
+            {receipt.route && receipt.route.length > 0 && ` · via ${receipt.route.join(" > ")}`}
           </span>
         )}
         {trade.status === "failed" && (
@@ -226,21 +226,26 @@ const ToastItem = memo(function ToastItem({ toast }: { toast: Toast }) {
       ) : (
         <>
           <span className="mt-0.5 flex shrink-0 [&_svg]:size-3.5">{icon}</span>
-          <div className="min-w-0 flex-1 pr-6">
-            <div className="text-body font-semibold text-fg-1">{toast.title}</div>
-            {toast.body && <div className="mt-0.5 break-words text-label text-fg-2">{toast.body}</div>}
-            {toast.action && (
-              <Button
-                size="xs"
-                variant="secondary"
-                className="mt-2"
-                onClick={() => {
-                  toast.action?.run();
-                  dismiss(toast.id);
-                }}
-              >
-                {toast.action.label}
-              </Button>
+          <div className="min-w-0 flex-1">
+            <div className="pr-6 text-body font-semibold text-fg-1">{toast.title}</div>
+            {(toast.body || toast.action) && (
+              <div className="mt-0.5 flex items-center gap-2">
+                {toast.body && <div className="min-w-0 flex-1 break-words text-label text-fg-2">{toast.body}</div>}
+                {/* One optional action on the body line, right-aligned, after Canny's inline Undo (4.13). */}
+                {toast.action && (
+                  <Button
+                    size="xs"
+                    variant="secondary"
+                    className="ml-auto"
+                    onClick={() => {
+                      toast.action?.run();
+                      dismiss(toast.id);
+                    }}
+                  >
+                    {toast.action.label}
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         </>
@@ -250,7 +255,7 @@ const ToastItem = memo(function ToastItem({ toast }: { toast: Toast }) {
         aria-label="Dismiss"
         title="Dismiss (Esc)"
         onClick={() => dismiss(toast.id)}
-        className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-xs text-fg-3 transition-colors hover:text-fg-1"
+        className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-xs text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1"
       >
         <X className="icon-xs" />
       </button>

@@ -111,6 +111,7 @@ function TradesDock() {
         header={<TradeHeader />}
         empty={
           <EmptyState
+            className="text-balance"
             title={walletCount === 0 ? "No wallets tracked" : live.length === 0 ? "No trades yet" : "No trades match the filters"}
             body={walletCount === 0 ? "Add wallets on the Trackers page." : "New trades appear within about a second of landing."}
           />
@@ -157,6 +158,7 @@ function SocialDock() {
         label="X posts"
         empty={
           <EmptyState
+            className="text-balance"
             title={posts.length === 0 ? "No posts yet" : "No posts match your switches"}
             body="Manage handles on the Trackers page, X tab."
           />

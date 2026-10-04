@@ -4,7 +4,6 @@ import { Age } from "../../components/ui/Age";
 import { Button, IconButton } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
 import { Checkbox, CopyButton, Hotkey } from "../../components/ui/controls";
-import { Num } from "../../components/ui/Num";
 import { MenuItem, MenuSeparator, Popover } from "../../components/ui/Popover";
 import { WalletAvatar } from "../../components/ui/TokenAvatar";
 import { copyText } from "../../lib/clipboard";
@@ -35,12 +34,13 @@ const NEW_MS = 1200;
  * the 20 px copy button; on a full-width pane the name column takes the slack.
  */
 const COL = {
-  check: "w-6",
+  check: "w-5",
   name: "min-w-0 flex-1",
   addr: "w-[calc(9ch+24px)] @max-[340px]:hidden",
-  alerts: "w-6 justify-center",
-  added: "w-[5ch] justify-end",
-  last: "w-[6ch] justify-end",
+  alerts: "w-5 justify-center",
+  // Wide enough for the sortable header ("Added", "Last" plus its 12 px arrow) without truncation.
+  added: "w-14 justify-end",
+  last: "w-12 justify-end",
   menu: "w-5 justify-end",
 } as const;
 
@@ -210,9 +210,7 @@ const WalletRow = memo(function WalletRow({ wallet, lastTradeAt, selected, activ
       <Cell className={cn("shrink-0", COL.added)}>
         <Age ts={wallet.createdAt} />
       </Cell>
-      <Cell className={cn("shrink-0", COL.last)}>
-        {lastTradeAt === null ? <Num kind="count" value={null} /> : <Age ts={lastTradeAt} />}
-      </Cell>
+      <Cell className={cn("shrink-0", COL.last)}>{lastTradeAt !== null && <Age ts={lastTradeAt} />}</Cell>
       <Cell className={cn("shrink-0", COL.menu)}>
         <RowMenu wallet={wallet} tabIndex={tab} onShowTrades={onShowTrades} />
       </Cell>
@@ -388,7 +386,7 @@ export function WalletManager({
         <SortHeaderCell k="added" label="Added" sort={sort} onSort={setSort} className={COL.added} align="right" />
         <SortHeaderCell
           k="lastTrade"
-          label="Last tx"
+          label="Last"
           sort={sort}
           onSort={setSort}
           className={COL.last}
@@ -402,6 +400,7 @@ export function WalletManager({
   const empty =
     wallets.length === 0 ? (
       <EmptyState
+        className="text-balance"
         icon={<Wallet />}
         title="No wallets tracked yet"
         body="Add a wallet, or import a list from GMGN, BullX or a zerofee export."
@@ -412,7 +411,7 @@ export function WalletManager({
         }
       />
     ) : (
-      <EmptyState title={`No wallets match “${query.trim()}”`} body="Search by name or address." />
+      <EmptyState className="text-balance" title={`No wallets match “${query.trim()}”`} body="Search by name or address." />
     );
 
   return (

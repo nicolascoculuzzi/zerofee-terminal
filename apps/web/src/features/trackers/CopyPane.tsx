@@ -232,6 +232,7 @@ export function CopyPane({ query }: { query: string }) {
   if (!session) {
     return (
       <EmptyState
+        className="text-balance"
         icon={<Copy />}
         title="Sign in to copy trade"
         body="Copy tasks live on the server with your session; the copies are signed in this browser."
@@ -250,9 +251,13 @@ export function CopyPane({ query }: { query: string }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <NewTask />
         {!available ? (
-          <EmptyState title="Copy trading is connecting" body="Waiting for the copy feed from the server." />
+          <EmptyState className="text-balance" title="Copy trading is connecting" body="Waiting for the copy feed from the server." />
         ) : shownTasks.length === 0 ? (
-          <EmptyState title={q ? "No task matches" : "No copy tasks yet"} body="Pick a wallet above to copy its trades." />
+          <EmptyState
+            className="text-balance"
+            title={q ? "No task matches" : "No copy tasks yet"}
+            body="Pick a wallet above to copy its trades."
+          />
         ) : (
           <ul aria-label="Copy tasks">
             {shownTasks.map((t) => (
