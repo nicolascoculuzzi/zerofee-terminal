@@ -1,17 +1,28 @@
 /**
  * Per-token in-memory record (single writer: MarketState) and the pure builders that turn it into the
  * protocol's TokenSummary and TradeContext.
+ *
+ * Raydium LaunchLab curves reuse the pump curve fields in pump's shape, so pricing, liquidity, progress,
+ * candles and rollbacks work unchanged: vToken = virtual_base - real_base, vQuote = virtual_quote + real_quote
+ * (price = vQuote / vToken, the curve's spot price), rToken = total_base_sell - real_base (base left to sell),
+ * rQuote = real_quote, and initialRealTokenReserves = total_base_sell. The curve constants live in
+ * `launchLab`. A graduated LaunchLab coin's CPMM pool uses `pool` / `poolState` with reserves net of the fees
+ * the pool owes (virtualQuote 0).
  */
 import {
   BPS_DENOMINATOR,
   DEFAULT_INITIAL_REAL_TOKEN_RESERVES,
+  LAUNCHLAB_POOL_STATUS,
+  MAINNET_SLOTS_PER_EPOCH,
   ONE_BILLION_SUPPLY,
   TOKEN_PROGRAM_ID,
   type Token2022Danger,
+  type TransferFeeConfig,
   USDC_MINT,
   WSOL_MINT,
 } from "@zerofee/core";
-import type { Launchpad, TokenSocials, TokenSummary, Trade, TradeContext } from "@zerofee/protocol";
+import type { Launchpad, TokenSocials, TokenSummary, Trade, TradeContext, TransferFeeInfo } from "@zerofee/protocol";
+import type { CpmmPoolInfo, LaunchLabPoolInfo } from "../accounts/raydium";
 import type { PoolInfo } from "../accounts/resolver";
 import type { OrderKey } from "./candles";
 import type { HolderBook } from "./holders";
@@ -30,6 +41,23 @@ export interface PoolReserves {
   quoteVault: bigint;
   /** Signed Pool.virtual_quote_reserves. */
   virtualQuote: bigint;
+}
+
+/** Raydium LaunchLab curve constants (the moving curve state is `TokenRecord.curve`, see the module comment). */
+export interface LaunchLabRecord {
+  /** LaunchLab pool (PoolState) PDA ["pool", mint, quote]. */
+  pool: string;
+  /** Constant-product virtual reserves; null until a TradeEvent or the pool account. */
+  virtualBase: bigint | null;
+  virtualQuote: bigint | null;
+  totalBaseSell: bigint | null;
+  totalQuoteFundRaising: bigint | null;
+  /** 1 = graduates to CPMM, 0 = to Raydium AMM v4. */
+  migrateType: number | null;
+  globalConfig: string | null;
+  platformConfig: string | null;
+  /** The CPMM pool it graduates into, from the live PlatformConfig.cpswap_config (null until derived). */
+  graduationPool: string | null;
 }
 
 /** A trade plus what is needed to roll it back (dead slot) or rebuild candles. */
@@ -58,6 +86,12 @@ export interface TokenRecord {
   socials: TokenSocials;
   metadataState: "none" | "requested" | "ok" | "failed";
   launchpad: Launchpad;
+  /** LaunchLab launchpad label (PlatformConfig name: letsbonk.fun, StonkFun ...); null otherwise. */
+  platform: string | null;
+  /** LaunchLab curve constants; null for pump coins. */
+  launchLab: LaunchLabRecord | null;
+  /** The mint's Token-2022 TransferFeeConfig (StonkFun coins); null when none / unknown. */
+  transferFeeConfig: TransferFeeConfig | null;
   quoteMint: string;
   /** Meaningful once quoteTokenProgram is set: both come from the quote mint (null = still being looked up). */
   quoteDecimals: number;
@@ -136,6 +170,9 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
     socials: { x: null, telegram: null, website: null },
     metadataState: "none",
     launchpad: "pump",
+    platform: null,
+    launchLab: null,
+    transferFeeConfig: null,
     quoteMint: WSOL_MINT,
     quoteDecimals: 9,
     quoteTokenProgram: TOKEN_PROGRAM_ID,
@@ -244,6 +281,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     image: rec.image,
     description: rec.description,
     launchpad: rec.launchpad,
+    platform: rec.platform,
     quoteMint: rec.quoteMint,
     tokenProgram: rec.tokenProgram,
     decimals: rec.decimals,
@@ -293,12 +331,172 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
   };
 }
 
+/** What a Raydium trade context needs beyond the record (the registry's accounts). */
+export interface RaydiumContextInputs {
+  launchLabPool?: LaunchLabPoolInfo;
+  /** GlobalConfig rates. */
+  global?: { curveType: number; tradeFeeRate: bigint };
+  /** PlatformConfig rates and graduation config. */
+  platform?: { feeRate: bigint; creatorFeeRate: bigint; cpswapConfig: string; platformCpCreator: string };
+  cpmmPool?: CpmmPoolInfo;
+  ammConfig?: { tradeFeeRate: bigint; protocolFeeRate: bigint; fundFeeRate: bigint; creatorFeeRate: bigint };
+  /** Quote mint transfer fee: null = none; undefined = not known yet. */
+  quoteTransferFee?: TransferFeeConfig | null;
+  /** Base mint transfer fee is known (the mint was read): rec.transferFeeConfig is authoritative. */
+  baseMintKnown?: boolean;
+}
+
+export function transferFeeInfo(cfg: TransferFeeConfig | null | undefined): TransferFeeInfo | null {
+  if (!cfg) return null;
+  const f = (x: TransferFeeConfig["olderTransferFee"]) => ({
+    epoch: x.epoch.toString(),
+    maximumFee: x.maximumFee.toString(),
+    basisPoints: Number(x.transferFeeBasisPoints),
+  });
+  return { older: f(cfg.olderTransferFee), newer: f(cfg.newerTransferFee) };
+}
+
+/** LaunchLab pool status implied by the record (0 funding, 1 complete, 2 migrated). */
+export function launchLabStatus(rec: TokenRecord): number {
+  if (rec.migrated) return LAUNCHLAB_POOL_STATUS.trade;
+  return rec.complete ? LAUNCHLAB_POOL_STATUS.migrate : LAUNCHLAB_POOL_STATUS.fund;
+}
+
+/** LaunchLab curve state in core's shape (LaunchLabCurveState), from the record; null while incomplete. */
+export function launchLabCurve(rec: TokenRecord): {
+  status: number;
+  virtualBase: bigint;
+  virtualQuote: bigint;
+  realBase: bigint;
+  realQuote: bigint;
+  totalBaseSell: bigint;
+  totalQuoteFundRaising: bigint;
+} | null {
+  const ll = rec.launchLab;
+  if (!ll || !rec.curve || ll.virtualBase === null || ll.virtualQuote === null || ll.totalBaseSell === null) return null;
+  return {
+    status: launchLabStatus(rec),
+    virtualBase: ll.virtualBase,
+    virtualQuote: ll.virtualQuote,
+    realBase: ll.virtualBase - rec.curve.vToken,
+    realQuote: rec.curve.vQuote - ll.virtualQuote,
+    totalBaseSell: ll.totalBaseSell,
+    totalQuoteFundRaising: ll.totalQuoteFundRaising ?? 0n,
+  };
+}
+
+function raydiumTradeContext(rec: TokenRecord, base: ReturnType<typeof contextBase>, r: RaydiumContextInputs): TradeContext | null {
+  const quoteTransferFee = r.quoteTransferFee;
+  if (quoteTransferFee === undefined || !r.baseMintKnown) return null;
+  const slot = Math.max(rec.curveSlot ?? 0, rec.poolSlot ?? 0, rec.lastSlot ?? 0);
+  const epoch = (BigInt(slot) / MAINNET_SLOTS_PER_EPOCH).toString();
+  const fees = {
+    baseTransferFee: transferFeeInfo(rec.transferFeeConfig),
+    quoteTransferFee: transferFeeInfo(quoteTransferFee),
+    epoch,
+  };
+  if (rec.migrated) {
+    const c = r.cpmmPool;
+    const cfg = r.ammConfig;
+    if (!c || !cfg || !rec.poolState || rec.pool !== c.pool) return null;
+    const st = c.state;
+    const baseIs0 = st.token0Mint === rec.mint;
+    return {
+      ...base,
+      venue: "cpmm",
+      slot: rec.poolSlot ?? 0,
+      pool: c.pool,
+      ammConfig: st.ammConfig,
+      poolCreator: st.poolCreator,
+      token0Mint: st.token0Mint,
+      token1Mint: st.token1Mint,
+      token0Vault: st.token0Vault,
+      token1Vault: st.token1Vault,
+      token0Program: st.token0Program,
+      token1Program: st.token1Program,
+      observation: st.observationKey,
+      lpMint: st.lpMint,
+      status: st.status,
+      openTime: st.openTime.toString(),
+      creatorFeeOn: st.creatorFeeOn,
+      enableCreatorFee: st.enableCreatorFee,
+      token0Reserve: (baseIs0 ? rec.poolState.base : rec.poolState.quoteVault).toString(),
+      token1Reserve: (baseIs0 ? rec.poolState.quoteVault : rec.poolState.base).toString(),
+      tradeFeeRate: cfg.tradeFeeRate.toString(),
+      protocolFeeRate: cfg.protocolFeeRate.toString(),
+      fundFeeRate: cfg.fundFeeRate.toString(),
+      creatorFeeRate: cfg.creatorFeeRate.toString(),
+      ...fees,
+      launchLabPool: c.launchLabPool ?? rec.launchLab?.pool ?? null,
+      platform: rec.platform,
+    };
+  }
+  const ll = rec.launchLab;
+  const info = r.launchLabPool;
+  const curve = launchLabCurve(rec);
+  if (!ll || !info || !curve || !r.global || !r.platform) return null;
+  const tokenProgramFlag = info.state?.tokenProgramFlag;
+  const creator = info.creator ?? rec.creator;
+  if (!info.globalConfig || !info.platformConfig || !info.baseVault || !info.quoteVault || tokenProgramFlag === undefined || !creator)
+    return null;
+  return {
+    ...base,
+    venue: "launchlab",
+    slot: rec.curveSlot ?? 0,
+    pool: ll.pool,
+    globalConfig: info.globalConfig,
+    platformConfig: info.platformConfig,
+    platform: rec.platform,
+    baseVault: info.baseVault,
+    quoteVault: info.quoteVault,
+    creator,
+    tokenProgramFlag,
+    status: curve.status,
+    migrateType: ll.migrateType ?? info.state?.migrateType ?? 1,
+    virtualBase: curve.virtualBase.toString(),
+    virtualQuote: curve.virtualQuote.toString(),
+    realBase: curve.realBase.toString(),
+    realQuote: curve.realQuote.toString(),
+    totalBaseSell: curve.totalBaseSell.toString(),
+    totalQuoteFundRaising: curve.totalQuoteFundRaising.toString(),
+    curveType: r.global.curveType,
+    protocolFeeRate: r.global.tradeFeeRate.toString(),
+    platformFeeRate: r.platform.feeRate.toString(),
+    creatorFeeRate: r.platform.creatorFeeRate.toString(),
+    ...fees,
+    graduationPool: ll.graduationPool,
+    cpswapConfig: r.platform.cpswapConfig,
+    platformCpCreator: r.platform.platformCpCreator,
+  };
+}
+
+function contextBase(rec: TokenRecord, tokenProgram: string, quoteTokenProgram: string) {
+  return {
+    mint: rec.mint,
+    tokenProgram,
+    decimals: rec.decimals,
+    supply: rec.supply.toString(),
+    quoteMint: rec.quoteMint,
+    quoteTokenProgram,
+    quoteDecimals: rec.quoteDecimals,
+    isMayhemMode: rec.isMayhem,
+    isCashbackCoin: rec.isCashback ?? false,
+    isHolderReward: rec.isHolderReward ?? false,
+    creatorFeeBps: (rec.creatorFeeBps ?? 0n).toString(),
+    updatedAt: rec.updatedAt,
+  };
+}
+
 /**
  * Inputs for building a trade in the browser with @zerofee/core. Null until everything the builder
- * needs is known (token program, live creator vault, pool vaults ...).
+ * needs is known (token program, live creator vault, pool vaults; for Raydium the pool accounts, the fee
+ * configs and the Token-2022 transfer fees ...).
  */
-export function buildTradeContext(rec: TokenRecord, pool: PoolInfo | undefined): TradeContext | null {
+export function buildTradeContext(rec: TokenRecord, pool: PoolInfo | undefined, raydium?: RaydiumContextInputs): TradeContext | null {
   if (!rec.tokenProgram || !rec.quoteTokenProgram) return null;
+  if (rec.launchpad === "launchlab") {
+    return raydium ? raydiumTradeContext(rec, contextBase(rec, rec.tokenProgram, rec.quoteTokenProgram), raydium) : null;
+  }
   const base = {
     mint: rec.mint,
     tokenProgram: rec.tokenProgram,

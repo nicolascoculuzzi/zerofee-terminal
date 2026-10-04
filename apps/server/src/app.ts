@@ -6,6 +6,7 @@
 import type { Database } from "bun:sqlite";
 import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID } from "@zerofee/core";
 import type { HealthResponse } from "@zerofee/protocol";
+import { RaydiumRegistry } from "./accounts/raydium";
 import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
 import { Enricher, watchedMints } from "./enrich";
@@ -136,6 +137,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     persistPool: (p) => writer.pool(p),
   });
   resolver.loadPools(reader.pools());
+  // Raydium LaunchLab / CPMM accounts share the resolver's batches.
+  const raydium = new RaydiumRegistry(resolver, {
+    launchLabPool: (info) => market?.onLaunchLabPoolReady(info),
+    launchLabPoolMissing: (pool) => market?.onLaunchLabPoolMissing(pool),
+    platform: (address) => market?.onPlatformConfig(address),
+    cpmmPool: (info) => market?.onCpmmPoolReady(info),
+    cpmmRejected: (pool) => market?.onCpmmRejected(pool),
+  });
   const metadata = new MetadataFetcher({
     gateways: cfg.metadataGateways,
     timeoutMs: cfg.metadataTimeoutMs,
@@ -153,6 +162,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     onMigrate: (rec) => enricher?.onMigrate(rec),
     // Wallet tracker / copy trading: every recorded trade is matched against the tracked wallets.
     onTrade: o.user ? (t, tx) => o.user?.trackers.onTrade(t, tx) : undefined,
+    raydium,
   });
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
@@ -191,7 +201,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     o.user.halt.onChange((s) => chain.setHalt(s));
   }
   const programAccounts = new ProgramAccountsCache(rpc);
-  const source = o.source === undefined ? createSource(cfg) : o.source;
+  const source =
+    o.source === undefined ? createSource(cfg, { rpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) }) : o.source;
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
@@ -232,6 +243,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     decodeFailure: (info) => {
       m.stats.decodeFailures++;
       log.debug(`decode failure (${info.source}) ${info.signature ?? ""}: ${info.message}`);
+    },
+    hint: (h) => {
+      if (h.kind === "launchlabMigration") m.onLaunchLabMigrationHint();
     },
   };
 
@@ -281,6 +295,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       srcHealth[0].notes.push(
         ...notes,
         `rpc: ${rpc.stats.calls} calls, ${rpc.stats.errors} errors, ${rpc.stats.dataAllowance} data-allowance, ${rpc.stats.rateLimited} rate-limited`,
+        `raydium: launchlab ${m.stats.launchLabLaunches} launches, ${m.stats.launchLabTrades} trades, ${m.stats.launchLabCompletes} completed, ` +
+          `${m.stats.launchLabGraduations} graduated; cpmm ${m.stats.cpmmTrades} trades (${m.stats.cpmmIgnored} on other pools ignored); ` +
+          `${m.stats.unattributedTrades} trades without a wallet; registry ${raydium.launchLabPools.size} pools, ` +
+          `${raydium.cpmmPools.size} graduation pools, ${raydium.stats.rejected} CPMM pools rejected, ${raydium.platforms.size} platforms`,
         ...(enricher?.notes() ?? ["enrich: off"]),
       );
     return {
@@ -408,6 +426,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     }),
   );
   const reconcileTimer = reconciler ? setInterval(() => reconciler.sweep(), 5_000) : null;
+  // LaunchLab platform / global configs and CPMM AmmConfigs: fee rates and graduation pools can change.
+  const raydiumTimer = o.pollers !== false ? setInterval(() => raydium.refreshConfigs(), 10 * 60_000) : null;
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
@@ -442,6 +462,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     health,
     async stop() {
       clearInterval(evictTimer);
+      if (raydiumTimer) clearInterval(raydiumTimer);
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
       metrics.stop();

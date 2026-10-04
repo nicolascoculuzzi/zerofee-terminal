@@ -8,6 +8,8 @@
  *    create_v2 coins) for tokens first seen mid-life.
  *  - Bonding curves of tokens first seen mid-life (flags the TradeEvent does not carry).
  *  - Metaplex metadata of legacy (SPL Token) coins.
+ *  - Raw accounts for other modules (requestAccount: the Raydium registry's pools and configs), sharing
+ *    the same batches so the public RPC sees one getMultipleAccounts stream.
  *
  * Uses `processed` reads because events arrive at processed commitment and a new pool would otherwise
  * be invisible for a slot or two. Missing accounts are retried a few times, then given up on.
@@ -26,10 +28,11 @@ import {
   type OnchainTokenMetadata,
   TOKEN_PROGRAM_ID,
   type Token2022Danger,
+  type TransferFeeConfig,
   WSOL_MINT,
 } from "@zerofee/core";
 import { logger } from "../log";
-import type { RpcClient } from "../util/rpc";
+import type { RpcAccount, RpcClient } from "../util/rpc";
 
 const log = logger("resolver");
 
@@ -68,6 +71,8 @@ export interface MintResolved {
   supply: bigint;
   metadata: OnchainTokenMetadata | null;
   dangers: Token2022Danger[];
+  /** Token-2022 TransferFeeConfig (StonkFun coins, some xStock quotes); null for none / SPL Token. */
+  transferFeeConfig?: TransferFeeConfig | null;
 }
 
 export interface CurveResolved {
@@ -86,7 +91,7 @@ export interface ResolverEvents {
   persistPool?(info: PoolInfo): void;
 }
 
-type JobKind = "pool" | "mint" | "curve" | "metaplex";
+type JobKind = "pool" | "mint" | "curve" | "metaplex" | "account";
 
 interface Job {
   kind: JobKind;
@@ -105,7 +110,10 @@ export interface ResolverOptions {
   maxQueue?: number;
 }
 
-const PRIORITY: Record<JobKind, number> = { pool: 0, mint: 1, curve: 2, metaplex: 3 };
+const PRIORITY: Record<JobKind, number> = { pool: 0, account: 0, mint: 1, curve: 2, metaplex: 3 };
+
+/** Callback of a raw account request; null when the account does not exist (after the retries asked for). */
+export type AccountCallback = (acc: RpcAccount | null) => void;
 
 export class AccountResolver {
   readonly pools = new Map<string, PoolInfo>();
@@ -113,6 +121,7 @@ export class AccountResolver {
   private readonly queue = new Map<string, Job>();
   private readonly waitingOnMint = new Map<string, Set<string>>(); // base mint -> pools
   private readonly gaveUp = new Set<string>();
+  private readonly accountWaiters = new Map<string, { cbs: AccountCallback[]; retryMissing: boolean }>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
   readonly stats = {
@@ -202,27 +211,63 @@ export class AccountResolver {
 
   /** Resolves once the job is queued (the PDA derivation is async). */
   requestCurve(mint: string): Promise<void> {
-    return bondingCurvePda(mint as Address).then((pda) => this.enqueue("curve", pda, mint));
+    return bondingCurvePda(mint as Address).then((pda) => {
+      this.enqueue("curve", pda, mint);
+    });
   }
 
   /** Resolves once the job is queued (the PDA derivation is async). */
   requestMetaplex(mint: string): Promise<void> {
-    return metaplexMetadataPda(mint as Address).then((pda) => this.enqueue("metaplex", pda, mint));
+    return metaplexMetadataPda(mint as Address).then((pda) => {
+      this.enqueue("metaplex", pda, mint);
+    });
   }
 
-  private enqueue(kind: JobKind, address: Address, mint: string): void {
+  /**
+   * Reads one raw account in the next batch and calls `cb` with it (several requests for one address share
+   * the read). `retryMissing`: a missing account is retried a few times (just created, not visible at
+   * processed yet) before `cb(null)`; otherwise missing is answered at once. Read errors retry like the
+   * other jobs and end in `cb(null)`.
+   */
+  requestAccount(address: string, cb: AccountCallback, o: { retryMissing?: boolean } = {}): void {
+    const w = this.accountWaiters.get(address);
+    if (w) {
+      w.cbs.push(cb);
+      w.retryMissing ||= o.retryMissing === true;
+      if (this.queue.has(`account:${address}`)) return;
+    } else this.accountWaiters.set(address, { cbs: [cb], retryMissing: o.retryMissing === true });
+    if (!this.enqueue("account", address as Address, address)) this.answer(address, null);
+  }
+
+  private answer(address: string, acc: RpcAccount | null): void {
+    const w = this.accountWaiters.get(address);
+    this.accountWaiters.delete(address);
+    for (const cb of w?.cbs ?? []) {
+      try {
+        cb(acc);
+      } catch (e) {
+        log.debug(`account callback for ${address} failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+  }
+
+  /** Returns false when the job could not be queued (queue full of higher-priority work). */
+  private enqueue(kind: JobKind, address: Address, mint: string): boolean {
     const key = `${kind}:${address}`;
-    if (this.queue.has(key) || this.gaveUp.has(key)) return;
+    if (this.queue.has(key) || this.gaveUp.has(key)) return true;
     if (this.queue.size >= (this.opts.maxQueue ?? 20_000)) {
       // drop the lowest-priority oldest job
       let victim: string | null = null;
       for (const [k, j] of this.queue) if (!victim || PRIORITY[j.kind] > PRIORITY[(this.queue.get(victim) as Job).kind]) victim = k;
-      if (victim && PRIORITY[(this.queue.get(victim) as Job).kind] >= PRIORITY[kind]) {
+      const v = victim ? (this.queue.get(victim) as Job) : null;
+      if (victim && v && PRIORITY[v.kind] >= PRIORITY[kind]) {
         this.queue.delete(victim);
         this.stats.dropped++;
-      } else return;
+        if (v.kind === "account") this.answer(v.address, null);
+      } else return false;
     }
     this.queue.set(key, { kind, address, mint, attempts: 0, notBefore: 0 });
+    return true;
   }
 
   /** One batch. Exposed for tests. */
@@ -259,6 +304,16 @@ export class AccountResolver {
   private retry(j: Job, now: number, missing: boolean): void {
     j.attempts++;
     if (missing) this.stats.missing++;
+    if (j.kind === "account") {
+      // Raw reads never land in gaveUp: the caller decides whether to ask again later.
+      if ((missing && !this.accountWaiters.get(j.address)?.retryMissing) || j.attempts >= (this.opts.maxAttempts ?? 4)) {
+        this.answer(j.address, null);
+        return;
+      }
+      j.notBefore = now + (this.opts.retryDelayMs ?? 2_000) * j.attempts;
+      this.queue.set(`${j.kind}:${j.address}`, j);
+      return;
+    }
     if (j.attempts >= (this.opts.maxAttempts ?? 4)) {
       this.gaveUp.add(`${j.kind}:${j.address}`);
       this.stats.gaveUp++;
@@ -268,10 +323,13 @@ export class AccountResolver {
     this.queue.set(`${j.kind}:${j.address}`, j);
   }
 
-  private async handle(j: Job, acc: { owner: Address; data: Uint8Array } | null, now: number): Promise<void> {
+  private async handle(j: Job, acc: RpcAccount | null, now: number): Promise<void> {
     if (!acc) return this.retry(j, now, true);
     try {
       switch (j.kind) {
+        case "account":
+          this.answer(j.address, acc);
+          return;
         case "pool": {
           const p = decodePool(acc.data);
           const info = this.upsertPool({
@@ -307,6 +365,7 @@ export class AccountResolver {
             supply: m.supply,
             metadata: ext.metadata,
             dangers: ext.dangers,
+            transferFeeConfig: m.extensions.transferFeeConfig,
           };
           this.mints.set(j.mint, info);
           this.stats.mintsResolved++;

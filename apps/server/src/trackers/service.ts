@@ -14,10 +14,12 @@
  */
 import {
   type CopySnapshot,
+  type Launchpad,
   type ParsedTopic,
   type TokenSummary,
   type TrackedSnapshot,
   type Trade,
+  type TradeVenue,
   USER_LIMITS,
   type UserSettings,
 } from "@zerofee/protocol";
@@ -46,7 +48,12 @@ export interface MarketLike {
   readonly tokens: ReadonlyMap<string, TokenRecord>;
   summary(mint: string): TokenSummary | null;
   recentTrades(mint: string, limit?: number): Trade[];
+  /** Base mint of a LaunchLab / CPMM graduation pool (LaunchLab launches seen without accounts). */
+  raydiumBaseMint?(pool: string): string | undefined;
 }
+
+/** Launchpad of a token the market no longer holds, from the venue of its trade. */
+const LAUNCHPAD_OF_VENUE: Record<TradeVenue, Launchpad> = { pump: "pump", pumpswap: "pumpswap", launchlab: "launchlab", cpmm: "launchlab" };
 
 /** The alert engine's wallet hook. */
 export interface WalletActivitySink {
@@ -223,7 +230,7 @@ export class TrackerService {
       symbol: rec?.symbol ?? "",
       name: rec?.name ?? "",
       image: rec?.image ?? null,
-      launchpad: rec?.launchpad ?? (trade.venue === "pump" ? "pump" : "pumpswap"),
+      launchpad: rec?.launchpad ?? LAUNCHPAD_OF_VENUE[trade.venue],
       venue: trade.venue,
       amountSol: trade.amountSol,
       amountUsd: trade.amountUsd,
@@ -257,30 +264,45 @@ export class TrackerService {
     if (byTrader?.some((w) => w.leader)) this.copy.onLeaderTrade({ leader: trade.trader, trade, balance, firstBuy });
   }
 
-  /** Launches by tracked wallets (CreateEvent user / creator), after MarketState applied the tx. Never throws. */
+  /**
+   * Launches by tracked wallets (pump CreateEvent user / creator; LaunchLab PoolCreateEvent creator and the
+   * initialize instruction's payer), after MarketState applied the tx. Never throws.
+   */
   onTx(tx: IngestTx): void {
     try {
       tx.events.forEach((ev, i) => {
-        if (ev.kind !== "pumpCreate") return;
+        let launch: { user: string; creator: string; mint: string; symbol: string; name: string; venue: "pump" | "launchlab" } | null =
+          null;
+        if (ev.kind === "pumpCreate")
+          launch = { user: ev.user, creator: ev.creator, mint: ev.mint, symbol: ev.symbol, name: ev.name, venue: "pump" };
+        else if (ev.kind === "launchlabPoolCreate") {
+          const acc = tx.raydium?.accounts[i];
+          const mint = acc?.kind === "launchlabCreate" ? acc.baseMint : this.market?.raydiumBaseMint?.(ev.pool);
+          if (mint) {
+            const user = acc?.kind === "launchlabCreate" ? acc.payer : ev.creator;
+            launch = { user, creator: ev.creator, mint, symbol: ev.symbol, name: ev.name, venue: "launchlab" };
+          }
+        }
+        if (!launch) return;
         const matched: MatchedWallet[] = [];
-        if (this.index.get(ev.user)?.some((w) => w.tracked)) matched.push({ wallet: ev.user, role: "trader" });
-        if (ev.creator !== ev.user && this.index.get(ev.creator)?.some((w) => w.tracked))
-          matched.push({ wallet: ev.creator, role: "trader" });
+        if (this.index.get(launch.user)?.some((w) => w.tracked)) matched.push({ wallet: launch.user, role: "trader" });
+        if (launch.creator !== launch.user && this.index.get(launch.creator)?.some((w) => w.tracked))
+          matched.push({ wallet: launch.creator, role: "trader" });
         if (!matched.length) return;
         this.stats.launches++;
-        const rec = this.market?.tokens.get(ev.mint);
-        const s = this.market?.summary(ev.mint) ?? null;
+        const rec = this.market?.tokens.get(launch.mint);
+        const s = this.market?.summary(launch.mint) ?? null;
         const m: MatchRecord = {
           key: `${tx.signature}:create:${i}`,
           kind: "create",
           matched,
-          trader: ev.user,
-          mint: ev.mint,
-          symbol: ev.symbol,
-          name: ev.name,
+          trader: launch.user,
+          mint: launch.mint,
+          symbol: launch.symbol,
+          name: launch.name,
           image: rec?.image ?? null,
-          launchpad: "pump",
-          venue: "pump",
+          launchpad: launch.venue,
+          venue: launch.venue,
           amountSol: 0,
           amountUsd: 0,
           tokenAmount: "0",
@@ -289,7 +311,7 @@ export class TrackerService {
           mcUsd: s?.mcUsd ?? null,
           signature: tx.signature,
           slot: tx.slot,
-          blockTime: Number(ev.timestamp) * 1000,
+          blockTime: ev.kind === "pumpCreate" ? Number(ev.timestamp) * 1000 : (rec?.createdAt ?? tx.receivedAt),
           receivedAt: tx.receivedAt,
           firstBuy: null,
           marketTags: ["dev"],
@@ -299,8 +321,8 @@ export class TrackerService {
           this.o.alerts?.onWalletActivity({
             address: mw.wallet,
             kind: "create",
-            mint: ev.mint,
-            symbol: ev.symbol,
+            mint: launch.mint,
+            symbol: launch.symbol,
             amountSol: 0,
             signature: tx.signature,
             ts: m.blockTime,
@@ -350,7 +372,14 @@ export class TrackerService {
       mint,
       symbol: s.symbol,
       decimals: s.decimals,
-      venue: rec.migrated || (!rec.curve && rec.poolState) ? "pumpswap" : "pump",
+      venue:
+        rec.launchpad === "launchlab"
+          ? rec.migrated
+            ? "cpmm"
+            : "launchlab"
+          : rec.migrated || (!rec.curve && rec.poolState)
+            ? "pumpswap"
+            : "pump",
       priceSol: s.priceSol,
       mcSol: s.mcSol,
       mcUsd: s.mcUsd,
@@ -358,7 +387,7 @@ export class TrackerService {
       liquidityUsd: s.liquidityUsd,
       createdAt: s.createdAt,
       creator: s.creator,
-      onCurve: s.launchpad === "pump" && !s.complete && !s.migrated,
+      onCurve: (s.launchpad === "pump" || s.launchpad === "launchlab") && !s.complete && !s.migrated,
       curveComplete: s.complete && !s.migrated,
       dangerous: rec.dangers.length > 0,
     };

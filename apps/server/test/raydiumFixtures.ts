@@ -26,9 +26,12 @@ import {
   type TxInstruction,
 } from "@zerofee/core";
 import { rfixture, rtx, type TxLabel } from "../../../packages/core/test/raydium-fixtures";
+import type { AccountFetcher } from "../src/accounts/raydium";
+import type { AccountCallback } from "../src/accounts/resolver";
 import type { RpcJsonTx } from "../src/ingest/jsonTx";
 import { extractRaydium } from "../src/ingest/raydium";
 import type { IngestTx, TokenBalanceUpdate } from "../src/ingest/types";
+import type { RpcAccount } from "../src/util/rpc";
 
 export type { TxLabel } from "../../../packages/core/test/raydium-fixtures";
 export { rfixture, rtx } from "../../../packages/core/test/raydium-fixtures";
@@ -184,6 +187,43 @@ export function raydiumLogs(label: TxLabel, o: IngestOptions = {}): IngestTx {
 // ---------------------------------------------------------------------------------------------
 // accounts
 // ---------------------------------------------------------------------------------------------
+
+/**
+ * The resolver's raw-account reads served from the snapshot (missing accounts read as null), queued like
+ * the real batches until `flush()`.
+ */
+export class FixtureFetcher implements AccountFetcher {
+  private queue: { address: string; cb: AccountCallback }[] = [];
+  readonly requested: string[] = [];
+  /** Overrides (null = missing) and extra accounts. */
+  readonly accounts = new Map<string, RpcAccount | null>();
+
+  requestAccount(address: string, cb: AccountCallback): void {
+    this.requested.push(address);
+    this.queue.push({ address, cb });
+  }
+
+  lookup(address: string): RpcAccount | null {
+    if (this.accounts.has(address)) return this.accounts.get(address) ?? null;
+    try {
+      const f = rfixture(address);
+      return { address: f.address, owner: f.owner, lamports: f.lamports, data: f.data };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Answers every queued read, including the ones those answers trigger (PDA derivations are async). */
+  async flush(): Promise<void> {
+    let quiet = 0;
+    for (let round = 0; round < 200 && quiet < 5; round++) {
+      const q = this.queue.splice(0);
+      for (const { address, cb } of q) cb(this.lookup(address));
+      await Bun.sleep(3);
+      quiet = q.length || this.queue.length ? 0 : quiet + 1;
+    }
+  }
+}
 
 /** LaunchLab pools in the snapshot (see packages/core/test/armedRaydiumKit.ts). */
 export const LL = {

@@ -4,6 +4,7 @@
  * tokens created within `replayHours` (their full trade history is in the trades table); older tokens
  * come back with untracked (null) audit metrics and windows that refill from live trades.
  */
+import { RAYDIUM_CPMM_AUTHORITY, RAYDIUM_LAUNCHLAB_AUTHORITY } from "@zerofee/core";
 import { logger } from "../log";
 import type { OrderKey } from "../market/candles";
 import type { MarketState } from "../market/state";
@@ -36,6 +37,11 @@ export function restoreMarket(
         rec.holders = market.newHolderBook(rec.createdSlot);
         rec.holders.exclude(rec.bondingCurve);
         rec.holders.exclude(rec.pool);
+        if (rec.launchpad === "launchlab") {
+          // LaunchLab / CPMM vaults are owned by the programs' authorities.
+          rec.holders.exclude(RAYDIUM_LAUNCHLAB_AUTHORITY);
+          rec.holders.exclude(RAYDIUM_CPMM_AUTHORITY);
+        }
         rec.holders.addDev(rec.creatorAtCreate);
         rec.holders.addDev(rec.creator);
         replay.push(rec);
