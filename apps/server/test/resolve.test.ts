@@ -18,7 +18,7 @@ import { MarketState } from "../src/market/state";
 import { openDb } from "../src/storage/db";
 import { StorageReader } from "../src/storage/reader";
 import { StorageWriter } from "../src/storage/writer";
-import { RpcClient } from "../src/util/rpc";
+import { RpcClient, RpcError } from "../src/util/rpc";
 import { mockFetch, waitFor } from "./helpers";
 
 setLogLevel("error");
@@ -99,9 +99,13 @@ afterEach(() => {
 });
 
 function world(
-  o: Omit<Partial<MintResolverDeps>, "cfg"> & { cfg?: Partial<ResolveConfig>; delayMs?: number; accounts?: Record<string, Acc> } = {},
+  o: Omit<Partial<MintResolverDeps>, "cfg" | "accounts"> & {
+    cfg?: Partial<ResolveConfig>;
+    delayMs?: number;
+    fixtures?: Record<string, Acc>;
+  } = {},
 ): World {
-  const { rpc, calls } = fixtureRpc({ delayMs: o.delayMs, accounts: o.accounts });
+  const { rpc, calls } = fixtureRpc({ delayMs: o.delayMs, accounts: o.fixtures });
   const db = openDb(":memory:");
   const writer = new StorageWriter(db, { flushMs: 1_000_000, retentionHours: 72 });
   const reader = new StorageReader(db);
@@ -243,9 +247,9 @@ describe("on-demand resolve per venue", () => {
     const raw = Buffer.from((ACCOUNTS[curvePda] as Acc).data, "base64");
     raw[48] = 1; // BondingCurve.complete
     const accounts = { [curvePda]: { ...(ACCOUNTS[curvePda] as Acc), data: raw.toString("base64") } };
-    const none = world({ accounts, jupiterRoutes: async () => false });
+    const none = world({ fixtures: accounts, jupiterRoutes: async () => false });
     expect(await none.r.resolve(CURVE_COIN, "client")).toMatchObject({ ok: false, reason: "no_venue" });
-    const jup = world({ accounts, jupiterRoutes: async () => true });
+    const jup = world({ fixtures: accounts, jupiterRoutes: async () => true });
     expect(ok(await jup.r.resolve(CURVE_COIN, "client")).token).toMatchObject({ launchpad: "other", priceSol: null });
   });
 
@@ -275,6 +279,37 @@ describe("on-demand resolve per venue", () => {
     expect(out.source).toBe("store");
     expect(out.token.name).toBe("Stored Name");
     expect(fresh.market.tokens.get(CURVE_COIN)?.curve?.vToken).toBeGreaterThan(1n);
+  });
+
+  test("rate limited while reading a pruned coin: the stored record answers and its backfill starts anyway", async () => {
+    const w = world();
+    ok(await w.r.resolve(POOL_COIN, "client"));
+    w.market.evictIdle(-1, () => false);
+    await w.writer.drain();
+    const limited = world();
+    (limited.r as unknown as { d: { store: StorageReader; accounts: { fetchAccounts: () => Promise<never> } } }).d.store = w.reader;
+    (limited.r as unknown as { d: { accounts: { fetchAccounts: () => Promise<never> } } }).d.accounts.fetchAccounts = async () => {
+      throw new Error("getMultipleAccounts: HTTP 429");
+    };
+    const out = ok(await limited.r.resolve(POOL_COIN, "client"));
+    expect(out.source).toBe("store");
+    expect(out.token.mint).toBe(POOL_COIN);
+    expect(limited.requested).toEqual([{ mint: POOL_COIN, priority: 0, reason: "resolve" }]);
+  });
+});
+
+describe("a shared, rate-limited endpoint", () => {
+  test("a 429 on the account read is waited out within the deadline, not answered as an error", async () => {
+    const w = world();
+    const real = w.resolver.fetchAccounts.bind(w.resolver);
+    let calls = 0;
+    w.resolver.fetchAccounts = async (addrs) => {
+      if (++calls === 1) throw new RpcError("getMultipleAccounts", 429, "HTTP 429");
+      return real(addrs);
+    };
+    const out = ok(await w.r.resolve(CURVE_COIN, "client"));
+    expect(out.token.priceSol).toBeGreaterThan(0);
+    expect(calls).toBeGreaterThanOrEqual(2);
   });
 });
 

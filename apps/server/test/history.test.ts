@@ -605,3 +605,47 @@ describe("what a viewer sees while a slow backfill runs", () => {
     expect(reader.fetched).toEqual(expected);
   });
 });
+
+describe("one viewer, several coins", () => {
+  test("a coin nobody views any more steps back: the page open now is backfilled first", async () => {
+    const a = coinLife("left", 30);
+    const b = coinLife("open", 6, 9_000);
+    const w = world();
+    for (const life of [a, b]) {
+      w.market.applyTx(life.txs[life.txs.length - 1] as IngestTx);
+      const rec = w.market.tokens.get(life.mint);
+      if (rec) rec.bondingCurve = life.curve.bondingCurve;
+    }
+    const chain = new Map([...chainOf(a.curve.bondingCurve, a.txs), ...chainOf(b.curve.bondingCurve, b.txs)]);
+    let skew = 0;
+    let watched = [a.mint];
+    const done: string[] = [];
+    const set = w.market.setHistory.bind(w.market);
+    w.market.setHistory = (m, h) => {
+      if (h.state === "complete") done.push(m);
+      set(m, h);
+    };
+    const svc = new HistoryService({
+      cfg: HISTORY_CFG,
+      market: w.market,
+      reader: new FakeHistoryReader(chain, 1, 15),
+      store: w.reader,
+      writer: w.writer,
+      watched: () => watched,
+      listed: () => [],
+      decode: decodeFake,
+      now: () => Date.now() + skew,
+    });
+    services.push(svc);
+    svc.start();
+    svc.request(a.mint, 0);
+    await waitFor(() => w.market.tokens.get(a.mint)?.history?.state === "backfilling", 5_000);
+    // the viewer moves on to B; A's walk is still running
+    watched = [b.mint];
+    svc.request(b.mint, 0);
+    skew = 20_000;
+    svc.scan();
+    await waitFor(() => done.length === 2, 10_000);
+    expect(done).toEqual([b.mint, a.mint]);
+  });
+});

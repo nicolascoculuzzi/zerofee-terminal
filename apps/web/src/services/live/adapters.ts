@@ -80,6 +80,9 @@ export function launchpadOf(t: Pick<WireToken, "launchpad" | "isMayhem">): Launc
 }
 
 export function venueOf(t: Pick<WireToken, "launchpad" | "migrated">): Venue {
+  // "other": a coin opened by address that only Jupiter routes (no curve or pool the server prices)
+  if (t.launchpad === "other") return "other";
+  if (t.launchpad === "launchlab") return t.migrated ? "raydium_cpmm" : "launchlab";
   return t.migrated || t.launchpad === "pumpswap" ? "pumpswap" : "pump_curve";
 }
 

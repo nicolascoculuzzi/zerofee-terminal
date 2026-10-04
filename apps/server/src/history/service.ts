@@ -47,6 +47,8 @@ import type { HistoryReader, SignatureInfo } from "./reader";
 
 const log = logger("history");
 const HOUR = 3_600_000;
+/** A viewed-priority job keeps its rank this long without a watcher (a REST request, a page still subscribing). */
+const VIEW_GRACE_MS = 15_000;
 
 export type HistoryPriority = 0 | 1 | 2;
 const PRIORITY_NAMES = ["viewed", "listed", "background"] as const;
@@ -228,6 +230,8 @@ export class HistoryService {
   }
 
   private consider(mint: string, priority: HistoryPriority, reason: string, force = false): void {
+    // a coin with no venue the server decodes (Jupiter-routed, launchpad "other") has nothing to walk
+    if (this.d.market.tokens.get(mint)?.launchpad === "other") return;
     const job = this.jobs.get(mint);
     if (job) {
       if (priority < job.priority) job.priority = priority;
@@ -301,7 +305,12 @@ export class HistoryService {
       this.lastAttempt.delete(mint);
       this.consider(mint, p, "gap", true);
     };
-    for (const mint of this.d.watched()) {
+    const watched = new Set(this.d.watched());
+    // a coin nobody views any more steps back to the listed tier: the page open now goes first
+    for (const j of this.jobs.values()) {
+      if (j.priority === 0 && !watched.has(j.mint) && now - j.enqueuedAt > VIEW_GRACE_MS) j.priority = 1;
+    }
+    for (const mint of watched) {
       this.consider(mint, 0, "view");
       refresh(mint, this.d.cfg.viewRefreshMs, 0);
       repair(mint, 0);

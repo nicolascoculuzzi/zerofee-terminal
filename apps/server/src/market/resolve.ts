@@ -66,7 +66,7 @@ import { deserializeRecord } from "../storage/codec";
 import type { StorageReader } from "../storage/reader";
 import { replayRecent } from "../storage/restore";
 import { LruMap } from "../util/lru";
-import type { RpcAccount } from "../util/rpc";
+import { type RpcAccount, RpcError } from "../util/rpc";
 import { knownQuoteDecimals, normalizeQuoteMint } from "./quote";
 import type { MarketState } from "./state";
 import type { TokenRecord } from "./token";
@@ -304,14 +304,14 @@ export class MintResolver {
     ]);
     let r1: Awaited<ReturnType<MintResolverDeps["accounts"]["fetchAccounts"]>>;
     try {
-      r1 = await this.d.accounts.fetchAccounts([mint, curvePda, metaPda, pumpPoolPda, llSolPda, llUsd1Pda]);
+      r1 = await this.read([mint, curvePda, metaPda, pumpPoolPda, llSolPda, llUsd1Pda]);
     } catch (e) {
-      if (restored) return this.settled(mint, source, started);
+      if (restored) return this.stored(mint, started);
       throw e;
     }
     const [mintAcc, curveAcc, metaAcc, poolAcc, llSolAcc, llUsd1Acc] = r1.accounts;
     if (!mintAcc || !isMintAccount(mintAcc)) {
-      if (restored) return this.settled(mint, source, started);
+      if (restored) return this.stored(mint, started);
       return this.definitive(
         mint,
         "not_a_token",
@@ -336,7 +336,7 @@ export class MintResolver {
     // a pump coin quoted in something else than SOL migrates into the canonical pool of that quote
     if (!pool && curve && curve.complete && curveQuoteMint(curve) !== WSOL_MINT) {
       poolAddr = await canonicalPoolPda(m, curveQuoteMint(curve));
-      const r = await this.d.accounts.fetchAccounts([poolAddr]);
+      const r = await this.read([poolAddr]);
       pool = this.pumpPool(r.accounts[0] ?? null, mint);
     }
     let graduating = false;
@@ -355,7 +355,7 @@ export class MintResolver {
       const routes = this.d.jupiterRoutes ?? null;
       const routable = routes ? await routes(mint).catch(() => false) : false;
       if (!routable) {
-        if (restored) return this.settled(mint, source, started);
+        if (restored) return this.stored(mint, started);
         return this.definitive(mint, "no_venue", "no pump.fun, PumpSwap or Raydium market and no Jupiter route for this token");
       }
       this.stats.jupiterOnly++;
@@ -370,6 +370,34 @@ export class MintResolver {
     const out = await this.settled(mint, source, started, graduating);
     if (graduating) this.d.history?.request(mint, 0, "resolve");
     return out.ok ? this.found(mint, source) : out;
+  }
+
+  /**
+   * The chain read failed (rate limited) or found nothing new for a coin reloaded from storage: the stored record
+   * answers (its venues are known), and its backfill starts all the same.
+   */
+  private async stored(mint: string, started: number): Promise<ResolveOutcome> {
+    this.pin(mint);
+    this.d.history?.request(mint, 0, "resolve");
+    return this.settled(mint, "store", started);
+  }
+
+  /**
+   * One batched account read; a rate limit (429, or the client's cooldown after one) is waited out and retried while
+   * the answer can still come in time (RESOLVE_TIMEOUT_MS), since the endpoint is shared with the live feed.
+   */
+  private async read(addresses: readonly string[]): Promise<{ slot: number; accounts: (RpcAccount | null)[] }> {
+    const until = this.now() + Math.max(0, this.d.cfg.timeoutMs - 1_000);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.d.accounts.fetchAccounts(addresses);
+      } catch (e) {
+        const limited = e instanceof RpcError && e.code === 429;
+        const wait = Math.min(2_000, 400 * 2 ** attempt);
+        if (!limited || this.now() + wait > until) throw e;
+        await this.sleep(wait);
+      }
+    }
   }
 
   /** Waits (briefly) for price, trade context and metadata, then answers with the record as it is. */
@@ -449,7 +477,7 @@ export class MintResolver {
     const quoteMint = normalizeQuoteMint(pool.quoteMint);
     // the vaults hold the reserves; an exotic quote's decimals come from its mint
     const extra = knownQuoteDecimals(quoteMint) === null ? [quoteMint] : [];
-    const r2 = await this.d.accounts.fetchAccounts([pool.poolBaseTokenAccount, pool.poolQuoteTokenAccount, ...extra]);
+    const r2 = await this.read([pool.poolBaseTokenAccount, pool.poolQuoteTokenAccount, ...extra]);
     const [baseVault, quoteVault, quoteMintAcc] = r2.accounts;
     const quoteDecimals =
       knownQuoteDecimals(quoteMint) ??
@@ -498,7 +526,7 @@ export class MintResolver {
       // configs first: the pool's record then needs no reads of its own (label, fees, graduation pool)
       const want = [ll.state.platformConfig, ll.state.globalConfig].filter((a) => !reg.platforms.has(a) && !reg.globals.has(a));
       if (want.length) {
-        const r2 = await this.d.accounts.fetchAccounts(want);
+        const r2 = await this.read(want);
         want.forEach((a, i) => {
           const acc = r2.accounts[i] ?? null;
           if (a === ll.state.platformConfig) reg.ingestPlatform(a, acc);

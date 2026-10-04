@@ -127,7 +127,7 @@ export interface RpcHistoryReaderOptions {
   batchSize?: number;
   /** Batches in flight at once within the pacer's rate (default 1). */
   concurrency?: number;
-  /** Lowest rate the AIMD backoff goes down to (default perSec / 20). */
+  /** Lowest rate the AIMD backoff goes down to (default perSec / 4: the Retry-After cooldown does the waiting). */
   minPerSec?: number;
   /** Extra pause condition (e.g. the live feed's client is cooling down: live goes first). */
   paused?: () => boolean;
@@ -162,7 +162,7 @@ export class RpcHistoryReader implements HistoryReader {
     this.batchSize = Math.max(1, Math.min(100, o.batchSize ?? 1));
     this.concurrency = Math.max(1, Math.min(32, o.concurrency ?? 1));
     this.maxRate = o.perSec;
-    this.minRate = Math.min(o.perSec, Math.max(0.01, o.minPerSec ?? o.perSec / 20));
+    this.minRate = Math.min(o.perSec, Math.max(0.01, o.minPerSec ?? o.perSec / 4));
     this.pacer = new Pacer(o.perSec, () => o.rpc.coolingDown() || (o.paused?.() ?? false));
     this.stats.rate = o.perSec;
   }

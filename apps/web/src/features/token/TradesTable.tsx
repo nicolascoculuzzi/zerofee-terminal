@@ -587,12 +587,14 @@ export function TradesTable({
                 <SkeletonRows cols={cols} rows={12} dense />
               ) : (
                 <EmptyState
-                  title={trades.length === 0 ? "No trades yet" : "No trades match these filters"}
+                  title={trades.length === 0 ? (backfilling ? "Loading full history…" : "No trades yet") : "No trades match these filters"}
                   body={
                     trades.length === 0
-                      ? connection === "live"
-                        ? "New trades appear within about a second of landing."
-                        : "Trades resume when the live feed reconnects."
+                      ? backfilling
+                        ? "Trades come in from chain as they are read, newest first."
+                        : connection === "live"
+                          ? "New trades appear within about a second of landing."
+                          : "Trades resume when the live feed reconnects."
                       : "Clear a filter to see the whole tape."
                   }
                 />
@@ -637,8 +639,14 @@ export function TradesTable({
 export function MobileTradesList({ supply }: { supply: number }) {
   const trades = useToken((s) => s.trades);
   const { quote } = useQuote();
+  const backfilling = useToken((s) => s.detail?.summary.historyState === "backfilling");
   const rows = trades.slice(0, 100);
-  if (rows.length === 0) return <EmptyState title="No trades yet" body="New trades appear within about a second of landing." />;
+  if (rows.length === 0)
+    return backfilling ? (
+      <EmptyState title="Loading full history…" body="Trades come in from chain as they are read, newest first." />
+    ) : (
+      <EmptyState title="No trades yet" body="New trades appear within about a second of landing." />
+    );
   return (
     <ul aria-label="Trades">
       {rows.map((t) => {
