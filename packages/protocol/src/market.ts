@@ -219,6 +219,8 @@ export interface TokenSummary {
    * Absent from servers that predate it.
    */
   history?: TokenHistory;
+  /** `history.state` as a flat field (chart adapters read either). */
+  historyState?: HistoryState;
   /** Last time any field changed. */
   updatedAt: number;
 }

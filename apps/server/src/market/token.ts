@@ -340,7 +340,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     athMcSol: mcSol !== null ? Math.max(rec.athMcSol, mcSol) : rec.athMcSol > 0 ? rec.athMcSol : null,
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,
-    ...(rec.history ? { history: rec.history } : {}),
+    ...(rec.history ? { history: rec.history, historyState: rec.history.state } : {}),
     updatedAt: rec.updatedAt,
   };
 }

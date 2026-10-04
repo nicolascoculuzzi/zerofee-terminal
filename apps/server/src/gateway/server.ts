@@ -421,7 +421,9 @@ export class Gateway {
     const tf = url.searchParams.get("tf") ?? "1m";
     if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
     if (!isTimeframe(tf)) return apiError(400, "bad_request", "tf must be one of 1s,15s,1m,5m,15m,1h");
-    const to = Number(url.searchParams.get("to") ?? Date.now() + 60_000);
+    // `before` (exclusive) is `to` (inclusive) minus one millisecond
+    const before = url.searchParams.get("before");
+    const to = before !== null ? Number(before) - 1 : Number(url.searchParams.get("to") ?? Date.now() + 60_000);
     const from = Number(url.searchParams.get("from") ?? 0);
     const limit = Math.min(
       MAX_CANDLES_REST,
@@ -440,7 +442,8 @@ export class Gateway {
       supply,
       candles,
       next: more && candles[0] ? { to: candles[0].t - 1 } : null,
-      ...(history ? { history } : {}),
+      hasMore: more,
+      ...(history ? { history, historyState: history.state } : {}),
     };
     return json(body);
   }
@@ -473,7 +476,8 @@ export class Gateway {
       const live = this.d.market.recentTrades(mint, limit).filter((t) => !ids.has(t.id));
       if (live.length) trades = mergeNewestFirst(live, trades).slice(0, limit);
     }
-    const body: TradesPageResponse = { mint, trades, next: page.next, history: this.historyOf(mint, true) };
+    const history = this.historyOf(mint, true);
+    const body: TradesPageResponse = { mint, trades, next: page.next, history, ...(history ? { historyState: history.state } : {}) };
     return json(body);
   }
 
@@ -481,7 +485,8 @@ export class Gateway {
   private getHistory(url: URL): Response {
     const mint = url.searchParams.get("mint") ?? "";
     if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
-    return json({ mint, history: this.historyOf(mint, true) });
+    const history = this.historyOf(mint, true);
+    return json({ mint, history, ...(history ? { historyState: history.state } : {}) });
   }
 
   /** A coin's coverage; `view` = a client is looking at it (a backfill is requested when incomplete). */

@@ -148,6 +148,17 @@ describe("history over the protocol", () => {
     expect(page.next?.to).toBe((page.candles[0]?.t ?? 0) - 1);
     const older = (await (await fetch(`${base}/api/candles?mint=${mint}&tf=1m&limit=10&to=${page.next?.to}`)).json()) as CandlesResponse;
     expect((older.candles[older.candles.length - 1]?.t ?? Infinity) < (page.candles[0]?.t ?? 0)).toBe(true);
+    expect(page.hasMore).toBe(true);
+    expect(page.historyState).toBe("complete");
+    // the chart's paging: `before` (exclusive ms) + `limit`, newest buckets before it, UTC-aligned keys
+    const first = page.candles[0]?.t ?? 0;
+    const prev = (await (await fetch(`${base}/api/candles?mint=${mint}&tf=1m&before=${first}&limit=5`)).json()) as CandlesResponse;
+    expect(prev.candles).toHaveLength(5);
+    expect(prev.candles.every((x) => x.t < first && x.t % 60_000 === 0)).toBe(true);
+    expect(prev.candles[4]?.t).toBe(older.candles[older.candles.length - 1]?.t ?? -1);
+    // the old shape keeps working
+    const legacy = (await (await fetch(`${base}/api/candles?mint=${mint}&tf=1m&from=0&to=${first - 1}`)).json()) as CandlesResponse;
+    expect(legacy.candles[legacy.candles.length - 1]?.t).toBe(prev.candles[4]?.t ?? -1);
 
     const h = (await (await fetch(`${base}/api/health`)).json()) as HealthResponse;
     expect(h.history).toMatchObject({ enabled: true, completed: 1, tradesAdded: 59 });

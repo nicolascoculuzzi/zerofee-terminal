@@ -1,6 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
+import type { Trade as WireTrade } from "@zerofee/protocol";
 import { Columns3, Pause, Play, X } from "lucide-react";
-import { type KeyboardEvent, memo, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Age } from "../../components/ui/Age";
 import { IconButton } from "../../components/ui/Button";
 import { EmptyState, ExplorerLink, Tag } from "../../components/ui/bits";
@@ -13,6 +14,8 @@ import { cn } from "../../lib/cn";
 import { useCssPx } from "../../lib/cssVar";
 import { fmtClock, fmtCount, fmtSol, fmtTokens, fmtUsd, shortAddr } from "../../lib/format";
 import type { Trade, WalletTag } from "../../protocol";
+import { apiUrl, IS_LIVE } from "../../runtime";
+import { adaptTrade } from "../../services/live/adapters";
 import { useMarket } from "../../state/market";
 import { useToken } from "../../state/token";
 import { type TrackedWallet, useTrackedMap } from "../../state/trackers";
@@ -187,8 +190,77 @@ const TradeRow = memo(function TradeRow({
   );
 });
 
+/** Trades per older page (the gateway allows up to 1,000). */
+const OLDER_PAGE = 200;
+/** After the oldest stored trade, look again at most this often (a backfill may have added older ones). */
+const OLDER_RETRY_MS = 10_000;
+
+/**
+ * Every stored buy and sell of the coin below the live tape: pages of GET /api/trades (newest first, cursor
+ * `next`), loaded once when the token opens and then as the tape scrolls to its end. Live mode only (the
+ * simulation's tape is the whole history). Rows already in the live tape are skipped.
+ */
+function useOlderTrades(mint: string | null, live: readonly Trade[], supply: number, solUsd: number) {
+  const decimals = useToken((s) => s.detail?.summary.decimals ?? 6);
+  const [older, setOlder] = useState<Trade[]>([]);
+  const [loading, setLoading] = useState(false);
+  const cursor = useRef<{ next: string | null; done: boolean; at: number; busy: boolean }>({ next: null, done: false, at: 0, busy: false });
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  const olderRef = useRef(older);
+  olderRef.current = older;
+
+  useEffect(() => {
+    void mint;
+    cursor.current = { next: null, done: false, at: 0, busy: false };
+    setOlder([]);
+  }, [mint]);
+
+  const loadMore = useCallback(() => {
+    const c = cursor.current;
+    if (!IS_LIVE || !mint || c.busy || (c.done && Date.now() - c.at < OLDER_RETRY_MS)) return;
+    // after the last page: continue from the oldest trade held, in case a backfill stored older ones since
+    const all = [...liveRef.current, ...olderRef.current];
+    const before = c.done ? (all[all.length - 1]?.signature ?? null) : c.next;
+    c.busy = true;
+    c.at = Date.now();
+    setLoading(true);
+    const qs = new URLSearchParams({ mint, limit: String(OLDER_PAGE) });
+    if (before) qs.set("before", before);
+    fetch(apiUrl(`/api/trades?${qs}`), { credentials: "same-origin" })
+      .then((r) =>
+        r.ok ? (r.json() as Promise<{ trades?: WireTrade[]; next?: string | null }>) : Promise.reject(new Error(String(r.status))),
+      )
+      .then((body) => {
+        if (cursor.current !== c) return; // the token changed meanwhile
+        const have = new Set([...liveRef.current, ...olderRef.current].map((t) => t.id));
+        const page = (body.trades ?? []).filter((t) => !have.has(t.id)).map((t) => adaptTrade(t, { decimals, solUsd, supply }));
+        c.next = body.next ?? null;
+        c.done = !body.next;
+        if (page.length) setOlder((prev) => [...prev, ...page]);
+      })
+      .catch(() => {
+        /* scrolling to the end again retries */
+      })
+      .finally(() => {
+        c.busy = false;
+        if (cursor.current === c) setLoading(false);
+      });
+  }, [mint, decimals, solUsd, supply]);
+
+  // the first page as soon as the token opens: a coin first seen mid-life has more on the server than live
+  useEffect(() => {
+    if (mint) loadMore();
+  }, [mint, loadMore]);
+
+  const liveIds = useMemo(() => new Set(live.map((t) => t.id)), [live]);
+  const rest = useMemo(() => older.filter((t) => !liveIds.has(t.id)), [older, liveIds]);
+  return { older: rest, loading, loadMore };
+}
+
 export function TradesTable({ supply }: { supply: number }) {
   const trades = useToken((s) => s.trades);
+  const mint = useToken((s) => s.mint);
   const tracked = useTrackedMap();
   const candle = useTokenUi((s) => s.candle);
   const setCandle = useTokenUi((s) => s.setCandle);
@@ -211,24 +283,29 @@ export function TradesTable({ supply }: { supply: number }) {
   const pause = usePauseOnHover(paused);
   const cols = useMemo(() => columns(showPrice, quote), [showPrice, quote]);
 
-  const filtered = useMemo(
-    () =>
-      trades.filter((t) => {
-        // An unknown size (null) fails a minimum: unknown is not zero.
-        if (minSol !== null && (t.solAmount === null || t.solAmount < minSol)) return false;
-        if (maker && t.maker !== maker) return false;
-        if (candle) {
-          const sec = t.ts / 1000;
-          if (sec < candle.from || sec >= candle.to) return false;
-        }
-        if (kind === "you") return t.tags.includes("you");
-        if (kind === "dev") return t.tags.includes("dev");
-        if (kind === "tracked") return tracked.has(t.maker);
-        return true;
-      }),
-    [trades, minSol, maker, candle, kind, tracked],
+  const olderTrades = useOlderTrades(mint, trades, supply, solUsd);
+  const keep = useCallback(
+    (t: Trade) => {
+      // An unknown size (null) fails a minimum: unknown is not zero.
+      if (minSol !== null && (t.solAmount === null || t.solAmount < minSol)) return false;
+      if (maker && t.maker !== maker) return false;
+      if (candle) {
+        const sec = t.ts / 1000;
+        if (sec < candle.from || sec >= candle.to) return false;
+      }
+      if (kind === "you") return t.tags.includes("you");
+      if (kind === "dev") return t.tags.includes("dev");
+      if (kind === "tracked") return tracked.has(t.maker);
+      return true;
+    },
+    [minSol, maker, candle, kind, tracked],
   );
-  const { rows, queued } = useLiveOrder(filtered, (t) => t.id, { frozen: pause.frozen });
+  const filteredOlder = useMemo(() => olderTrades.older.filter(keep), [olderTrades.older, keep]);
+  const filtered = useMemo(() => trades.filter(keep), [trades, keep]);
+  const live = useLiveOrder(filtered, (t) => t.id, { frozen: pause.frozen });
+  const queued = live.queued;
+  // older pages sit below the live tape and are never queued behind the pause
+  const rows = useMemo(() => (filteredOlder.length ? [...live.rows, ...filteredOlder] : live.rows), [live.rows, filteredOlder]);
 
   // Insertion times: rows present at first render count as old; a row inserted later flashes
   // once (DESIGN.md 6.6), including a batch released after a pause, unless it is an old trade
@@ -328,7 +405,9 @@ export function TradesTable({ supply }: { supply: number }) {
             <X className="icon-xs text-fg-3" />
           </button>
         )}
-        <span className="zf-num ml-auto shrink-0 text-label text-fg-3">{fmtCount(filtered.length)} shown</span>
+        <span className="zf-num ml-auto shrink-0 text-label text-fg-3">
+          {fmtCount(filtered.length + filteredOlder.length)} shown{olderTrades.loading ? " · loading older" : ""}
+        </span>
         <IconButton ref={colsAnchor} size="xs" label="Columns" active={colsOpen} onClick={() => setColsOpen((o) => !o)}>
           <Columns3 />
         </IconButton>
@@ -352,7 +431,11 @@ export function TradesTable({ supply }: { supply: number }) {
           aria-label="Trades"
           aria-rowcount={rows.length + 1}
           onKeyDown={onKey}
-          onScroll={pause.onScroll}
+          onScroll={(e) => {
+            pause.onScroll(e);
+            const el = e.currentTarget;
+            if (el.scrollTop + el.clientHeight >= el.scrollHeight - rowH * 20) olderTrades.loadMore();
+          }}
           {...pause.bind}
           className="focus-inset h-full overflow-auto text-data"
         >

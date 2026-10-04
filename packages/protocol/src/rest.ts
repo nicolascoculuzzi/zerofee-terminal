@@ -5,9 +5,12 @@
  *   GET  /api/health                         HealthResponse
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
  *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
- *   GET  /api/candles?mint&tf&from&to&limit  CandlesResponse          (from/to: epoch ms, optional; without `from` the whole
- *                                                                      history, newest `limit` buckets (default and max 5,000);
- *                                                                      `next` pages older buckets)
+ *   GET  /api/candles?mint&tf&from&to&before&limit
+ *                                            CandlesResponse          (epoch ms, all optional. The newest `limit` buckets (default
+ *                                                                      and max 5,000) in [from, to] (inclusive) or before `before`
+ *                                                                      (exclusive), oldest first; without `from` the whole stored
+ *                                                                      history. `hasMore` / `next` page older buckets. Bucket `t`
+ *                                                                      is a UTC multiple of the timeframe.)
  *   GET  /api/trades?mint&before&limit       TradesPageResponse       (every stored buy and sell, newest first; `before` = the
  *                                                                      previous page's `next` cursor or a transaction signature;
  *                                                                      limit 1-1,000, default 200)
@@ -27,7 +30,7 @@
  * authenticated calls (429 "rate_limited").
  */
 
-import type { Candle, TokenHistory, TokenSummary, Trade, TradeContext } from "./market";
+import type { Candle, HistoryState, TokenHistory, TokenSummary, Trade, TradeContext } from "./market";
 import type { ErrorCode } from "./messages";
 import type { Timeframe } from "./topics";
 
@@ -144,8 +147,11 @@ export interface CandlesResponse {
    * page reaches the oldest stored bucket. Absent from servers that predate it.
    */
   next?: { to: number } | null;
+  /** Older buckets exist (same as `next !== null`). */
+  hasMore?: boolean;
   /** Trade-history coverage: the chart is the whole history once `state` is "complete". */
   history?: TokenHistory;
+  historyState?: HistoryState;
 }
 
 /** GET /api/trades: one page of a token's stored trades (live and backfilled), newest first. */
@@ -155,12 +161,14 @@ export interface TradesPageResponse {
   /** Cursor for the next (older) page: pass it as `before`; null at the oldest stored trade. */
   next: string | null;
   history: TokenHistory | null;
+  historyState?: HistoryState;
 }
 
 /** GET /api/history. */
 export interface HistoryResponse {
   mint: string;
   history: TokenHistory | null;
+  historyState?: HistoryState;
 }
 
 /** Backfill service counters (HealthResponse.history). */
