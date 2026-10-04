@@ -30,6 +30,7 @@ import {
   type PumpCreateEvent,
   type PumpMigrationEvent,
   type PumpTradeEvent,
+  USDC_MINT,
 } from "@zerofee/core";
 import type { Candle, Timeframe, TokenSocials, TokenSummary, Trade, TradeContext, TradeTag } from "@zerofee/protocol";
 import { AccountResolver, type CurveResolved, type MintResolved, type PoolInfo } from "../accounts/resolver";
@@ -104,7 +105,8 @@ export interface FeedItem {
   receivedAt: number;
   latencyMs: number;
   side?: "buy" | "sell";
-  amountSol?: number;
+  /** null when the trade's quote has no known SOL value. */
+  amountSol?: number | null;
   venue?: "pump" | "pumpswap";
 }
 
@@ -808,11 +810,12 @@ export class MarketState {
   ): void {
     const solUsd = this.deps.solUsd();
     // The venue's own quote: a third-party pool can quote the coin in something else than its curve does.
+    // null = no SOL value for that quote right now (exotic quote; USDC before a SOL/USD rate).
     const rate = quoteSolRate(t.quoteMint, solUsd);
-    const priceSol = rate !== null ? t.priceQuote * rate : 0;
+    const priceSol = rate !== null && t.priceQuote > 0 ? t.priceQuote * rate : null;
     const supplyUi = ui(rec.supply, rec.decimals);
-    const amountSol = rate !== null ? ui(t.quoteAmount, t.quoteDecimals) * rate : 0;
-    const mcSol = priceSol * supplyUi;
+    const amountSol = rate !== null ? ui(t.quoteAmount, t.quoteDecimals) * rate : null;
+    const mcSol = priceSol !== null ? priceSol * supplyUi : null;
 
     // holders + audit classification
     let holderDelta = 0n;
@@ -841,7 +844,8 @@ export class MarketState {
       quoteAmount: t.quoteAmount.toString(),
       tokenAmount: t.tokenAmount.toString(),
       amountSol,
-      amountUsd: solUsd && rate !== null ? amountSol * solUsd : null,
+      // a USD stable's amount is its USD value, with or without a SOL/USD rate
+      amountUsd: t.quoteMint === USDC_MINT ? ui(t.quoteAmount, t.quoteDecimals) : amountSol !== null && solUsd ? amountSol * solUsd : null,
       priceSol,
       mcSol,
       blockTime: t.tsMs,
@@ -852,12 +856,12 @@ export class MarketState {
       trade,
       key: ctx.key,
       tsMs: t.tsMs,
-      volumeSol: amountSol,
+      volumeSol: amountSol ?? 0,
       isBuy: t.isBuy,
       holderDelta,
       curveAfter: t.curveAfter,
       poolAfter: t.poolAfter,
-      priceSol,
+      priceSol: priceSol ?? 0,
       solUsd,
     };
     // keep the ring ordered by key (late events are inserted in place)
@@ -873,14 +877,14 @@ export class MarketState {
       this.stats.lateTrades++;
       this.changes.correction(rec.mint).upsert.push(trade);
     } else this.changes.pushTrade(trade);
-    rec.windows.add(t.tsMs, amountSol, t.isBuy);
-    if (priceSol > 0) {
-      for (const u of this.candles.addTrade(rec.mint, { tsMs: t.tsMs, price: priceSol, volume: amountSol, key: ctx.key, solUsd })) {
+    rec.windows.add(t.tsMs, entry.volumeSol, t.isBuy);
+    if (priceSol !== null) {
+      for (const u of this.candles.addTrade(rec.mint, { tsMs: t.tsMs, price: priceSol, volume: entry.volumeSol, key: ctx.key, solUsd })) {
         this.changes.candle(u);
         this.deps.storage?.candle(u.mint, u.tf, u.candle);
       }
     }
-    if (t.latest && mcSol > rec.athMcSol) rec.athMcSol = mcSol;
+    if (t.latest && mcSol !== null && mcSol > rec.athMcSol) rec.athMcSol = mcSol;
     if (rec.lastTradeAt === null || t.tsMs >= rec.lastTradeAt) rec.lastTradeAt = t.tsMs;
     if (rec.lastSlot === null || ctx.tx.slot > rec.lastSlot) rec.lastSlot = ctx.tx.slot;
 

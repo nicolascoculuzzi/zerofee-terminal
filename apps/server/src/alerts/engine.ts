@@ -37,11 +37,12 @@ import type { Notification } from "./types";
 
 const log = logger("alerts");
 
+/** null = unknown (no SOL / USD value right now): alerts on it neither fire nor re-arm. */
 export interface TokenQuote {
   symbol: string;
-  priceSol: number;
+  priceSol: number | null;
   priceUsd: number | null;
-  mcSol: number;
+  mcSol: number | null;
   mcUsd: number | null;
 }
 
@@ -57,8 +58,8 @@ export interface WalletActivity {
   kind: "buy" | "sell" | "create";
   mint: string;
   symbol?: string;
-  /** Trade size in SOL (0 for create). */
-  amountSol: number;
+  /** Trade size in SOL (0 for create; null when the token's quote has no known SOL value). */
+  amountSol: number | null;
   signature: string;
   ts: number;
   /** Buys: the wallet's opening buy of this token (see TrackedTradeRow.firstBuy); null / absent = not known. */
@@ -299,7 +300,8 @@ export class AlertEngine implements AlertHooks {
     const sym = sanitizeUntrusted(ev.symbol, 16) || shortAddress(ev.mint);
     for (const e of entries) {
       if (!e.alerts[ev.kind]) continue;
-      if (ev.kind !== "create" && ev.amountSol < e.alerts.minSol) continue;
+      // An unknown size only passes when there is no minimum.
+      if (ev.kind !== "create" && (ev.amountSol === null ? e.alerts.minSol > 0 : ev.amountSol < e.alerts.minSol)) continue;
       if (ev.kind === "buy" && e.alerts.firstBuyOnly && ev.firstBuy !== true) continue;
       const key = `${e.userId}:${ev.signature}:${ev.address}:${ev.kind}:${ev.mint}`;
       if (!this.seen.add(key)) continue; // the same event twice (duplicate delivery from the feed)
@@ -307,7 +309,7 @@ export class AlertEngine implements AlertHooks {
       const title =
         ev.kind === "create"
           ? `${who} launched ${sym}`
-          : `${who} ${ev.kind === "buy" ? "bought" : "sold"} ${fmtSol(ev.amountSol)} of ${sym}${ev.kind === "buy" && ev.firstBuy === true ? " (first buy)" : ""}`;
+          : `${who} ${ev.kind === "buy" ? "bought" : "sold"} ${ev.amountSol === null ? "some" : fmtSol(ev.amountSol)} of ${sym}${ev.kind === "buy" && ev.firstBuy === true ? " (first buy)" : ""}`;
       void this.prefsOf(e.userId)
         .then((p) =>
           this.emit(

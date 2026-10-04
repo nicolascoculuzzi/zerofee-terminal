@@ -118,8 +118,9 @@ describe("real fixtures through the market state", () => {
     const quote = "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh";
     const s = m.summary(mint);
     expect(s?.quoteMint).toBe(quote);
-    expect(s?.priceQuote).toBeGreaterThan(0);
-    expect(s?.priceSol).toBe(0);
+    // the quote's decimals are unknown until its mint is read; its SOL value stays unknown (null, never 0)
+    expect(s).toMatchObject({ priceQuote: null, mcQuote: null, priceSol: null, mcSol: null, liquidity: null, volume5m: null });
+    expect(m.recentTrades(mint)[0]).toMatchObject({ amountSol: null, priceSol: null, mcSol: null, amountUsd: null });
     expect(resolver.requested.mints.filter((x) => x === quote)).toHaveLength(1);
     // the resolver answers: decimals and token program flow into the record (and its trade context)
     m.onMintResolved({
@@ -131,6 +132,11 @@ describe("real fixtures through the market state", () => {
       dangers: [],
     });
     expect(m.tokens.get(mint)).toMatchObject({ quoteDecimals: 6, quoteTokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" });
+    // now the quote-unit price is known (post-trade 4,503.010774 / 437,311,287.149733 tokens); the SOL value is not
+    const after = m.summary(mint);
+    expect(after?.priceQuote).toBeCloseTo(4_503.010774 / 437_311_287.149733, 15);
+    expect(after?.mcQuote).toBeCloseTo((4_503.010774 / 437_311_287.149733) * 1e9, 6);
+    expect(after).toMatchObject({ priceSol: null, mcSol: null, priceUsd: null, mcUsd: null, athMcSol: null });
   });
 
   test("detection latency samples = receive time - block time", () => {

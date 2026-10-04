@@ -59,6 +59,7 @@ export interface TokenRecord {
   metadataState: "none" | "requested" | "ok" | "failed";
   launchpad: Launchpad;
   quoteMint: string;
+  /** Meaningful once quoteTokenProgram is set: both come from the quote mint (null = still being looked up). */
   quoteDecimals: number;
   quoteTokenProgram: string | null;
   tokenProgram: string | null;
@@ -191,6 +192,7 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
 
 /** Price in quote UI units per whole token from the active venue (0 when unknown). */
 export function priceQuote(rec: TokenRecord): number {
+  if (rec.quoteTokenProgram === null) return 0; // an exotic quote mint not resolved yet: its decimals are unknown
   if (rec.poolState && (rec.migrated || !rec.curve)) {
     const eff = rec.poolState.quoteVault + rec.poolState.virtualQuote;
     if (rec.poolState.base <= 0n || eff <= 0n) return 0;
@@ -219,18 +221,20 @@ export interface MarketView {
 export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
   const pq = priceQuote(rec);
   const supplyUi = ui(rec.supply, rec.decimals);
+  // null = the quote's SOL value is unknown right now (exotic quote, or USDC without SOL/USD)
   const rate = quoteSolRate(rec.quoteMint, view.solUsd);
-  const priceSol = rate !== null ? pq * rate : 0;
-  const mcSol = priceSol * supplyUi;
+  const priceSol = rate !== null && pq > 0 ? pq * rate : null;
+  const mcSol = priceSol !== null ? priceSol * supplyUi : null;
   const stable = rec.quoteMint === USDC_MINT;
-  const usdOf = (sol: number, quote: number) => (stable ? quote : view.solUsd && rate !== null ? sol * view.solUsd : null);
+  const usdOf = (sol: number | null, quote: number | null): number | null =>
+    stable ? quote : sol !== null && view.solUsd ? sol * view.solUsd : null;
   const liqQuote =
     rec.poolState && (rec.migrated || !rec.curve)
       ? ui(rec.poolState.quoteVault, rec.quoteDecimals)
       : rec.curve
         ? ui(rec.curve.rQuote, rec.quoteDecimals)
         : 0;
-  const liquidity = rate !== null ? liqQuote * rate : 0;
+  const liquidity = rate !== null ? liqQuote * rate : null;
   const w = rec.windows.totals(view.now);
   const m = rec.holders?.metrics(rec.supply) ?? null;
   return {
@@ -248,16 +252,17 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     createdSlot: rec.createdSlot,
     creator: rec.creator,
     priceSol,
-    priceUsd: usdOf(priceSol, pq),
+    priceUsd: pq > 0 ? usdOf(priceSol, pq) : null,
     mcSol,
-    mcUsd: usdOf(mcSol, pq * supplyUi),
-    priceQuote: pq,
-    mcQuote: pq * supplyUi,
+    mcUsd: pq > 0 ? usdOf(mcSol, pq * supplyUi) : null,
+    priceQuote: pq > 0 ? pq : null,
+    mcQuote: pq > 0 ? pq * supplyUi : null,
     liquidity,
     liquidityUsd: usdOf(liquidity, liqQuote),
-    volume5m: w.volume5m,
-    volume1h: w.volume1h,
-    volume24h: w.volume24h,
+    // Volumes are sums of trades' SOL values: unknown when the quote has no SOL value.
+    volume5m: rate !== null ? w.volume5m : null,
+    volume1h: rate !== null ? w.volume1h : null,
+    volume24h: rate !== null ? w.volume24h : null,
     txns: w.txns,
     buys: w.buys,
     sells: w.sells,
@@ -281,7 +286,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     socials: { ...rec.socials },
     dexPaid: rec.dexPaid,
     dexPaidAt: rec.dexPaidAt,
-    athMcSol: Math.max(rec.athMcSol, mcSol),
+    athMcSol: mcSol !== null ? Math.max(rec.athMcSol, mcSol) : rec.athMcSol > 0 ? rec.athMcSol : null,
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,
     updatedAt: rec.updatedAt,

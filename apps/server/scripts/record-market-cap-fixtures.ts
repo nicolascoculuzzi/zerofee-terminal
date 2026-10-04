@@ -38,6 +38,7 @@ const ACCOUNTS: Record<string, string> = {
   "gmk6-canonical-pool": "FDtu6W24K2iyW9Ce9NsTyVSmSGjxj2hHrTkKc2xFTxSL",
   "gmk6-pump-pool": "DDRz2Mrbb6UHfPSLHaeTTNBLqDuHMXDQT2cxtRjt9udG",
   "pump-mint": "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn",
+  "spyx-mint": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W",
 };
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {

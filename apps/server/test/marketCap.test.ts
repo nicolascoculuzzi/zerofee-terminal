@@ -202,7 +202,69 @@ describe("a token's quote follows the pool that prices it", () => {
       const trade = (i: number) => m.recentTrades(GMK6).find((t) => t.id === `${tx.signature}:${i}`);
       expect(trade(1)?.priceSol).toBeCloseTo(canonicalPrice, 15);
       expect(trade(1)?.amountSol).toBeCloseTo(5_843_554 / 1e9, 12);
-      expect(trade(0)?.priceSol).toBe(0);
+      expect(trade(0)).toMatchObject({ priceSol: null, mcSol: null, amountSol: null, amountUsd: null });
     });
   }
+});
+
+describe("quotes without a known SOL value: null, never 0", () => {
+  const BOOTY = "Wqqhu1wGrCYh5W7ZBRidjdx2gJDHKtUpS6mkUhapump";
+  const TED = "7xQ3vnLUnzgCc2bTKHgyR7wpzTQFVgBCCh2AtNskyiD3";
+
+  test("USDC curve: converted at SOL/USD (6-decimal USDC, not lamports), with the mayhem 2B supply", () => {
+    const { m } = market();
+    m.applyTx(mcLogs("usdc-mayhem-create"));
+    const buy = lastTrade("usdc-mayhem-create");
+    // sol_* fields are 0 on a USDC curve; the trailing quote_* fields carry the trade
+    expect(buy).toMatchObject({ quoteAmount: 0n, virtualQuoteReserves: 0n });
+    const q = buy.quote as NonNullable<PumpTradeEvent["quote"]>;
+    // 4,292 USDC initial virtual reserves (Global.initial_virtual_quote_reserves) + the dev buy
+    const mcQuote =
+      Number(curveMarketCapForDisplay({ virtualQuoteReserves: q.virtualReserves, virtualTokenReserves: buy.virtualTokenReserves }, TWO_B)) /
+      1e6;
+    expect(mcQuote).toBeGreaterThan(8_000); // ~8,040 USDC: a fresh 2B mayhem USDC curve
+    const s = m.summary(BOOTY);
+    expect(s?.quoteMint).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(s?.mcQuote).toBeCloseTo(mcQuote, 4);
+    expect(s?.mcUsd).toBeCloseTo(mcQuote, 4);
+    expect(s?.mcSol).toBeCloseTo(mcQuote / SOL_USD, 6); // ~66.9 SOL
+    const t = m.recentTrades(BOOTY)[0];
+    expect(t?.amountUsd).toBeCloseTo(Number(q.amount) / 1e6, 9);
+    expect(t?.amountSol).toBeCloseTo(Number(q.amount) / 1e6 / SOL_USD, 9);
+    expect(t?.mcSol).toBeCloseTo(mcQuote / SOL_USD, 6);
+  });
+
+  test("USDC curve before the server has a SOL/USD rate: SOL values null, USD values still known", () => {
+    const { m } = market(null);
+    m.applyTx(mcLogs("usdc-mayhem-create"));
+    const s = m.summary(BOOTY);
+    expect(s).toMatchObject({
+      priceSol: null,
+      mcSol: null,
+      liquidity: null,
+      volume5m: null,
+      volume1h: null,
+      volume24h: null,
+      athMcSol: null,
+    });
+    expect(s?.mcUsd).toBeCloseTo(s?.mcQuote ?? Number.NaN, 6);
+    expect(s?.liquidityUsd).toBeGreaterThan(0);
+    expect(m.recentTrades(BOOTY)[0]).toMatchObject({ priceSol: null, mcSol: null, amountSol: null });
+    expect(m.recentTrades(BOOTY)[0]?.amountUsd).toBeGreaterThan(0);
+  });
+
+  test("exotic quote (SPYx): SOL and USD values null; quote values once the quote mint's decimals are read", () => {
+    const { m, resolver } = market();
+    m.applyTx(mcLogs("exotic-create"));
+    const spyx = mintResolved("spyx-mint");
+    expect(resolver.requested.mints).toContain(spyx.mint);
+    const before = m.summary(TED);
+    expect(before).toMatchObject({ quoteMint: spyx.mint, priceSol: null, mcSol: null, mcUsd: null, priceQuote: null, mcQuote: null });
+    m.onMintResolved(spyx);
+    const s = m.summary(TED);
+    expect(spyx.decimals).toBe(8);
+    // 5.571584 SPYx / 1.073B virtual tokens x 1B: ~5.19 SPYx (about $3.7k), never a SOL figure
+    expect(s?.mcQuote).toBeCloseTo((557_158_400 / 1e8 / 1_073_000_000) * 1e9, 9);
+    expect(s).toMatchObject({ priceSol: null, mcSol: null, priceUsd: null, mcUsd: null, liquidity: null, volume24h: null, athMcSol: null });
+  });
 });
