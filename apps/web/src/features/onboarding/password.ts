@@ -1,25 +1,94 @@
-export interface PasswordStrength {
-  /** 0 = too short, 1–4 = weak to strong. */
-  score: 0 | 1 | 2 | 3 | 4;
-  label: string;
-  /** Risk colour: weak = sell, fair = warn, good/strong = buy. */
-  tone: "neutral" | "sell" | "warn" | "buy";
+/**
+ * Live passphrase checklist (DESIGN.md 4.19): "12+ characters" and "Not a common password".
+ * The keystore's real protection is Argon2id; this only stops the passphrases attackers try first.
+ */
+export const MIN_PASSPHRASE = 12;
+
+// The most common leaked passwords, plus words a crypto trader is likely to reach for.
+const COMMON = new Set([
+  "password",
+  "passw0rd",
+  "qwerty",
+  "qwertyuiop",
+  "asdfghjkl",
+  "zxcvbnm",
+  "abc",
+  "abcdef",
+  "admin",
+  "letmein",
+  "welcome",
+  "monkey",
+  "dragon",
+  "football",
+  "baseball",
+  "iloveyou",
+  "sunshine",
+  "princess",
+  "master",
+  "trustno",
+  "shadow",
+  "superman",
+  "starwars",
+  "whatever",
+  "freedom",
+  "hello",
+  "charlie",
+  "login",
+  "secret",
+  "access",
+  "changeme",
+  "mustang",
+  "michael",
+  "jordan",
+  "batman",
+  "pokemon",
+  "computer",
+  "internet",
+  "solana",
+  "phantom",
+  "solflare",
+  "backpack",
+  "bitcoin",
+  "ethereum",
+  "crypto",
+  "wallet",
+  "zerofee",
+  "pumpfun",
+  "memecoin",
+  "tothemoon",
+  "lambo",
+  "hodl",
+  "satoshi",
+  "nakamoto",
+]);
+
+const SEQUENCES = ["0123456789", "abcdefghijklmnopqrstuvwxyz", "qwertyuiopasdfghjklzxcvbnm"];
+
+export function isCommonPassphrase(raw: string): boolean {
+  const pw = raw.toLowerCase();
+  if (!pw) return false;
+  // One character, or a short chunk repeated ("aaaaaaaaaaaa", "abcabcabcabc", "passwordpassword").
+  for (let n = 1; n <= pw.length / 2; n++) {
+    if (pw.length % n === 0 && pw.slice(0, n).repeat(pw.length / n) === pw) return true;
+  }
+  // Digits only, or a straight run on the keyboard or alphabet.
+  if (/^\d+$/.test(pw)) return true;
+  if (SEQUENCES.some((s) => s.includes(pw) || [...s].reverse().join("").includes(pw))) return true;
+  // A common word dressed up with digits and symbols ("Password2024!", "solana123").
+  const core = pw.replace(/[^a-z]/g, "").replace(/(.)\1+$/, "$1");
+  if (COMMON.has(core)) return true;
+  return [...COMMON].some((w) => core.startsWith(w) && core.slice(w.length).length <= 2);
 }
 
-const LABELS = { 1: "Weak", 2: "Fair", 3: "Good", 4: "Strong" } as const;
+export interface PassphraseCheck {
+  id: "length" | "common";
+  label: string;
+  met: boolean;
+}
 
-export const MIN_PASSWORD = 8;
-
-/** Simple length + character-variety meter. The keystore's real protection is Argon2id. */
-export function passwordStrength(pw: string): PasswordStrength {
-  if (!pw) return { score: 0, label: "", tone: "neutral" };
-  if (pw.length < MIN_PASSWORD) return { score: 0, label: "Too short", tone: "sell" };
-  const variety = [/[a-z]/, /[A-Z]/, /\d/, /[^A-Za-z0-9]/].filter((re) => re.test(pw)).length;
-  let score: 1 | 2 | 3 | 4 = 1;
-  if (pw.length >= 12) score = 2;
-  if (variety >= 3) score = score === 2 ? 3 : 2;
-  if (pw.length >= 16 || (variety === 4 && pw.length >= 12)) score = 4;
-  // One repeated character or a plain digit run is weak at any length.
-  if (/^(.)\1+$/.test(pw) || /^\d+$/.test(pw)) score = 1;
-  return { score, label: LABELS[score], tone: score === 1 ? "sell" : score === 2 ? "warn" : "buy" };
+export function passphraseChecks(pw: string): PassphraseCheck[] {
+  return [
+    { id: "length", label: `${MIN_PASSPHRASE}+ characters`, met: pw.length >= MIN_PASSPHRASE },
+    { id: "common", label: "Not a common password", met: pw.length > 0 && !isCommonPassphrase(pw) },
+  ];
 }

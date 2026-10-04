@@ -5,15 +5,14 @@ import { CopyButton, Segmented } from "../../components/ui/controls";
 import { isBase58Address } from "../../lib/address";
 import { downloadText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
-import { normalizeHandle } from "../../lib/filters";
-import { fmtDate, shortAddr } from "../../lib/format";
+import { type BlacklistEntry, normalizeHandle } from "../../lib/filters";
+import { fmtCount, fmtDate, shortAddr } from "../../lib/format";
 import { type BlacklistKind, useSettings } from "../../state/settings";
 import { errorMessage } from "./format";
-import { Field, Group, TabHeader, type Tone } from "./ui";
+import { Block, InlineStatus, Rows, SectionHeader, SubHeader, type Tone, useTransient } from "./ui";
 
 interface KindInfo {
   id: BlacklistKind;
-  /** Segment label. */
   short: string;
   title: string;
   field: string;
@@ -68,9 +67,9 @@ const IMPORT_MAX_BYTES = 1_000_000;
 
 const RESULT_TONE: Record<Tone, string> = {
   neutral: "text-fg-2",
-  info: "text-info",
+  info: "text-fg-2",
   warn: "text-warn",
-  buy: "text-buy",
+  buy: "text-fg-1",
   sell: "text-sell",
 };
 
@@ -128,12 +127,11 @@ function parseImport(text: string): { entries: ImportEntry[]; invalid: number } 
 }
 
 /*
- * Blacklists. Add row + list anatomy follows Salesforce's excluded-addresses list and
- * PlanetScale's IP restrictions (inline add field, value, remove):
- * https://mobbin.com/screens/5356a12c-cc81-4211-aaf9-f1e542c21023
+ * Blacklists, applied to every Pulse feed on top of each column's filters. Inline add row and a
+ * value list with remove, after PlanetScale's IP restrictions:
  * https://mobbin.com/screens/4f361c07-36fd-42c4-8404-db2481db77f4
  */
-export function BlacklistsTab() {
+export function BlacklistsSection() {
   const blacklists = useSettings((s) => s.blacklists);
   const addBlacklist = useSettings((s) => s.addBlacklist);
   const removeBlacklist = useSettings((s) => s.removeBlacklist);
@@ -144,6 +142,7 @@ export function BlacklistsTab() {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [result, setResult] = useState<{ tone: Tone; text: string } | null>(null);
+  const [removed, setRemoved] = useTransient<{ kind: BlacklistKind; entry: BlacklistEntry; shown: string }>(6000);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const kind = KINDS.find((k) => k.id === kindId) ?? KINDS[0]!;
@@ -169,10 +168,21 @@ export function BlacklistsTab() {
     setError(null);
   };
 
+  const remove = (entry: BlacklistEntry, shown: string) => {
+    removeBlacklist(kind.id, entry.value);
+    setRemoved({ kind: kind.id, entry, shown });
+  };
+
+  const undoRemove = () => {
+    if (!removed) return;
+    addBlacklist(removed.kind, removed.entry.value, removed.entry.note);
+    setRemoved(null);
+  };
+
   const exportJson = () => {
     const payload = { app: "zerofee", kind: "blacklists", v: 1, exportedAt: new Date().toISOString(), blacklists };
     downloadText(`zerofee-blacklists-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(payload, null, 2));
-    setResult({ tone: "neutral", text: `Exported ${total} ${total === 1 ? "entry" : "entries"}.` });
+    setResult({ tone: "neutral", text: `Exported ${fmtCount(total)} ${total === 1 ? "entry" : "entries"}.` });
   };
 
   const applyImport = (text: string) => {
@@ -188,9 +198,9 @@ export function BlacklistsTab() {
         addBlacklist(entry.kind, entry.value, entry.note);
         added++;
       }
-      const parts = [`Added ${added} ${added === 1 ? "entry" : "entries"}`];
-      if (duplicates > 0) parts.push(`${duplicates} already listed`);
-      if (invalid > 0) parts.push(`${invalid} invalid skipped`);
+      const parts = [`Added ${fmtCount(added)} ${added === 1 ? "entry" : "entries"}`];
+      if (duplicates > 0) parts.push(`${fmtCount(duplicates)} already listed`);
+      if (invalid > 0) parts.push(`${fmtCount(invalid)} invalid skipped`);
       setResult({ tone: added > 0 ? "buy" : "neutral", text: `${parts.join(" · ")}.` });
       setPasteText("");
       setPasteOpen(false);
@@ -212,11 +222,10 @@ export function BlacklistsTab() {
 
   return (
     <>
-      <TabHeader
+      <SectionHeader
         title="Blacklists"
-        description={`Applied to every Pulse feed (New Pairs, Final Stretch, Migrated) on top of each column's filters. ${total} ${total === 1 ? "entry" : "entries"} in total.`}
+        description={`Hidden from every Pulse feed (New Pairs, Final Stretch, Migrated) on top of each column's filters. ${fmtCount(total)} ${total === 1 ? "entry" : "entries"} in total. Press X on a Pulse card to hide its token.`}
       />
-
       <Segmented<BlacklistKind>
         value={kindId}
         onChange={(k) => {
@@ -228,19 +237,27 @@ export function BlacklistsTab() {
           value: k.id,
           label: (
             <span>
-              {k.short} <span className="font-mono text-fg-3">{blacklists[k.id].length}</span>
+              {k.short} <span className="zf-num text-fg-3">{fmtCount(blacklists[k.id].length)}</span>
             </span>
           ),
           title: k.title,
         }))}
         label="Blacklist"
-        className="mb-4 w-full"
+        className="w-full max-md:h-11"
       />
 
-      <Group title={kind.title} description={kind.hint} extra={<span className="text-label text-fg-3">{list.length} listed</span>}>
-        <form className="space-y-2 p-3" onSubmit={add}>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-            <Field label={kind.field} htmlFor="zf-bl-value" className="flex-1">
+      <SubHeader
+        actions={removed && removed.kind === kind.id ? <InlineStatus onUndo={undoRemove}>Removed {removed.shown}</InlineStatus> : null}
+      >
+        {kind.title} · {kind.hint}
+      </SubHeader>
+      <Rows>
+        <Block>
+          <form className="flex flex-col gap-2 sm:flex-row sm:items-start" onSubmit={add}>
+            <div className="min-w-0 flex-1">
+              <label htmlFor="zf-bl-value" className="sr-only">
+                {kind.field}
+              </label>
               <input
                 id="zf-bl-value"
                 className={cn("zf-input", !kind.handle && "font-mono")}
@@ -249,109 +266,114 @@ export function BlacklistsTab() {
                 autoComplete="off"
                 placeholder={kind.placeholder}
                 aria-invalid={error !== null}
+                aria-describedby={error ? "zf-bl-error" : undefined}
                 onChange={(e) => {
                   setValue(e.target.value);
                   setError(null);
                 }}
               />
-            </Field>
-            <Field label="Note (optional)" htmlFor="zf-bl-note" className="sm:w-40">
-              <input
-                id="zf-bl-note"
-                className="zf-input"
-                value={note}
-                maxLength={NOTE_MAX}
-                placeholder="Why"
-                onChange={(e) => setNote(e.target.value)}
-              />
-            </Field>
-            <Button type="submit" size="md" variant="secondary" disabled={!value.trim()}>
-              Add
-            </Button>
-          </div>
-          {error && <div className="text-label text-sell">{error}</div>}
-        </form>
-        {list.length === 0 ? (
-          <div className="px-3 py-2 text-label text-fg-3">Nothing on this list yet.</div>
-        ) : (
-          <ul className="max-h-80 divide-y divide-hairline overflow-y-auto">
-            {list.map((entry) => {
-              const shown = kind.handle ? `@${entry.value}` : shortAddr(entry.value, 6, 6);
-              return (
-                <li key={entry.value} className="flex items-center gap-2 px-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1 text-data text-fg-1">
-                      <span className={cn("truncate", !kind.handle && "font-mono")}>{shown}</span>
-                      <CopyButton text={entry.value} label={`Copy ${shown}`} />
-                    </div>
-                    {entry.note && <div className="truncate text-label text-fg-2">{entry.note}</div>}
-                  </div>
-                  <span className="shrink-0 text-right text-label text-fg-3">{fmtDate(entry.addedAt)}</span>
-                  <IconButton label={`Remove ${shown}`} onClick={() => removeBlacklist(kind.id, entry.value)}>
-                    <Trash2 className="icon-sm" />
-                  </IconButton>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Group>
-
-      <Group
-        title="Import and export"
-        description="One JSON file holds all four lists. Imports merge into what you have; duplicates are skipped."
-      >
-        <div className="flex flex-wrap items-center gap-2 p-3">
-          <Button size="sm" variant="secondary" icon={<Download className="icon-sm" />} onClick={exportJson}>
-            Export JSON
-          </Button>
-          <Button size="sm" variant="secondary" icon={<FileUp className="icon-sm" />} onClick={() => fileRef.current?.click()}>
-            Import file
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={<ClipboardPaste className="icon-sm" />}
-            aria-expanded={pasteOpen}
-            onClick={() => setPasteOpen((open) => !open)}
-          >
-            Paste JSON
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            aria-label="Blacklists JSON file"
-            onChange={(e) => void onFile(e)}
-          />
-        </div>
-        {pasteOpen && (
-          <div className="space-y-2 p-3">
-            <textarea
-              aria-label="Blacklists JSON"
-              className="zf-input h-32 resize-y py-2 font-mono"
-              spellCheck={false}
-              value={pasteText}
-              placeholder='{ "tokens": [], "devs": [], "fundingWallets": [], "xHandles": [] }'
-              onChange={(e) => setPasteText(e.target.value)}
-            />
-            <div className="flex justify-end gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setPasteOpen(false)}>
-                Cancel
-              </Button>
-              <Button size="sm" variant="primary" disabled={!pasteText.trim()} onClick={() => applyImport(pasteText)}>
-                Import
-              </Button>
+              {error && (
+                <div id="zf-bl-error" className="mt-1 text-label text-sell">
+                  {error}
+                </div>
+              )}
             </div>
-          </div>
+            <label htmlFor="zf-bl-note" className="sr-only">
+              Note
+            </label>
+            <input
+              id="zf-bl-note"
+              className="zf-input sm:w-40"
+              value={note}
+              maxLength={NOTE_MAX}
+              placeholder="Note (optional)"
+              onChange={(e) => setNote(e.target.value)}
+            />
+            <Button type="submit" size="sm" variant="secondary" disabled={!value.trim()} className="max-md:h-11">
+              Add to {kind.short.toLowerCase()}
+            </Button>
+          </form>
+        </Block>
+        {list.length === 0 ? (
+          <Block className="flex items-center text-label text-fg-3">Nothing on this list yet.</Block>
+        ) : (
+          <Block className="py-0">
+            <ul className="max-h-80 divide-y divide-hairline overflow-y-auto">
+              {list.map((entry) => {
+                const shown = kind.handle ? `@${entry.value}` : shortAddr(entry.value, 6, 6);
+                return (
+                  <li key={entry.value} className="flex min-h-8 items-center gap-2 py-1">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1 text-data text-fg-1">
+                        <span className={cn("truncate", !kind.handle && "font-mono text-fg-2")}>{shown}</span>
+                        <CopyButton text={entry.value} label={`Copy ${shown}`} />
+                      </div>
+                      {entry.note && <div className="truncate text-label text-fg-3">{entry.note}</div>}
+                    </div>
+                    <span className="shrink-0 text-label text-fg-3">{fmtDate(entry.addedAt)}</span>
+                    <IconButton label={`Remove ${shown}`} onClick={() => remove(entry, shown)}>
+                      <Trash2 />
+                    </IconButton>
+                  </li>
+                );
+              })}
+            </ul>
+          </Block>
         )}
-        {result && (
-          <div aria-live="polite" className={cn("px-3 py-2 text-label", RESULT_TONE[result.tone])}>
-            {result.text}
+      </Rows>
+
+      <SubHeader>Import and export</SubHeader>
+      <Rows>
+        <Block>
+          <p className="mb-2 text-label text-fg-3">
+            One JSON file holds all four lists. Imports merge into what you have; duplicates are skipped.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" icon={<Download />} onClick={exportJson}>
+              Export JSON
+            </Button>
+            <Button size="sm" variant="secondary" icon={<FileUp />} onClick={() => fileRef.current?.click()}>
+              Import file
+            </Button>
+            <Button size="sm" variant="ghost" icon={<ClipboardPaste />} aria-expanded={pasteOpen} onClick={() => setPasteOpen((o) => !o)}>
+              Paste JSON
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              aria-label="Blacklists JSON file"
+              onChange={(e) => void onFile(e)}
+            />
           </div>
-        )}
-      </Group>
+          {pasteOpen && (
+            <div className="mt-2 space-y-2">
+              <textarea
+                aria-label="Blacklists JSON"
+                className="zf-input h-32 resize-y py-2 font-mono"
+                spellCheck={false}
+                value={pasteText}
+                placeholder='{ "tokens": [], "devs": [], "fundingWallets": [], "xHandles": [] }'
+                onChange={(e) => setPasteText(e.target.value)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setPasteOpen(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" variant="primary" disabled={!pasteText.trim()} onClick={() => applyImport(pasteText)}>
+                  Import entries
+                </Button>
+              </div>
+            </div>
+          )}
+          {result && (
+            <div role="status" className={cn("mt-2 text-label", RESULT_TONE[result.tone])}>
+              {result.text}
+            </div>
+          )}
+        </Block>
+      </Rows>
     </>
   );
 }

@@ -1,70 +1,80 @@
-import { ArrowLeft, CircleAlert } from "lucide-react";
-import { type ReactNode, useCallback, useState } from "react";
+import { ArrowLeft, CircleAlert, LoaderCircle } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
+import { cn } from "../../lib/cn";
+import { fmtMs } from "../../lib/format";
+import { useMediaQuery } from "../../lib/useMediaQuery";
 import { errorMessage } from "../settings/format";
 
 export const STEP_TITLE_ID = "zf-onboarding-step-title";
 
 export const PROVIDER_NAME = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" } as const;
 
-/** Position and copy of the current step, passed from the page to each step. */
+/** Copy for the current step, passed from the page to each step. */
 export interface StepFrame {
-  index: number;
-  total: number;
   title: string;
   description: string;
+  /** Null on the first step and while an action is in flight. */
+  onBack: (() => void) | null;
 }
 
 /*
- * Step panel: hairline card with the step header, body and a footer whose actions sit
- * bottom-right with Back on the left (Melio's setup flow):
- * https://mobbin.com/screens/45acbdef-a8f5-466e-920c-3a2f4b3f8fb8
+ * Step layout (DESIGN.md 4.19, 5.6): a "Back" ghost xs at the top-left of the content, the title
+ * at 16/600, one line of description at 13 text-2, the body, then one primary action. Top-left
+ * aligned, never centred, no hero and no illustration.
  */
-export function StepPanel({ index, total, title, description, children, footer }: StepFrame & { children: ReactNode; footer: ReactNode }) {
+export function StepHeader({ frame }: { frame: StepFrame }) {
   return (
-    <div className="rounded-md border border-hairline bg-surface-1">
-      <div className="border-b border-hairline px-4 py-3">
-        <div className="zf-label">
-          Step {index + 1} of {total}
-        </div>
-        <h2 id={STEP_TITLE_ID} className="mt-1 text-heading font-semibold text-fg-1">
-          {title}
-        </h2>
-        <p className="text-data text-fg-2">{description}</p>
+    <header className="mb-6">
+      <div className="mb-4 h-5">
+        {frame.onBack && (
+          <Button size="xs" variant="ghost" icon={<ArrowLeft />} onClick={frame.onBack} className="-ml-1.5 max-md:h-11 [&_svg]:size-3.5">
+            Back
+          </Button>
+        )}
       </div>
-      <div className="space-y-4 p-4">{children}</div>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline px-4 py-3">{footer}</div>
-    </div>
+      <h1 id={STEP_TITLE_ID} className="text-title font-semibold text-fg-1">
+        {frame.title}
+      </h1>
+      <p className="mt-1 text-body text-fg-2">{frame.description}</p>
+    </header>
   );
 }
 
-export function StepFooter({ onBack, backDisabled, children }: { onBack?: () => void; backDisabled?: boolean; children: ReactNode }) {
-  return (
-    <>
-      {onBack ? (
-        <Button size="lg" variant="ghost" icon={<ArrowLeft className="icon-md" />} disabled={backDisabled} onClick={onBack}>
-          Back
-        </Button>
-      ) : (
-        <span />
-      )}
-      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">{children}</div>
-    </>
-  );
+/** The step's actions: the one primary action first, then at most a quiet secondary. */
+export function StepActions({ children }: { children: ReactNode }) {
+  return <div className="mt-6 flex flex-wrap items-center gap-2">{children}</div>;
 }
 
 export function InlineError({ children }: { children: ReactNode }) {
   return (
-    <div role="alert" className="flex items-start gap-2 text-data text-sell">
+    <div role="alert" className="mt-3 flex items-start gap-2 text-data text-sell">
       <CircleAlert className="icon-sm mt-px" />
       <span className="min-w-0">{children}</span>
     </div>
   );
 }
 
+/**
+ * In-flight indicator for user actions only: a 14 px spinner, or, with reduced motion, the
+ * elapsed time (DESIGN.md 2.8, 4.18).
+ */
+export function Spinner({ className }: { className?: string }) {
+  const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [started] = useState(() => Date.now());
+  const [now, setNow] = useState(started);
+  useEffect(() => {
+    if (!reduced) return;
+    const id = setInterval(() => setNow(Date.now()), 100);
+    return () => clearInterval(id);
+  }, [reduced]);
+  if (reduced) return <span className={cn("zf-num text-label text-fg-2", className)}>{fmtMs(now - started)}</span>;
+  return <LoaderCircle aria-hidden="true" className={cn("icon-sm animate-spin text-fg-2", className)} />;
+}
+
 export type ActionResult<T> = { ok: true; value: T } | { ok: false };
 
-/** Busy + error state for one async step action; reports busy to the page so navigation pauses. */
+/** Busy and error state for one async step action; reports busy to the page so navigation pauses. */
 export function useAction(onBusyChange: (busy: boolean) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

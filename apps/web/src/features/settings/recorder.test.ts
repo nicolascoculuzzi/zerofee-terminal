@@ -21,7 +21,7 @@ function key(type: "keydown" | "keyup", code: string, k: string, mods: Mods = {}
   return e;
 }
 
-function setup(keepOpenContains = false) {
+function setup(keepOpenContains = false, sequenceMs = 0) {
   const win = new EventTarget();
   const log: string[] = [];
   const stop = startRecording(
@@ -29,9 +29,11 @@ function setup(keepOpenContains = false) {
       onSpace: (held: boolean) => log.push(`space:${held}`),
       onChord: (b: string) => log.push(`chord:${b}`),
       onCancel: () => log.push("cancel"),
+      onPending: (first: string) => log.push(`pending:${first}`),
       keepOpen: () => ({ contains: () => keepOpenContains }) as unknown as Element,
     },
     win as unknown as Window,
+    { sequenceMs },
   );
   // Stands in for the global hotkey handler: registered after the recorder, non-capture.
   const seen: string[] = [];
@@ -109,5 +111,49 @@ describe("hotkey recorder", () => {
     stop();
     win.dispatchEvent(key("keydown", "KeyK", "k", { metaKey: true }));
     expect(seen).toEqual(["down:KeyK"]);
+  });
+});
+
+describe("hotkey recorder, sequence mode", () => {
+  test("two plain keys inside the window record a sequence", () => {
+    const { win, log, seen } = setup(false, 50);
+    win.dispatchEvent(key("keydown", "KeyG", "g"));
+    win.dispatchEvent(key("keydown", "KeyP", "p"));
+    expect(log).toEqual(["pending:G", "chord:G P"]);
+    expect(seen).toEqual([]);
+  });
+
+  test("a plain key alone records itself when the window closes", async () => {
+    const { win, log } = setup(false, 20);
+    win.dispatchEvent(key("keydown", "KeyB", "b"));
+    expect(log).toEqual(["pending:B"]);
+    await Bun.sleep(60);
+    expect(log).toEqual(["pending:B", "chord:B"]);
+  });
+
+  test("modified chords and Space combos record at once", () => {
+    const a = setup(false, 50);
+    a.win.dispatchEvent(key("keydown", "KeyI", "I", { shiftKey: true }));
+    expect(a.log).toEqual(["chord:Shift+I"]);
+    const b = setup(false, 50);
+    b.win.dispatchEvent(key("keydown", "Space", " "));
+    b.win.dispatchEvent(key("keydown", "Digit1", "1"));
+    expect(b.log).toEqual(["space:true", "chord:Space+1"]);
+  });
+
+  test("Escape while a first key waits cancels the whole recording", async () => {
+    const { win, log } = setup(false, 20);
+    win.dispatchEvent(key("keydown", "KeyG", "g"));
+    win.dispatchEvent(key("keydown", "Escape", "Escape"));
+    await Bun.sleep(40);
+    expect(log).toEqual(["pending:G", "cancel"]);
+  });
+
+  test("stop clears a waiting first key", async () => {
+    const { win, log, stop } = setup(false, 20);
+    win.dispatchEvent(key("keydown", "KeyT", "t"));
+    stop();
+    await Bun.sleep(40);
+    expect(log).toEqual(["pending:T"]);
   });
 });

@@ -1,64 +1,64 @@
-import { ArrowRight, Check, CircleCheck, Copy, Eye, EyeOff } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Check } from "lucide-react";
+import { type KeyboardEvent, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { Checkbox } from "../../components/ui/controls";
-import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { getServices } from "../../services";
 import type { TradingWallet } from "../../services/walletService";
-import { Chip, Field, Note } from "../settings/ui";
-import { InlineError, StepFooter, type StepFrame, StepPanel, useAction } from "./parts";
+import { pickPositions, simulatedSecretKey } from "./backupKey";
+import { KeyReveal } from "./KeyReveal";
+import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
-function randomIndex(length: number): number {
-  if (length <= 0) return 0;
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return (buf[0] ?? 0) % length;
+/** "7, 19 and 41". */
+function listPositions(positions: number[]): string {
+  if (positions.length < 2) return positions.join("");
+  return `${positions.slice(0, -1).join(", ")} and ${positions[positions.length - 1]}`;
 }
 
 /*
- * Backup words in a numbered grid, hidden until revealed, after Phantom's recovery-phrase
- * screen: https://mobbin.com/screens/fa3d1040-f206-4de4-b236-435f1760fd1e
- * Words are masked (not rendered at all) until Reveal, rather than blurred.
+ * Back up (DESIGN.md 4.19 step 4): the key masked until held to reveal, Copy and an encrypted
+ * download, then "Enter characters 7, 19 and 41 of your key" in three 32 × 32 inputs. "I saved
+ * it" stays disabled until they match; this step can't be skipped (SPEC).
+ * Characters at given positions after Lloyds; "OK, I saved it" after Phantom:
+ * https://mobbin.com/screens/4a81b310-337b-404b-8e19-efc674b8ca31
+ * https://mobbin.com/screens/fa3d1040-f206-4de4-b236-435f1760fd1e
  */
 export function BackupStep({
   frame,
   wallet,
-  phrase,
   backedUp,
   onBusyChange,
   onConfirmed,
-  onBack,
   onNext,
 }: {
   frame: StepFrame;
   wallet: TradingWallet;
-  phrase: string[];
   backedUp: boolean;
   onBusyChange: (busy: boolean) => void;
   onConfirmed: () => void;
-  onBack: () => void;
   onNext: () => void;
 }) {
   const { busy, error, run } = useAction(onBusyChange);
-  const [revealed, setRevealed] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [answer, setAnswer] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [checkIndex] = useState(() => randomIndex(phrase.length));
-  const words = useMemo(() => phrase.map((word, i) => ({ n: i + 1, word })), [phrase]);
-  const expected = phrase[checkIndex] ?? "";
-  const correct = expected !== "" && answer.trim().toLowerCase() === expected.toLowerCase();
-  const canContinue = backedUp || (saved && correct);
+  const secret = useMemo(() => simulatedSecretKey(wallet.id, wallet.address), [wallet.id, wallet.address]);
+  const [positions] = useState(() => pickPositions(secret.length));
+  const [chars, setChars] = useState<string[]>(() => positions.map(() => ""));
+  const inputs = useRef<(HTMLInputElement | null)[]>([]);
+  const simulated = getServices().simulated;
+  const correct = positions.map((p, i) => chars[i] === secret[p - 1]);
+  const verified = correct.every(Boolean);
+  const filled = chars.every((c) => c !== "");
 
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(t);
-  }, [copied]);
+  const setChar = (i: number, value: string) => {
+    const ch = value.trim().slice(-1);
+    setChars((prev) => prev.map((c, j) => (j === i ? ch : c)));
+    if (ch && i < positions.length - 1) inputs.current[i + 1]?.focus();
+  };
 
-  const copy = async () => {
-    if (await copyText(phrase.join(" "))) setCopied(true);
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>, i: number) => {
+    if (e.key === "Backspace" && !chars[i] && i > 0) {
+      e.preventDefault();
+      inputs.current[i - 1]?.focus();
+    } else if (e.key === "ArrowLeft" && i > 0) inputs.current[i - 1]?.focus();
+    else if (e.key === "ArrowRight" && i < positions.length - 1) inputs.current[i + 1]?.focus();
   };
 
   const confirm = async () => {
@@ -66,105 +66,81 @@ export function BackupStep({
       onNext();
       return;
     }
-    if (!canContinue) return;
+    if (!verified) return;
     const res = await run(() => getServices().wallet.confirmBackup(wallet.id));
     if (res.ok) onConfirmed();
   };
 
   return (
-    <StepPanel
-      {...frame}
-      footer={
-        <StepFooter onBack={onBack} backDisabled={busy}>
-          <Button size="lg" variant="primary" disabled={!canContinue || busy} onClick={() => void confirm()}>
-            {busy ? "Saving…" : "Continue"} <ArrowRight className="icon-md" />
-          </Button>
-        </StepFooter>
-      }
-    >
-      <div className="rounded-md border border-hairline">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-3 py-2">
-          <Chip tone="warn">MOCK backup: not a real key</Chip>
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={revealed ? <EyeOff className="icon-sm" /> : <Eye className="icon-sm" />}
-              aria-pressed={revealed}
-              onClick={() => setRevealed((r) => !r)}
-            >
-              {revealed ? "Hide" : "Reveal"}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={copied ? <Check className="icon-sm text-buy" /> : <Copy className="icon-sm" />}
-              disabled={!revealed}
-              onClick={() => void copy()}
-            >
-              {copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
-        </div>
-        <ol aria-label={`Backup for ${wallet.label}`} className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3">
-          {words.map((w) => (
-            <li key={w.n} className="flex h-7 items-center gap-2 rounded-sm border border-hairline bg-bg px-2 text-data">
-              <span className="w-5 text-right font-mono text-label text-fg-3">{w.n}</span>
-              {revealed ? (
-                <span className="font-mono text-fg-1">{w.word}</span>
-              ) : (
-                <span className="font-mono text-fg-3">
-                  <span aria-hidden="true">•••••</span>
-                  <span className="sr-only">Hidden</span>
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-        {!revealed && <div className="px-3 pb-3 text-label text-fg-3">Hidden. Check that nobody can see your screen, then reveal.</div>}
-      </div>
+    <>
+      <StepHeader frame={frame} />
+      <KeyReveal secret={secret} wallet={wallet} simulated={simulated} spaceAnywhere />
 
-      {backedUp ? (
-        <div className="flex items-center gap-2 text-data text-fg-1">
-          <CircleCheck className="icon-sm text-buy" /> Backup confirmed.
-        </div>
-      ) : (
-        <>
-          <Field label={`Type word #${checkIndex + 1}`} htmlFor="zf-backup-check" className="sm:w-60">
-            <input
-              id="zf-backup-check"
-              className="zf-input font-mono"
-              value={answer}
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              aria-invalid={answer.trim() !== "" && !correct}
-              onChange={(e) => setAnswer(e.target.value)}
-            />
-            {answer.trim() !== "" && (
-              <div className={cn("mt-1 flex items-center gap-1 text-label", correct ? "text-buy" : "text-fg-3")}>
-                {correct ? (
+      <div className="mt-6 border-t border-hairline pt-4">
+        {backedUp ? (
+          <p className="flex items-center gap-2 text-data text-fg-1">
+            <Check className="icon-xs text-buy" /> Backup verified.
+          </p>
+        ) : (
+          <fieldset>
+            <legend className="text-data font-medium text-fg-1">Enter characters {listPositions(positions)} of your key</legend>
+            <p className="mt-0.5 text-label text-fg-3">
+              Counting from 1, case-sensitive. This checks you saved the whole key, not just copied it.
+            </p>
+            <div className="mt-3 flex items-end gap-3">
+              {positions.map((p, i) => (
+                <label key={p} className="flex flex-col items-center gap-1">
+                  <span className="zf-num text-label text-fg-3">{p}</span>
+                  <input
+                    ref={(el) => {
+                      inputs.current[i] = el;
+                    }}
+                    value={chars[i] ?? ""}
+                    onChange={(e) => setChar(i, e.target.value)}
+                    onKeyDown={(e) => onKeyDown(e, i)}
+                    onFocus={(e) => e.currentTarget.select()}
+                    maxLength={2}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    aria-label={`Character ${p} of your key`}
+                    aria-invalid={chars[i] !== "" && !correct[i]}
+                    className={cn(
+                      "size-8 rounded-sm border bg-surface-2 text-center font-mono text-body font-medium text-fg-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-md:size-11",
+                      chars[i] !== "" && !correct[i] ? "border-sell" : "border-hairline-strong",
+                    )}
+                  />
+                </label>
+              ))}
+              <span aria-live="polite" className="flex h-8 items-center gap-1 text-label max-md:h-11">
+                {verified ? (
                   <>
-                    <Check className="icon-xs" /> Correct
+                    <Check className="icon-xs text-buy" />
+                    <span className="text-fg-1">Matches</span>
                   </>
-                ) : (
-                  "Not a match yet"
-                )}
-              </div>
-            )}
-          </Field>
-          <Checkbox
-            checked={saved}
-            onChange={setSaved}
-            label="I saved this backup somewhere safe"
-            hint="Anyone with these words controls the trading wallet. Write them down and keep them offline."
-          />
-        </>
-      )}
-
-      <Note tone="warn">Clipboard managers and synced notes can keep what you copy. Writing the words on paper is safer.</Note>
-
+                ) : filled ? (
+                  <span className="text-sell">Not a match. Check the key again.</span>
+                ) : null}
+              </span>
+            </div>
+          </fieldset>
+        )}
+      </div>
       {error && <InlineError>{error}</InlineError>}
-    </StepPanel>
+
+      <StepActions>
+        <Button size="xl" variant="primary" disabled={(!backedUp && !verified) || busy} onClick={() => void confirm()}>
+          {busy && <Spinner />}
+          {backedUp ? (
+            <>
+              Continue to limits <ArrowRight />
+            </>
+          ) : (
+            "I saved it"
+          )}
+        </Button>
+      </StepActions>
+    </>
   );
 }

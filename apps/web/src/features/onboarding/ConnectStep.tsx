@@ -1,18 +1,23 @@
-import { ArrowRight, Check, ChevronRight, LoaderCircle } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
 import { cn } from "../../lib/cn";
 import { getServices } from "../../services";
 import type { ConnectedWallet, WalletProvider } from "../../services/walletService";
-import { InlineError, PROVIDER_NAME, StepFooter, type StepFrame, StepPanel, useAction } from "./parts";
+import { Tag } from "../settings/ui";
+import { InlineError, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
 const PROVIDERS: WalletProvider[] = ["phantom", "solflare", "backpack"];
 
 /*
- * Wallet picker rows (monogram, name, chevron) after Coinbase's "Connect wallet" dialog:
- * https://mobbin.com/screens/0028e86d-943f-4bfd-8be6-ce4f873921ce
- * No third-party logos are shipped, so each wallet gets a neutral monogram.
+ * Connect wallet (DESIGN.md 4.19 step 1): 44 px rows with the wallet's icon, its name at 13/500
+ * and a "Detected" tag; the row being connected shows a spinner on its right.
+ * Wallet rows with a spinner after Uniswap; badges after Tally:
+ * https://mobbin.com/flows/9aaa402b-0d7a-4960-8261-57602073bb6c
+ * https://mobbin.com/flows/7791b9e6-611e-4cb0-ae5c-b767bd662931
+ * Real wallets supply their icon through Wallet Standard; the simulation has none, so each row
+ * shows a neutral 24 px letter square instead of a brand logo.
  */
 export function ConnectStep({
   frame,
@@ -29,6 +34,7 @@ export function ConnectStep({
 }) {
   const { busy, error, run } = useAction(onBusyChange);
   const [pending, setPending] = useState<WalletProvider | null>(null);
+  const simulated = getServices().simulated;
 
   const connect = async (provider: WalletProvider) => {
     setPending(provider);
@@ -38,17 +44,9 @@ export function ConnectStep({
   };
 
   return (
-    <StepPanel
-      {...frame}
-      footer={
-        <StepFooter>
-          <Button size="lg" variant="primary" disabled={!connected || busy} onClick={onNext}>
-            Continue <ArrowRight className="icon-md" />
-          </Button>
-        </StepFooter>
-      }
-    >
-      <ul className="divide-y divide-hairline rounded-md border border-hairline">
+    <>
+      <StepHeader frame={frame} />
+      <ul className="divide-y divide-hairline border-y border-hairline">
         {PROVIDERS.map((id) => {
           const name = PROVIDER_NAME[id];
           const isConnected = connected?.provider === id;
@@ -59,50 +57,57 @@ export function ConnectStep({
                 disabled={busy}
                 onClick={() => void connect(id)}
                 className={cn(
-                  "flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-surface-3 disabled:cursor-wait",
-                  isConnected && "bg-surface-3",
+                  "focus-inset flex h-11 w-full items-center gap-3 px-2 text-left transition-colors hover:bg-surface-2 disabled:cursor-wait",
+                  isConnected && "bg-surface-2",
                 )}
               >
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-sm border border-hairline-strong bg-surface-2 text-data font-semibold text-fg-1">
+                <span
+                  aria-hidden="true"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-label font-semibold text-fg-1"
+                >
                   {name.charAt(0)}
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-data font-semibold text-fg-1">{name}</span>
-                  <span className="block text-label text-fg-3">Wallet Standard</span>
-                </span>
+                <span className="min-w-0 flex-1 truncate text-body font-medium text-fg-1">{name}</span>
                 {pending === id ? (
                   <span className="flex items-center gap-1 text-label text-fg-2">
-                    <LoaderCircle className="icon-sm animate-spin" /> Connecting…
+                    <Spinner /> Connecting
                   </span>
                 ) : isConnected ? (
-                  <span className="flex items-center gap-1 text-label text-buy">
-                    <Check className="icon-sm" /> Connected
+                  <span className="flex items-center gap-1 text-label text-fg-1">
+                    <Check className="icon-xs" /> Connected
                   </span>
                 ) : (
-                  <ChevronRight className="icon-md text-fg-3" />
+                  <Tag>Detected</Tag>
                 )}
               </button>
             </li>
           );
         })}
       </ul>
-
       {error && <InlineError>{error}</InlineError>}
 
       {connected && (
-        <div className="rounded-md border border-hairline bg-surface-2 px-3 py-2">
+        <div className="mt-4">
           <div className="zf-label">Connected address · {PROVIDER_NAME[connected.provider]}</div>
-          <div className="mt-1 flex items-start gap-2 font-mono text-data break-all text-fg-1">
+          <div className="mt-1 flex items-start gap-1 font-mono text-data break-all text-fg-2">
             {connected.address}
-            <CopyButton text={connected.address} label="Copy connected address" className="mt-px" />
+            <CopyButton text={connected.address} label="Copy connected address" />
           </div>
         </div>
       )}
 
-      <p className="text-label text-fg-3">
-        zerofee finds installed wallets through Wallet Standard and sees only your public address. Simulated here: no extension is needed,
-        and connecting creates a demo address.
+      <p className="mt-4 text-label text-fg-3">
+        zerofee finds installed wallets through Wallet Standard and only ever sees the public address.
+        {simulated && " Simulated: no extension is needed, and connecting creates a demo address."}
       </p>
-    </StepPanel>
+
+      {connected && (
+        <StepActions>
+          <Button size="xl" variant="primary" disabled={busy} onClick={onNext}>
+            Continue to sign in <ArrowRight />
+          </Button>
+        </StepActions>
+      )}
+    </>
   );
 }

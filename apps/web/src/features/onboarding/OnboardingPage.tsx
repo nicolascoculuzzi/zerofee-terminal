@@ -1,56 +1,84 @@
-import { ArrowRight } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Logo } from "../../app/Logo";
-import { fmtClock, fmtSolShort, shortAddr } from "../../lib/format";
+import { fmtClock, fmtSol, fmtSolShort, shortAddr } from "../../lib/format";
 import { closeTopOverlay } from "../../lib/overlayStack";
 import { getServices } from "../../services";
-import type { TradeMode } from "../../services/tradeService";
 import type { ConnectedWallet, SiwsSession, TradingWallet } from "../../services/walletService";
 import { useSettings } from "../../state/settings";
-import { useToasts } from "../../state/toasts";
 import { useWallet } from "../../state/wallet";
-import { MODE_INFO } from "../settings/modes";
-import { Chip } from "../settings/ui";
+import { Tag } from "../settings/ui";
 import { ApprovalModal } from "../trade/ApprovalModal";
 import { BackupStep } from "./BackupStep";
 import { ConnectStep } from "./ConnectStep";
+import { DoneStep } from "./DoneStep";
 import { type FundResult, FundStep } from "./FundStep";
-import { ModeStep } from "./ModeStep";
+import { LimitsStep } from "./LimitsStep";
 import { PROVIDER_NAME, STEP_TITLE_ID, type StepFrame } from "./parts";
 import { SignInStep } from "./SignInStep";
-import { StepList } from "./StepList";
+import { StepProgress, Stepper } from "./Stepper";
 import { WalletStep } from "./WalletStep";
 
 const STEPS = [
-  { id: "connect", title: "Connect wallet", description: "Pick the wallet you sign in with. zerofee only sees its public address." },
-  { id: "signin", title: "Sign in", description: "Sign one message to prove the wallet is yours. No password, no email, no fee." },
-  { id: "wallet", title: "Trading wallet", description: "A separate wallet for fast trades, generated and encrypted in this browser." },
-  { id: "backup", title: "Back up", description: "Save the backup before you put any SOL in the trading wallet." },
-  { id: "fund", title: "Fund", description: "Move SOL from your connected wallet into the trading wallet." },
-  { id: "mode", title: "Default mode", description: "Choose who signs your trades. You can change it any time." },
+  {
+    id: "connect",
+    label: "Connect wallet",
+    title: "Connect your wallet",
+    description: "Pick the wallet you sign in with. zerofee only sees its public address.",
+  },
+  {
+    id: "signin",
+    label: "Sign in",
+    title: "Sign in",
+    description: "Sign one message to prove the wallet is yours. No password, no email, no fee.",
+  },
+  {
+    id: "wallet",
+    label: "Trading wallet",
+    title: "Create your trading wallet",
+    description: "A separate wallet that signs your trades in this browser, so there is no popup per trade.",
+  },
+  {
+    id: "backup",
+    label: "Back up",
+    title: "Back up the key",
+    description: "Save it before any SOL goes in. Only this key can restore the wallet.",
+  },
+  {
+    id: "limits",
+    label: "Limits",
+    title: "Set your limits",
+    description: "The signer refuses anything above these, even if this page is compromised.",
+  },
+  {
+    id: "fund",
+    label: "Fund",
+    title: "Fund the trading wallet",
+    description: "Keep only what you're willing to trade with. Withdrawing back is one click.",
+  },
+  { id: "done", label: "Done", title: "You're set up", description: "Everything below is saved in this browser." },
 ] as const;
 
 /*
- * Onboarding, full screen and outside the app shell. Compact, left-aligned two-column setup
- * (step list left, current step right) after Melio's and Mercury's account setup:
- * https://mobbin.com/screens/45acbdef-a8f5-466e-920c-3a2f4b3f8fb8
- * https://mobbin.com/screens/8b12e7b5-4bd6-4eea-9a61-7ebbcfa4f855
+ * Onboarding (DESIGN.md 4.19, 5.6): full screen, no top bar or status bar. The logo sits 24 px
+ * from the top-left corner, a 280 px stepper rail starts at y 96, and the content column (max
+ * 440 px) starts at x 344, y 64, top-left aligned. Phones get a 4 px segmented progress bar.
+ * Stepper after OKX's deposit flow: https://mobbin.com/flows/a6c83dd1-51f7-4e6f-95da-faff776eb1ca
  */
 export default function OnboardingPage() {
   const navigate = useNavigate();
   const autoLockMinutes = useSettings((s) => s.autoLockMinutes);
+  const caps = useSettings((s) => s.caps);
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState<ConnectedWallet | null>(null);
   const [session, setSession] = useState<SiwsSession | null>(null);
-  const [created, setCreated] = useState<{ wallet: TradingWallet; phrase: string[] } | null>(null);
+  const [created, setCreated] = useState<TradingWallet | null>(null);
   const [backedUp, setBackedUp] = useState(false);
+  const [limitsSet, setLimitsSet] = useState(false);
   const [funded, setFunded] = useState<FundResult | null>(null);
   const [fundSkipped, setFundSkipped] = useState(false);
-  const [mode, setMode] = useState<TradeMode>(() => useSettings.getState().defaultMode);
-  const mainRef = useRef<HTMLElement>(null);
-  const stepRef = useRef<HTMLElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   const shownStep = useRef(step);
   const simulated = getServices().simulated;
 
@@ -64,45 +92,43 @@ export default function OnboardingPage() {
   }, []);
 
   // On every step change (not the first render): back to the top, and focus moves to the new
-  // step so keyboard and screen-reader users land on its heading.
+  // step so keyboard and screen-reader users land on its title.
   useEffect(() => {
     if (shownStep.current === step) return;
     shownStep.current = step;
-    mainRef.current?.scrollTo({ top: 0 });
-    stepRef.current?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+    contentRef.current?.focus({ preventScroll: true });
   }, [step]);
 
-  const done = [connected !== null, session !== null, created !== null, backedUp, funded !== null || fundSkipped, false];
-  const canVisit = (index: number) => done.slice(0, index).every(Boolean);
+  const done = [connected !== null, session !== null, created !== null, backedUp, limitsSet, funded !== null || fundSkipped, false];
+  const canVisit = (index: number) => !busy && done.slice(0, index).every(Boolean);
   const go = (index: number) => {
     if (index >= 0 && index < STEPS.length && canVisit(index)) setStep(index);
   };
+  const onBusyChange = useCallback((b: boolean) => setBusy(b), []);
 
-  const summaries = [
-    connected ? `${PROVIDER_NAME[connected.provider]} · ${shortAddr(connected.address, 4, 4)}` : null,
+  const sublabels = [
+    connected ? `${PROVIDER_NAME[connected.provider]} · ${shortAddr(connected.address)}` : null,
     session ? `Session until ${fmtClock(session.expiresAt, false)}` : null,
-    created ? `${created.wallet.label} · ${shortAddr(created.wallet.address, 4, 4)}` : null,
-    backedUp ? "Backup confirmed" : null,
-    funded ? `${fmtSolShort(funded.sol)} SOL added` : fundSkipped ? "Skipped" : null,
-    step === STEPS.length - 1 ? MODE_INFO[mode].label : null,
+    created ? `${created.label} · ${created.unlockMethod === "passkey" ? "passkey" : "passphrase"}` : null,
+    backedUp ? "Verified" : null,
+    limitsSet ? `${fmtSolShort(caps.perTradeSol)} SOL per trade · ${fmtSolShort(caps.dailySol)} a day` : null,
+    funded ? `${fmtSol(funded.sol)} SOL` : fundSkipped ? "Skipped" : null,
+    null,
   ];
 
   const meta = STEPS[step] ?? STEPS[0];
-  const frame: StepFrame = { index: step, total: STEPS.length, title: meta.title, description: meta.description };
+  const frame: StepFrame = {
+    title: meta.title,
+    description: meta.description,
+    onBack: step > 0 && !busy ? () => go(step - 1) : null,
+  };
 
   const finish = () => {
     if (!created) return;
-    const settings = useSettings.getState();
-    const wallet = useWallet.getState();
-    settings.setDefaultMode(mode);
-    wallet.setMode(mode);
-    wallet.setActive(created.wallet.address);
-    settings.setOnboarded(true);
-    useToasts.getState().push({
-      kind: "success",
-      title: "Setup complete",
-      body: `${created.wallet.label} is your active trading wallet, in ${MODE_INFO[mode].label} mode.`,
-    });
+    useWallet.getState().setActive(created.address);
+    useSettings.getState().setOnboarded(true);
+    // The finished checklist was the confirmation; no "setup complete" toast (DESIGN.md 4.13).
     navigate("/pulse");
   };
 
@@ -112,11 +138,12 @@ export default function OnboardingPage() {
       <ConnectStep
         frame={frame}
         connected={connected}
-        onBusyChange={setBusy}
+        onBusyChange={onBusyChange}
         onConnected={(wallet) => {
-          // A new connection replaces the session; the new address must sign again.
+          // A new connection replaces the session: the new address must sign again.
           setConnected(wallet);
           setSession(null);
+          setStep(1);
         }}
         onNext={() => go(1)}
       />
@@ -127,9 +154,11 @@ export default function OnboardingPage() {
         frame={frame}
         connected={connected}
         session={session}
-        onBusyChange={setBusy}
-        onSigned={setSession}
-        onBack={() => go(0)}
+        onBusyChange={onBusyChange}
+        onSigned={(s) => {
+          setSession(s);
+          setStep(2);
+        }}
         onNext={() => go(2)}
       />
     );
@@ -137,14 +166,13 @@ export default function OnboardingPage() {
     content = (
       <WalletStep
         frame={frame}
-        created={created?.wallet ?? null}
+        created={created}
         autoLockMinutes={autoLockMinutes}
-        onBusyChange={setBusy}
-        onCreated={(result) => {
-          setCreated(result);
+        onBusyChange={onBusyChange}
+        onCreated={(wallet) => {
+          setCreated(wallet);
           setStep(3);
         }}
-        onBack={() => go(1)}
         onNext={() => go(3)}
       />
     );
@@ -152,75 +180,68 @@ export default function OnboardingPage() {
     content = (
       <BackupStep
         frame={frame}
-        wallet={created.wallet}
-        phrase={created.phrase}
+        wallet={created}
         backedUp={backedUp}
-        onBusyChange={setBusy}
+        onBusyChange={onBusyChange}
         onConfirmed={() => {
           setBackedUp(true);
           setStep(4);
         }}
-        onBack={() => go(2)}
         onNext={() => go(4)}
       />
     );
-  } else if (step === 4 && connected && created) {
+  } else if (step === 4) {
+    content = (
+      <LimitsStep
+        frame={frame}
+        onDone={() => {
+          setLimitsSet(true);
+          setStep(5);
+        }}
+      />
+    );
+  } else if (step === 5 && connected && created) {
     content = (
       <FundStep
         frame={frame}
         connected={connected}
-        wallet={created.wallet}
+        wallet={created}
         funded={funded}
-        onBusyChange={setBusy}
+        onBusyChange={onBusyChange}
         onFunded={setFunded}
         onSkip={() => {
           setFundSkipped(true);
-          setStep(5);
+          setStep(6);
         }}
-        onBack={() => go(3)}
-        onNext={() => go(5)}
+        onNext={() => go(6)}
       />
     );
-  } else if (step === 5 && created) {
-    content = (
-      <ModeStep frame={frame} mode={mode} walletLabel={created.wallet.label} onMode={setMode} onBack={() => go(4)} onFinish={finish} />
-    );
+  } else if (step === 6 && connected && created) {
+    content = <DoneStep frame={frame} connected={connected} wallet={created} backedUp={backedUp} funded={funded} onOpen={finish} />;
   }
 
   return (
-    <div className="flex h-dvh flex-col bg-bg text-fg-1">
-      <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-hairline bg-surface-1 px-4">
-        <Link to="/pulse" aria-label="zerofee home" className="shrink-0">
+    <div className="relative min-h-dvh bg-bg text-fg-1">
+      <header className="flex items-center gap-3 px-3 pt-4 md:absolute md:top-6 md:left-6 md:p-0">
+        <Link to="/pulse" aria-label="zerofee, leave setup" className="shrink-0 rounded-sm">
           <Logo />
         </Link>
-        <span className="hidden text-data text-fg-2 sm:inline">Account setup</span>
-        <div className="ml-auto flex items-center gap-3">
-          {simulated && (
-            <span className="hidden sm:inline-flex">
-              <Chip tone="warn">Simulated</Chip>
-            </span>
-          )}
-          <Link to="/pulse" className="inline-flex items-center gap-1 text-data text-fg-2 hover:text-fg-1">
-            Skip, explore the demo <ArrowRight className="icon-sm" />
-          </Link>
-        </div>
+        {simulated && <Tag tone="warn">Simulated data</Tag>}
       </header>
 
-      <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex max-w-5xl flex-col gap-6 px-4 py-6 sm:px-8 md:flex-row md:gap-8">
-          <aside className="md:w-64 md:shrink-0">
-            <h1 className="text-title font-semibold text-fg-1">Set up zerofee</h1>
-            <p className="mt-1 mb-4 text-data text-fg-2">
-              Connect your wallet, sign in, and create a trading wallet that stays encrypted in this browser.
-              {simulated && " Everything here is simulated: no real wallet, keys or funds."}
-            </p>
-            <StepList steps={STEPS} current={step} done={done} summaries={summaries} canVisit={canVisit} onSelect={go} disabled={busy} />
-          </aside>
-          <section key={step} ref={stepRef} tabIndex={-1} aria-labelledby={STEP_TITLE_ID} className="min-w-0 max-w-2xl flex-1 outline-none">
-            {content}
-          </section>
-        </div>
-      </main>
+      <div className="px-3 pb-16 md:grid md:grid-cols-[280px_minmax(0,440px)] md:gap-x-10 md:px-6">
+        <aside className="pt-4 md:pt-24">
+          <div className="md:hidden">
+            <StepProgress current={step} total={STEPS.length} label={meta.label} />
+          </div>
+          <div className="hidden md:block">
+            <Stepper steps={STEPS} current={step} done={done} sublabels={sublabels} canVisit={canVisit} onSelect={go} />
+          </div>
+        </aside>
+        <main ref={contentRef} key={step} tabIndex={-1} aria-labelledby={STEP_TITLE_ID} className="min-w-0 pt-4 outline-none md:pt-16">
+          {content}
+        </main>
+      </div>
 
       {/* The simulated wallet popup (sign-in, funding) lives in the shell, which isn't mounted here. */}
       <ApprovalModal />

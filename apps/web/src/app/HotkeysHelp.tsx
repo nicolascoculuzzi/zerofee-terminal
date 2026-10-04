@@ -1,61 +1,164 @@
+import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { Button } from "../components/ui/Button";
-import { Hotkey } from "../components/ui/controls";
+import { Hotkey, KeyCap } from "../components/ui/controls";
 import { Modal } from "../components/ui/Modal";
-import { HOTKEY_ACTIONS } from "../lib/hotkeys";
+import { cn } from "../lib/cn";
+import { compactLabel, HOTKEY_ACTIONS, type HotkeyActionInfo, type HotkeyGroup, hasHandler, IS_MAC, TRADE_ACTIONS } from "../lib/hotkeys";
 import { useSettings } from "../state/settings";
 import { useUi } from "../state/ui";
 
+const GROUPS: HotkeyGroup[] = ["General", "Trading", "Pulse", "Token page", "Navigation"];
+const GROUP_NOTE: Partial<Record<HotkeyGroup, string>> = { Pulse: "On Pulse", "Token page": "On token pages", Trading: "Hold Space" };
+
+/*
+ * Shortcut sheet (DESIGN.md 1.5, 6.4): searchable, three columns, grouped by area. Shortcuts
+ * that can't fire here (another page's keys, trade keys while they're off or without a target)
+ * are greyed out, and a modifier legend explains the keycaps. Searchable multi-column sheet after
+ * Obvious; greyed-out shortcuts and a modifier legend after Perplexity:
+ * https://mobbin.com/screens/d1f418bb-9d1a-40b6-a7b5-7b294ef64703
+ * https://mobbin.com/screens/b0a63cb0-ff2e-49a9-90ab-b4dff7f8084d
+ */
 export function HotkeysHelp() {
   const open = useUi((s) => s.hotkeysHelpOpen);
   const setOpen = useUi((s) => s.setHotkeysHelp);
   const openSettings = useUi((s) => s.openSettings);
   const hotkeys = useSettings((s) => s.hotkeys);
   const tradeHotkeys = useSettings((s) => s.tradeHotkeys);
-  const groups = ["General", "Trading", "Navigation"] as const;
+  const [query, setQuery] = useState("");
+
+  // Handlers register per page, so "applies here" is a live handler for the action (computed when
+  // the sheet opens; pages don't change underneath an open modal).
+  const live = useMemo(() => {
+    const set = new Set<string>();
+    if (!open) return set;
+    for (const a of HOTKEY_ACTIONS) {
+      if (hasHandler(a.id) && (!TRADE_ACTIONS.has(a.id) || tradeHotkeys)) set.add(a.id);
+    }
+    return set;
+  }, [open, tradeHotkeys]);
+
+  const q = query.trim().toLowerCase();
+  const matches = (a: HotkeyActionInfo) =>
+    !q || a.label.toLowerCase().includes(q) || (hotkeys[a.id] ?? []).some((b) => compactLabel(b).toLowerCase().includes(q));
+  const groups = GROUPS.map((g) => ({ group: g, actions: HOTKEY_ACTIONS.filter((a) => a.group === g && matches(a)) })).filter(
+    (g) => g.actions.length > 0,
+  );
+
+  const close = () => {
+    setOpen(false);
+    setQuery("");
+  };
+
+  const mods = IS_MAC
+    ? [
+        { k: "Cmd", label: "Command" },
+        { k: "Shift", label: "Shift" },
+        { k: "Option", label: "Option" },
+      ]
+    : [
+        { k: "Ctrl", label: "Control" },
+        { k: "Shift", label: "Shift" },
+        { k: "Alt", label: "Alt" },
+      ];
+
   return (
     <Modal
       open={open}
-      onClose={() => setOpen(false)}
+      onClose={close}
       title="Keyboard shortcuts"
-      width={560}
+      description="Greyed-out keys don't apply on this page right now."
+      width={880}
       footer={
-        <div className="flex items-center justify-between text-label text-fg-3">
-          <span>
-            Trade hotkeys are {tradeHotkeys ? "on" : "off"}. Hold Space, then press the key. Buys target the hovered Pulse card or the open
-            token.
-          </span>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={() => {
-              setOpen(false);
-              openSettings("hotkeys");
-            }}
-          >
-            Edit
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-label text-fg-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {mods.map((m) => (
+              <span key={m.k} className="inline-flex items-center gap-1">
+                <KeyCap k={m.k} /> {m.label}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1">
+              <KeyCap k="Space" /> + key: hold Space, then press the key
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <KeyCap k="G" /> <span className="text-micro">then</span> <KeyCap k="P" />: one after the other
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span>Trade hotkeys {tradeHotkeys ? "on" : "off"}</span>
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() => {
+                close();
+                openSettings("hotkeys");
+              }}
+            >
+              Edit shortcuts
+            </Button>
+          </div>
         </div>
       }
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        {groups.map((g) => (
-          <div key={g} className={g === "Trading" ? "sm:row-span-2" : ""}>
-            <div className="zf-label mb-2">{g}</div>
-            <div className="space-y-1">
-              {HOTKEY_ACTIONS.filter((a) => a.group === g).map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2 text-data">
-                  <span className="text-fg-2">{a.label}</span>
-                  <span className="flex gap-1">
-                    {(hotkeys[a.id] ?? []).map((b) => (
-                      <Hotkey key={b} binding={b} />
-                    ))}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+      <label className="relative mb-3 block w-full sm:w-60">
+        <span className="sr-only">Search shortcuts</span>
+        <Search className="icon-sm pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-fg-3" />
+        <input
+          data-autofocus
+          type="search"
+          className="zf-input pl-7 max-md:h-11"
+          placeholder="Search actions or keys"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && query) {
+              e.preventDefault();
+              e.stopPropagation();
+              setQuery("");
+            }
+          }}
+        />
+      </label>
+      {groups.length === 0 ? (
+        <p className="text-data text-fg-3">No shortcuts match “{query.trim()}”.</p>
+      ) : (
+        <div className="gap-x-6 sm:columns-2 lg:columns-3">
+          {groups.map(({ group, actions }) => (
+            <section key={group} className="mb-4 break-inside-avoid">
+              <div className="flex h-6 items-center justify-between gap-2">
+                <h3 className="zf-group-label">{group}</h3>
+                {GROUP_NOTE[group] && <span className="text-micro text-fg-3">{GROUP_NOTE[group]}</span>}
+              </div>
+              <ul>
+                {actions.map((a) => {
+                  const bindings = hotkeys[a.id] ?? [];
+                  const dim = !live.has(a.id);
+                  return (
+                    <li key={a.id} className="flex min-h-6 items-center justify-between gap-2 py-0.5 text-data">
+                      <span className={cn("min-w-0", dim ? "text-fg-4" : "text-fg-2")}>
+                        {a.label}
+                        {dim && <span className="sr-only"> (not available here)</span>}
+                      </span>
+                      <span className={cn("flex shrink-0 items-center gap-1", dim && "opacity-50")}>
+                        {bindings.length === 0 ? (
+                          <span className="text-label text-fg-4">Not set</span>
+                        ) : (
+                          bindings.map((b, i) => (
+                            <span key={b} className="inline-flex items-center gap-1">
+                              {i > 0 && <span className="text-micro text-fg-3">or</span>}
+                              <Hotkey binding={b} />
+                            </span>
+                          ))
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }
