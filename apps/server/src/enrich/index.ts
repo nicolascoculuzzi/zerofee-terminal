@@ -19,6 +19,7 @@ import { creatorOf, DevHistory, type LaunchStore } from "../market/devHistory";
 import type { PulseBoard } from "../market/pulse";
 import type { MarketState } from "../market/state";
 import type { TokenRecord } from "../market/token";
+import { perf } from "../perf";
 import { RpcClient, RpcError } from "../util/rpc";
 import type { EnrichConfig } from "./config";
 import { DexScreenerClient, DexScreenerError, dexPaidFrom } from "./dexscreener";
@@ -122,7 +123,7 @@ export class Enricher {
   }
 
   start(): void {
-    this.timer ??= setInterval(() => this.tick(), 1_000);
+    this.timer ??= setInterval(() => perf.time("enrich.tick", () => this.tick()), 1_000);
   }
 
   stop(): void {

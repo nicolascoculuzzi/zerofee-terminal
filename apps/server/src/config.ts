@@ -32,6 +32,11 @@ export interface ServerConfig {
    * trader and graduations are found by pool checks).
    */
   rpcLogsTxFetchPerSec: number;
+  /**
+   * Concurrent HTTP reads on RPC_URL (pool / mint / curve bootstraps, blockhash, fees). On the public endpoint every
+   * HTTP read shares the per-IP allowance with the logs stream; keep this low there, or point RPC_URL elsewhere.
+   */
+  rpcMaxConcurrent: number;
   /** After a reconnect or a lost transaction, gap-fill the active coins from chain (history service). */
   rpcLogsGapFill: boolean;
   /** Recycle the logs socket after this long without any message. */
@@ -357,6 +362,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcLogsPrograms: programs as ServerConfig["rpcLogsPrograms"],
     rpcLogsQueueMax: int(env, "RPC_LOGS_QUEUE_MAX", 50_000, 100, 10_000_000),
     rpcLogsTxFetchPerSec: int(env, "RPC_LOGS_TX_FETCH_RPS", 2, 0, 1_000),
+    rpcMaxConcurrent: int(env, "RPC_MAX_CONCURRENT", 4, 1, 256),
     rpcLogsGapFill: bool(env, "RPC_LOGS_GAP_FILL", true),
     rpcLogsIdleMs: int(env, "RPC_LOGS_IDLE_MS", 10_000, 1_000, 600_000),
     rpcLogsSilenceSlots: int(env, "RPC_LOGS_SILENCE_SLOTS", 40, 0, 100_000),
@@ -432,7 +438,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       adminPerMin: int(env, "RATE_LIMIT_ADMIN_PER_MIN", 60, 1, 100_000),
     },
     wsMaxSubscriptions: int(env, "WS_MAX_SUBSCRIPTIONS", 64, 1, 10_000),
-    wsCompression: bool(env, "WS_COMPRESSION", false),
+    // permessage-deflate on the WebSocket: ~54% fewer bytes on the live feed for no measurable CPU (NOTES.md)
+    wsCompression: bool(env, "WS_COMPRESSION", true),
     logLevel: oneOf(env, "LOG_LEVEL", "info", ["debug", "info", "warn", "error"]),
     userDb: { databaseUrl: optional(env, "DATABASE_URL"), pgliteDir: str(env, "PGLITE_DIR", "data/pglite") },
     auth: loadAuth(env),

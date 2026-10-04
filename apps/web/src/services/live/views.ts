@@ -97,9 +97,11 @@ export abstract class View<T extends Topic> implements AnyView {
     this.handlers.add(h);
     if (!this.started) {
       this.started = true;
+      const before = this.seq;
       this.start();
-      return;
+      if (this.seq !== before) return; // start() already emitted to this handler
     }
+    // a late subscriber, or the first one of a view seeded before it (Pulse bootstrap), starts from the state
     const snap = this.current();
     if (snap !== null) h({ type: "snapshot", topic: this.topic, seq: this.seq, data: snap } as ServerMessage<T>);
   }
@@ -163,6 +165,22 @@ export class PulseView extends View<`pulse:${PulseColumnId}`> {
 
   private adapt(t: WireToken) {
     return adaptToken(t, { solUsd: this.host.solUsd(), column: this.column });
+  }
+
+  /**
+   * The REST bootstrap's list (GET /api/pulse), used only until the socket's own snapshot arrives: it lets the
+   * first rows render before the WebSocket is up. Returns false when the socket was faster.
+   */
+  seed(tokens: WireToken[]): boolean {
+    if (this.ready) return false;
+    this.cache.clear();
+    for (const t of tokens) {
+      this.cache.set(t.mint, t);
+      this.host.rememberToken(t);
+    }
+    this.ready = true;
+    this.emitSnapshot({ tokens: tokens.map((t) => this.adapt(t)) });
+    return true;
   }
 
   private onWire(m: WireMessage): void {

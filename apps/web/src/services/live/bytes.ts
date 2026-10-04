@@ -1,5 +1,4 @@
 /** Byte encodings for the wire (standard base64, as packages/protocol specifies) and base58 signatures. */
-import { getBase58Decoder } from "@solana/kit";
 
 export function toBase64(bytes: Uint8Array): string {
   let s = "";
@@ -14,10 +13,31 @@ export function fromBase64(b64: string): Uint8Array {
   return out;
 }
 
-const b58 = getBase58Decoder();
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+/**
+ * Base58 (Bitcoin alphabet) of `bytes`: signatures and keys. Local rather than @solana/kit's codec so the
+ * wallet layer on the first screen does not pull in kit's codecs (bytes.test.ts checks it against kit).
+ */
 export function toBase58(bytes: Uint8Array): string {
-  return b58.decode(bytes);
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  const digits: number[] = [];
+  for (let i = zeros; i < bytes.length; i++) {
+    let carry = bytes[i] as number;
+    for (let j = 0; j < digits.length; j++) {
+      carry += (digits[j] as number) << 8;
+      digits[j] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  let out = "1".repeat(zeros);
+  for (let k = digits.length - 1; k >= 0; k--) out += B58[digits[k] as number];
+  return out;
 }
 
 /** The fee payer's signature (the transaction id) of a wire transaction: [shortvec n][sig 0]... */

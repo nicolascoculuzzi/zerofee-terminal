@@ -101,6 +101,8 @@ export interface DeltaMessage<T extends Topic = Topic> {
   topic: T;
   seq: number;
   data: DeltaData<T>;
+  /** Server clock (epoch ms) when the gateway published it: lets clients measure gateway -> browser latency. */
+  ts?: number;
 }
 
 /**
@@ -115,6 +117,8 @@ export interface CorrectionMessage<T extends Topic = Topic> {
   seq: number;
   data: CorrectionData<T>;
   reason: CorrectionReason;
+  /** Server clock (epoch ms) when the gateway published it. */
+  ts?: number;
 }
 
 /**

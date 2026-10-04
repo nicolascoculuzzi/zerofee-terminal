@@ -1,12 +1,15 @@
 /** SQLite storage: migrations, batched writes, queries, retention, record codec and restore. */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MarketState } from "../src/market/state";
 import { newTokenRecord } from "../src/market/token";
 import { deserializeRecord, serializeRecord } from "../src/storage/codec";
 import { MIGRATIONS, openDb } from "../src/storage/db";
 import { StorageReader } from "../src/storage/reader";
-import { restoreMarket } from "../src/storage/restore";
+import { replayHolders, restoreMarket } from "../src/storage/restore";
 import { StorageWriter } from "../src/storage/writer";
 import { addr, FakeCurve, FakeResolver, synthTx } from "./helpers";
 
@@ -89,6 +92,31 @@ describe("schema", () => {
 });
 
 describe("writer + reader", () => {
+  test("writer thread: batches land in the file database while the main connection reads it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "zf-writer-"));
+    const path = join(dir, "market.db");
+    const db = openDb(path);
+    const writer = new StorageWriter(db, { flushMs: 1_000_000, retentionHours: 72, threadPath: path });
+    expect(writer.threaded).toBe(true);
+    const reader = new StorageReader(db);
+    const m = new MarketState(CFG, { resolver: new FakeResolver(), solUsd: () => 100, storage: writer });
+    m.persistIntervalMs = 0;
+    const mint = addr("thread-mint");
+    const c = new FakeCurve(mint, addr("thread-dev"));
+    m.applyTx(synthTx(30, [c.create(T0), c.buy(addr("thread-dev"), 1_000_000_000n, T0)]));
+    writer.flush();
+    m.applyTx(synthTx(31, [c.buy(addr("t1"), 500_000_000n, T0)])); // queued while the first batch is in flight
+    writer.flush();
+    for (let i = 0; i < 100 && writer.stats.flushes < 1; i++) await Bun.sleep(10);
+    expect(writer.stats.flushes).toBeGreaterThanOrEqual(1);
+    await writer.stop(); // waits for the thread, writes the rest
+    expect(writer.pending).toBe(0);
+    expect((db.query("SELECT COUNT(*) AS n FROM trades").get() as { n: number }).n).toBe(2);
+    expect(reader.token(mint)?.summary.mint).toBe(mint);
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test("trades, candles and tokens are written in one batch; candle upserts coalesce", () => {
     const { writer, reader, db } = setup();
     const resolver = new FakeResolver();
@@ -188,7 +216,7 @@ describe("record codec", () => {
 });
 
 describe("restore", () => {
-  test("restores token records and replays trades to rebuild holders and windows", () => {
+  test("restores token records and replays trades to rebuild holders and windows", async () => {
     const { writer, reader, db } = setup();
     const m = new MarketState(CFG, { resolver: new FakeResolver(), solUsd: () => 100, storage: writer });
     m.persistIntervalMs = 0;
@@ -203,7 +231,19 @@ describe("restore", () => {
 
     const m2 = new MarketState(CFG, { resolver: new FakeResolver(), solUsd: () => 100 });
     const r = restoreMarket(m2, new StorageReader(db), { sinceMs: 0, replaySinceMs: 0, now: Date.now() });
-    expect(r).toMatchObject({ tokens: 1, replayed: 1, trades: 4 });
+    expect(r).toMatchObject({ tokens: 1, replayed: 1 });
+    // phase 1 serves the record at once; holder books fill in from the replay
+    expect(m2.summary(mint)?.name).toBe(before?.name ?? "");
+    // a live trade that arrived meanwhile stays, after the replayed ones
+    m2.applyTx(synthTx(40, [c.buy(addr("r4"), 1_000n, T0 + 2)]));
+    const replay = await replayHolders(m2, new StorageReader(db), r.pending, {
+      replaySinceMs: 0,
+      receivedBefore: Number.MAX_SAFE_INTEGER,
+      yieldFn: async () => {},
+    });
+    expect(replay).toMatchObject({ tokens: 1, trades: 4 });
+    expect(m2.recentTrades(mint).map((t) => t.slot)).toEqual([40, 32, 32, 31, 30]);
+    m2.dropSlot(40);
     const after = m2.summary(mint);
     expect(after).toMatchObject({
       name: before?.name,

@@ -645,11 +645,16 @@ export class Metrics implements MetricsEndpoint {
     }
     if (d.loopLag) {
       const l = d.loopLag.stats();
-      e.add("zerofee_event_loop_lag_seconds", "gauge", "Event-loop lag of the main thread (50 ms timer lateness, last ~5 min).", [
-        [{ quantile: "0.5" }, sec(l.p50)],
-        [{ quantile: "0.99" }, sec(l.p99)],
-        [{ quantile: "1" }, sec(l.max)],
-      ]);
+      e.add(
+        "zerofee_event_loop_lag_seconds",
+        "gauge",
+        "Event-loop lag of the main thread (20 ms timer lateness, last ~5 min; the same monitor as /api/perf).",
+        [
+          [{ quantile: "0.5" }, sec(l.p50)],
+          [{ quantile: "0.99" }, sec(l.p99)],
+          [{ quantile: "1" }, sec(l.max)],
+        ],
+      );
     }
 
     // --- storage, RPC, market ---------------------------------------------------------------------

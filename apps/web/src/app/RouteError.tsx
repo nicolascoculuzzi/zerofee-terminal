@@ -1,6 +1,6 @@
 import { AlertTriangle, Check, Copy, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { isRouteErrorResponse, useLocation, useNavigate, useRouteError } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Button } from "../components/ui/Button";
 import { Logo } from "./Logo";
 
@@ -16,16 +16,11 @@ function isChunkError(message: string): boolean {
  * https://mobbin.com/screens/ff81f1e9-25b1-46f9-8448-31fa40a77e4b and
  * https://mobbin.com/screens/a30b7056-97ec-437b-a3ff-d7365cd86a49
  */
-export function RouteError() {
-  const error = useRouteError();
+export function RouteError({ error }: { error: unknown }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [copied, setCopied] = useState(false);
-  const message = isRouteErrorResponse(error)
-    ? `${error.status} ${error.statusText}`
-    : error instanceof Error
-      ? error.message
-      : "Something went wrong";
+  const message = error instanceof Error ? error.message : "Something went wrong";
   const chunk = isChunkError(message);
 
   useEffect(() => {

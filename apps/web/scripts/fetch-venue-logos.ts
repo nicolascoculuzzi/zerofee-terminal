@@ -97,7 +97,7 @@ function pngFromIco(b: Uint8Array): Uint8Array | null {
 async function raster(url: string): Promise<Uint8Array | null> {
   const r = await get(url);
   if (!r?.ok) return null;
-  let b = new Uint8Array(await r.arrayBuffer());
+  let b: Uint8Array = new Uint8Array(await r.arrayBuffer());
   if (url.toLowerCase().includes(".ico") || (b[0] === 0 && b[2] === 1)) b = pngFromIco(b) ?? new Uint8Array(0);
   if (!b.length || b[0] === 0x3c) return null; // empty or markup (SVG / HTML)
   try {

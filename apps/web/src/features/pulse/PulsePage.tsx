@@ -1,5 +1,5 @@
 import { Columns3 } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, type RefObject, Suspense, useEffect, useRef } from "react";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
 import { Segmented } from "../../components/ui/controls";
@@ -12,14 +12,20 @@ import { MobilePulse } from "./MobilePulse";
 import { PulseColumn } from "./PulseColumn";
 import { PulseToolbar } from "./PulseToolbar";
 import { usePulseUi } from "./store";
-import { TipLayer } from "./TipLayer";
-import { ConfirmDevDialog, TokenMenu } from "./TokenMenu";
-import { renderTip } from "./tipContent";
 import { usePulseHotkeys } from "./usePulseHotkeys";
 
 // Opened on demand: kept out of the Pulse route's first load (DESIGN.md 8, initial JS).
 const FilterModal = lazy(() => import("./FilterModal").then((m) => ({ default: m.FilterModal })));
 const BlacklistModal = lazy(() => import("./BlacklistModal").then((m) => ({ default: m.BlacklistModal })));
+// Hover tips, the card menu and the dev-sell confirm: mounted with the page, their code loads right after the
+// first rows (state lives in the Pulse store, so nothing opened meanwhile is lost).
+const TipLayer = lazy(() =>
+  Promise.all([import("./TipLayer"), import("./tipContent")]).then(([t, c]) => ({
+    default: ({ root }: { root: RefObject<HTMLElement | null> }) => <t.TipLayer root={root} render={c.renderTip} />,
+  })),
+);
+const TokenMenu = lazy(() => import("./TokenMenu").then((m) => ({ default: m.TokenMenu })));
+const ConfirmDevDialog = lazy(() => import("./TokenMenu").then((m) => ({ default: m.ConfirmDevDialog })));
 
 const SHORT_TITLE: Record<PulseColumnId, string> = { new: "New", final: "Final", migrated: "Migrated" };
 
@@ -101,7 +107,9 @@ export default function PulsePage() {
           ))}
         </div>
       )}
-      <TipLayer root={root} render={renderTip} />
+      <Suspense fallback={null}>
+        <TipLayer root={root} />
+      </Suspense>
       {filterOpen && (
         <Suspense fallback={null}>
           <FilterModal />
@@ -112,8 +120,10 @@ export default function PulsePage() {
           <BlacklistModal />
         </Suspense>
       )}
-      <TokenMenu />
-      <ConfirmDevDialog />
+      <Suspense fallback={null}>
+        <TokenMenu />
+        <ConfirmDevDialog />
+      </Suspense>
     </div>
   );
 }

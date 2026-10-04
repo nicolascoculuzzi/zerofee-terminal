@@ -54,6 +54,7 @@ import { logger } from "../log";
 import { COLUMNS, diffSummary, type PulseBoard } from "../market/pulse";
 import type { FeedItem, MarketState } from "../market/state";
 import type { MetricsEndpoint } from "../metrics";
+import { perf } from "../perf";
 import type { StorageReader } from "../storage/reader";
 import type { UserTopicSource } from "../user";
 import type { AuthProvider, Session } from "./auth";
@@ -156,11 +157,18 @@ export class Gateway {
   private readonly lastToken = new Map<string, TokenSummary>();
   private readonly recentFeed: FeedItem[] = [];
   private pendingChain: ChainDelta | null = null;
+  private bootstrapCache: { key: string; body: string; gzip: Uint8Array | null } | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   private connections = 0;
+  /**
+   * WS_COMPRESSION: Bun compresses `server.publish()` (every delta) by itself once permessage-deflate is
+   * negotiated, but `ws.send()` only when asked, so snapshots, the largest messages, pass this flag.
+   */
+  private readonly compress: boolean;
   readonly stats = { connections: 0, messagesIn: 0, rejected: 0, backpressureCloses: 0 };
 
   constructor(private readonly d: GatewayDeps) {
+    this.compress = d.cfg.wsCompression;
     this.restLimiter = new RateLimiter(d.cfg.rateLimit.restPerSec, d.cfg.rateLimit.restBurst);
     this.txLimiter = new RateLimiter(d.cfg.rateLimit.txPerSec, d.cfg.rateLimit.txPerSec * 2);
     this.wsLimiter = new RateLimiter(d.cfg.rateLimit.wsMsgPerSec, d.cfg.rateLimit.wsMsgPerSec * 2);
@@ -239,12 +247,12 @@ export class Gateway {
     this.d.user?.sessions.onRevoke((ids) => this.closeSessions(ids));
     const f = this.d.cfg.flush;
     this.timers.push(
-      setInterval(() => this.flushPulse(), f.pulseMs),
-      setInterval(() => this.flushTape(), f.tapeMs),
-      setInterval(() => this.flushCandles(), f.candleMs),
+      setInterval(() => perf.time("gateway.flushPulse", () => this.flushPulse()), f.pulseMs),
+      setInterval(() => perf.time("gateway.flushTape", () => this.flushTape()), f.tapeMs),
+      setInterval(() => perf.time("gateway.flushCandles", () => this.flushCandles()), f.candleMs),
       setInterval(() => this.flushChain(), f.chainMs),
-      setInterval(() => this.flushDebug(), 250),
-      setInterval(() => this.expirePulse(), 5_000),
+      setInterval(() => perf.time("gateway.flushDebug", () => this.flushDebug()), 250),
+      setInterval(() => perf.time("gateway.expirePulse", () => this.expirePulse()), 5_000),
       setInterval(() => this.closeExpiredSessions(), 15_000),
     );
     log.info(`listening on http://${this.d.cfg.host}:${this.port} (ws /ws, debug /debug)`);
@@ -329,7 +337,9 @@ export class Gateway {
       return apiError(429, "rate_limited", "slow down");
     }
     try {
-      if (req.method === "GET" && url.pathname === "/api/health") return json(this.d.health());
+      if (req.method === "GET" && url.pathname === "/api/health") return json(perf.time("api.health", () => this.d.health()));
+      if (req.method === "GET" && url.pathname === "/api/perf") return json(perf.report());
+      if (req.method === "GET" && url.pathname === "/api/pulse") return this.pulseBootstrap(req);
       if (req.method === "GET" && url.pathname === "/metrics") {
         const r = this.d.metrics?.handle(req, server.requestIP(req)?.address ?? null);
         if (r) return r;
@@ -374,6 +384,32 @@ export class Gateway {
       log.error(`${req.method} ${url.pathname} failed: ${e instanceof Error ? e.message : e}`);
       return apiError(500, "internal", "internal error");
     }
+  }
+
+  /**
+   * GET /api/pulse: all three Pulse lists in one response (PulseBootstrapResponse), from the same cached
+   * snapshots the WebSocket sends. The page fetches it in parallel with its JavaScript (index.html preload),
+   * so rows can render before the socket is up; the socket's snapshots then take over. gzip when accepted.
+   */
+  private pulseBootstrap(req: Request): Response {
+    const t0 = performance.now();
+    const p = this.d.pulse;
+    const key = `${p.version.new}|${p.version.final}|${p.version.migrated}`;
+    let c = this.bootstrapCache;
+    if (!c || c.key !== key) {
+      const body = `{"at":${Date.now()},"columns":{"new":${p.snapshotJson("new")},"final":${p.snapshotJson("final")},"migrated":${p.snapshotJson("migrated")}}}`;
+      c = { key, body, gzip: null };
+      this.bootstrapCache = c;
+    }
+    const headers: Record<string, string> = { "content-type": "application/json", "cache-control": "no-store", vary: "accept-encoding" };
+    let out: string | Uint8Array = c.body;
+    if (/\bgzip\b/.test(req.headers.get("accept-encoding") ?? "") && c.body.length > 1024) {
+      c.gzip ??= Bun.gzipSync(new TextEncoder().encode(c.body), { level: 4 });
+      out = c.gzip;
+      headers["content-encoding"] = "gzip";
+    }
+    perf.span("api.pulse", performance.now() - t0);
+    return new Response(out as BodyInit, { headers });
   }
 
   private getToken(mint: string): Response {
@@ -573,10 +609,17 @@ export class Gateway {
       return;
     }
     // Snapshot and subscribe in one synchronous step: no publish can interleave.
-    const data = parsed
-      ? this.snapshotData(topic as Topic, parsed)
-      : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
-    ws.send(this.hub.snapshot(topic, data));
+    const t0 = performance.now();
+    if (parsed?.kind === "pulse") {
+      // precomputed: one serialization per list change, shared by every connecting client
+      ws.send(this.hub.snapshotRaw(topic, `{"tokens":${this.d.pulse.snapshotJson(parsed.column)}}`), this.compress);
+    } else {
+      const data = parsed
+        ? this.snapshotData(topic as Topic, parsed)
+        : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
+      ws.send(this.hub.snapshot(topic, data), this.compress);
+    }
+    perf.span(`gateway.snapshot.${parsed?.kind ?? "debug"}`, performance.now() - t0);
     if (!ws.data.subs.has(topic)) {
       ws.data.subs.set(topic, topic);
       ws.subscribe(topic);
@@ -639,7 +682,7 @@ export class Gateway {
       if (stillWanted) this.sendError(ws, "unavailable", "no snapshot for this topic right now", topic);
       return;
     }
-    ws.send(this.hub.snapshot(internal, data, topic));
+    ws.send(this.hub.snapshot(internal, data, topic), this.compress);
     if (ws.data.subs.get(topic) === internal) {
       this.hub.removeSubscriber(internal); // resync of an existing subscription: keep one count
       return;
@@ -724,17 +767,29 @@ export class Gateway {
   /** Pulse lists + token headers (4-10 Hz). */
   flushPulse(now = Date.now()): void {
     const m = this.d.market;
-    const changed = [...m.changes.tokens];
-    m.changes.tokens.clear();
+    const changedAt = m.changes.tokens;
+    const changed = [...changedAt.keys()];
     if (changed.length && this.d.onTokensChanged) {
+      const t0 = performance.now();
       try {
         this.d.onTokensChanged(changed);
       } catch (e) {
         log.error(`token change listener failed: ${e instanceof Error ? e.message : e}`);
       }
+      perf.span("gateway.onTokensChanged", performance.now() - t0);
     }
     const deltas = this.d.pulse.update(changed, (mint) => m.summary(mint), now);
-    for (const col of COLUMNS) this.publishPulse(col, deltas[col]);
+    for (const col of COLUMNS) {
+      this.publishPulse(col, deltas[col]);
+      for (const u of deltas[col].upsert) {
+        const at = changedAt.get(u.mint);
+        if (at !== undefined) perf.stage("gateway.pulseWait", now - at);
+        // a launch entering New Pairs: block time -> publish
+        if (col === "new" && "createdAt" in u && typeof u.createdAt === "number" && now - u.createdAt < 120_000)
+          perf.stage("e2e.launchPublish", now - u.createdAt);
+      }
+    }
+    changedAt.clear();
     for (const mint of changed) {
       const topic = `token:${mint}`;
       if (!this.hub.hasSubscribers(topic)) continue;
@@ -763,7 +818,14 @@ export class Gateway {
   /** Trade tape, trade corrections and trade contexts (50-100 ms). */
   flushTape(): void {
     const c = this.d.market.changes;
-    for (const [mint, trades] of c.trades) this.hub.publish(`trades:${mint}`, "delta", { trades });
+    const now = Date.now();
+    for (const [mint, trades] of c.trades) {
+      this.hub.publish(`trades:${mint}`, "delta", { trades });
+      for (const t of trades) {
+        perf.stage("gateway.tapeWait", now - t.receivedAt);
+        perf.stage("e2e.tradePublish", now - t.blockTime);
+      }
+    }
     c.trades.clear();
     for (const [mint, corr] of c.tradeCorrections) {
       const reason = corr.remove.length ? "dead_slot" : "late_event";

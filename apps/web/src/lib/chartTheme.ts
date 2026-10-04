@@ -77,7 +77,8 @@ function localTick(time: Time, type: TickMarkType): string {
  * Base options for every Lightweight Charts instance (DESIGN.md 4.10): surface-1 canvas, quiet
  * grid, 11px Plex Sans axis text in text-3, dashed crosshair with surface-3 label chips.
  * `attributionLogo` stays on: it is the link to tradingview.com that the Apache-2.0 NOTICE
- * requires (see apps/web/NOTICE).
+ * requires (see apps/web/NOTICE). The library styles it with an inline <style> element, which the CSP allows
+ * by its sha256 only (apps/web/csp.ts, deploy/docker/Caddyfile).
  */
 export function baseChartOptions(c: ChartColors): DeepPartial<ChartOptions> {
   return {

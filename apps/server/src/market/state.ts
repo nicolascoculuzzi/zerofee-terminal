@@ -75,6 +75,7 @@ import { AccountResolver, type CurveResolved, type MintResolved, type PoolInfo }
 import { type CoinAccounts, eventMatchesCoin } from "../history/coin";
 import type { LaunchLabMigration, RaydiumEventAccounts } from "../ingest/raydium";
 import type { IngestTx } from "../ingest/types";
+import { perf } from "../perf";
 import { rowToTrade, type TradeRow } from "../storage/reader";
 import { BoundedSet, LruMap } from "../util/lru";
 import { RateCounter, SampleRing } from "../util/stats";
@@ -164,7 +165,8 @@ export interface FeedItem {
 }
 
 export class ChangeLog {
-  readonly tokens = new Set<string>();
+  /** Changed mints -> when they first changed since the last Pulse flush (ms; the gateway's pulseWait). */
+  readonly tokens = new Map<string, number>();
   readonly tradeCtx = new Set<string>();
   readonly trades = new Map<string, Trade[]>();
   readonly tradeCorrections = new Map<string, { remove: string[]; upsert: Trade[] }>();
@@ -172,6 +174,10 @@ export class ChangeLog {
   readonly candles = new Map<string, Map<number, Candle>>();
   readonly candleCorrections = new Map<string, Map<number, Candle>>();
   readonly feed: FeedItem[] = [];
+
+  token(mint: string, now: number): void {
+    if (!this.tokens.has(mint)) this.tokens.set(mint, now);
+  }
 
   pushTrade(t: Trade): void {
     const list = this.trades.get(t.mint);
@@ -470,7 +476,7 @@ export class MarketState {
 
   private touch(rec: TokenRecord): void {
     rec.updatedAt = this.now();
-    this.changes.tokens.add(rec.mint);
+    this.changes.token(rec.mint, Date.now());
   }
 
   private getOrCreate(mint: string, init: Partial<TokenRecord> = {}): TokenRecord {
@@ -1332,8 +1338,10 @@ export class MarketState {
     if (!this.deps.storage) return;
     const now = this.now();
     if (!force && now - rec.lastPersistAt < this.persistIntervalMs) return;
+    const t0 = performance.now();
     rec.lastPersistAt = now;
     this.deps.storage.token(rec, this.summary(rec.mint) as TokenSummary);
+    perf.span("market.persist", performance.now() - t0);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -2018,7 +2026,7 @@ export class MarketState {
         if (rec && rec.createdSlot === slot && rec.trades.length === 0) {
           this.tokens.delete(mint);
           this.candles.evict(mint);
-          this.changes.tokens.add(mint);
+          this.changes.token(mint, Date.now());
         }
       }
       for (const mint of t.migrations) {

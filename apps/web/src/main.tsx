@@ -8,6 +8,9 @@ import "@fontsource-variable/ibm-plex-sans/standard.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./index.css";
+import { mark } from "./lib/perf";
+
+mark("zf:boot");
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root missing");
@@ -15,12 +18,14 @@ if (!root) throw new Error("#root missing");
 // The service container (simulation or live gateway) loads before the first render: every store and
 // page reads it synchronously.
 initServices().then(
-  () =>
+  () => {
+    mark("zf:services");
     createRoot(root).render(
       <StrictMode>
         <App />
       </StrictMode>,
-    ),
+    );
+  },
   (e: unknown) => {
     // One quiet line, top-left (DESIGN.md 4.18); nothing else can render without the services.
     root.textContent = `zerofee could not start: ${e instanceof Error ? e.message : String(e)}`;

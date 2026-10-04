@@ -456,7 +456,7 @@ export class HistoryService {
       coin.pumpPool = null; // never resolved: walk the curve only
     }
     job.coin = coin;
-    this.d.writer.flush();
+    await this.d.writer.drain();
     const row = this.d.store.historyRow(job.mint);
     const cursors = row?.cursors ? (JSON.parse(row.cursors) as Record<string, string>) : {};
     // gap-fill of a coin whose walk once completed: stop at the newest signature covered then
@@ -535,7 +535,7 @@ export class HistoryService {
     this.stats.tradesAdded += added.length;
     let candles: Map<Timeframe, Candle[]> = new Map();
     if (added.length) {
-      this.d.writer.flush();
+      await this.d.writer.drain();
       await new Promise((r) => setImmediate(r));
       candles = this.d.market.rebuildCandleWindows(
         job.mint,
@@ -568,7 +568,7 @@ export class HistoryService {
     const rec = this.d.market.tokens.get(job.mint);
     if (job.buffer.length && rec && job.coin) await this.merge(job);
     if (!rec) return;
-    this.d.writer.flush();
+    await this.d.writer.drain();
     const walked = job.walks.length > 0 && job.walks.every((w) => w.done);
     const prev = this.d.store.historyRow(job.mint);
     const prevComplete = prev?.state === "complete" || (prev?.fromCreation === true && !prev.capped);

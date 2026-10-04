@@ -438,3 +438,33 @@ describe("holder shares never exceed the circulating supply", () => {
     expect(w.market.summary(f.mint)?.holders).toBe(ref.market.summary(f.mint)?.holders ?? -1);
   });
 });
+
+describe("backfill writes go through the writer thread", () => {
+  test("drain() makes queued trades and coverage readable from another connection", async () => {
+    const dir = await import("node:fs").then((fs) => fs.mkdtempSync(`${(process.env.TMPDIR ?? "/tmp").replace(/\/$/, "")}/zf-hist-`));
+    const path = `${dir}/market.db`;
+    const db = openDb(path);
+    const writer = new StorageWriter(db, { flushMs: 1_000_000, retentionHours: 72, threadPath: path });
+    expect(writer.threaded).toBe(true);
+    const market = new MarketState(CFG, { resolver: new FakeResolver(), solUsd: () => 100, storage: writer });
+    const life = coinLife("thread", 30);
+    for (const tx of life.txs) market.applyTx(tx);
+    writer.history({
+      mint: life.mint,
+      state: "complete",
+      fromSlot: 5_000,
+      fromTime: 1,
+      fromCreation: true,
+      capped: false,
+      trades: 31,
+      cursors: null,
+      retainUntil: null,
+      updatedAt: Date.now(),
+    });
+    await writer.drain();
+    const other = new StorageReader(openDb(path));
+    expect(other.tradesOfMint(life.mint)).toHaveLength(31);
+    expect(other.historyRow(life.mint)).toMatchObject({ state: "complete", trades: 31 });
+    await writer.stop();
+  });
+});

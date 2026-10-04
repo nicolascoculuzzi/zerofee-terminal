@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type {
   HealthResponse,
   LookupTablesResponse,
+  PerfResponse,
+  PulseBootstrapResponse,
   SearchResponse,
   SourceHealth,
   TokenResponse,
@@ -16,6 +18,7 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
 import { setLogLevel } from "../src/log";
+import { perf } from "../src/perf";
 import { openDb } from "../src/storage/db";
 import { RpcClient } from "../src/util/rpc";
 import { addr, FakeCurve, mockFetch, synthTx, waitFor } from "./helpers";
@@ -199,6 +202,95 @@ describe("REST", () => {
     const h = (await (await fetch(`${base}/api/health`)).json()) as HealthResponse;
     expect(h).toMatchObject({ ok: true, dryRun: true, sources: [{ name: "test" }] });
     expect(h.ingest.launches).toBeGreaterThanOrEqual(1);
+  });
+
+  test("GET /api/pulse: the three lists as the WebSocket snapshots send them; GET /api/perf", async () => {
+    const r = await fetch(`${base}/api/pulse`);
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    const b = (await r.json()) as PulseBootstrapResponse;
+    expect(b.columns.new.some((t) => t.mint === mint)).toBe(true);
+    expect(Object.keys(b.columns)).toEqual(["new", "final", "migrated"]);
+    const c = await Client.connect(`${base.replace("http", "ws")}/ws`);
+    c.send({ type: "subscribe", topic: "pulse:new" });
+    const snap = await c.next((m) => m.topic === "pulse:new" && m.type === "snapshot");
+    expect(snap.data.tokens.map((t: { mint: string }) => t.mint)).toEqual(b.columns.new.map((t) => t.mint));
+    c.ws.close();
+    const p = (await (await fetch(`${base}/api/perf`)).json()) as PerfResponse;
+    expect(p.loop.samples).toBeGreaterThanOrEqual(0);
+    expect(p.stages["detect.trade"]?.count).toBeGreaterThan(0);
+  });
+
+  test("WS_COMPRESSION (on by default): snapshots, sent with ws.send(), are deflated on the wire too", async () => {
+    expect(app.gateway.port).toBeGreaterThan(0);
+    // a TCP proxy that counts the bytes the server sends
+    let down = 0;
+    type Pipe = { other: import("bun").Socket<Pipe> | null; early: Uint8Array[] };
+    const proxy = Bun.listen<Pipe>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(c) {
+          c.data = { other: null, early: [] };
+          void Bun.connect<Pipe>({
+            hostname: "127.0.0.1",
+            port: app.gateway.port,
+            data: { other: c, early: [] },
+            socket: {
+              open(u) {
+                c.data.other = u;
+                for (const x of c.data.early) u.write(x);
+              },
+              data(_u, d) {
+                down += d.byteLength;
+                c.write(d);
+              },
+              close() {
+                c.end();
+              },
+            },
+          });
+        },
+        data(c, d) {
+          if (c.data.other) c.data.other.write(d);
+          else c.data.early.push(d.slice());
+        },
+        close(c) {
+          c.data.other?.end();
+        },
+      },
+    });
+    try {
+      const c = await Client.connect(`ws://127.0.0.1:${proxy.port}/ws`);
+      expect(c.ws.extensions).toContain("permessage-deflate");
+      const handshake = down;
+      let payload = 0;
+      c.ws.addEventListener("message", (ev) => {
+        payload += Buffer.byteLength(String(ev.data));
+      });
+      c.send({ type: "subscribe", topic: "pulse:new" });
+      await c.next((m) => m.topic === "pulse:new" && m.type === "snapshot");
+      await waitFor(() => payload > 0);
+      expect(payload).toBeGreaterThan(500);
+      expect(down - handshake).toBeLessThan(payload * 0.75);
+      c.ws.close();
+    } finally {
+      proxy.stop(true);
+    }
+  });
+
+  test("one event-loop lag monitor feeds /api/perf, /api/health and /metrics", async () => {
+    expect(app.loopLag).toBe(perf.loop);
+    expect(perf.loop.running).toBe(true);
+    await waitFor(() => perf.loop.samples.count > 0);
+    const p = (await (await fetch(`${base}/api/perf`)).json()) as PerfResponse;
+    const h = (await (await fetch(`${base}/api/health`)).json()) as HealthResponse;
+    expect(p.loop.intervalMs).toBe(20);
+    expect(p.loop.samples).toBeGreaterThan(0);
+    // the same ring: health is read a moment later, so it has at least as many samples (a 20 ms tick apart)
+    expect(h.eventLoopLag?.samples ?? 0).toBeGreaterThanOrEqual(p.loop.samples);
+    expect((h.eventLoopLag?.samples ?? 0) - p.loop.samples).toBeLessThan(25);
+    const metrics = await (await fetch(`${base}/metrics`)).text();
+    expect(metrics).toContain('zerofee_event_loop_lag_seconds{quantile="0.99"}');
   });
 
   test("GET /api/tokens/:mint (known, unknown, invalid)", async () => {

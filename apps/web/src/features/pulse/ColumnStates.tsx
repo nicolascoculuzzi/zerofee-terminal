@@ -1,8 +1,10 @@
 import { SearchX, SlidersHorizontal } from "lucide-react";
+import { useEffect } from "react";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
 import { FINAL_STRETCH_PROGRESS } from "../../config";
 import { cn } from "../../lib/cn";
+import { mark } from "../../lib/perf";
 import type { PulseColumnId } from "../../protocol";
 import { AVATAR_TRACK } from "./cardView";
 
@@ -19,6 +21,7 @@ const TICKER_W = ["w-10", "w-14", "w-12", "w-16"];
 const NAME_W = ["w-20", "w-14", "w-24", "w-16"];
 
 export function SkeletonCards({ count = 8, mobile }: { count?: number; mobile?: boolean }) {
+  useEffect(() => mark("zf:skeleton"), []);
   if (mobile) {
     return (
       <div aria-hidden="true">

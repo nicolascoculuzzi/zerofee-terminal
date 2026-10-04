@@ -1,9 +1,11 @@
 import { useEffect } from "react";
-import { RouterProvider } from "react-router";
+import { BrowserRouter } from "react-router";
+import { preloadTradeActions } from "../lib/tradeActionsLazy";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { whenIdle } from "../lib/whenIdle";
 import { startFeed } from "../state/feed";
 import { useSettings } from "../state/settings";
-import { router } from "./routes";
+import { AppRoutes } from "./routes";
 
 /**
  * Root: applies data-theme, data-density and data-cvd on <html> from settings (DESIGN.md 9.5
@@ -32,6 +34,12 @@ export function App() {
   }, [resolvedTheme, resolvedDensity, cvd]);
 
   useEffect(() => startFeed(), []);
+  // Trade actions load once the first screen is up, long before a click needs them.
+  useEffect(() => whenIdle(() => void preloadTradeActions().catch(() => undefined), 3_000), []);
 
-  return <RouterProvider router={router} />;
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
+  );
 }

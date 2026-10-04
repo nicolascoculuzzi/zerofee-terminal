@@ -34,12 +34,13 @@ import { WorkPool } from "./media/pool";
 import { pumpCdnUrl } from "./media/proxy";
 import { Metrics } from "./metrics";
 import { createOrderService, type OrderService, type OrderServiceOverrides } from "./orders";
+import { perf, ringStat } from "./perf";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
-import { restoreMarket } from "./storage/restore";
+import { replayHolders, restoreMarket } from "./storage/restore";
 import { StorageWriter } from "./storage/writer";
 import type { UserLayer } from "./user";
-import { LoopLagMonitor } from "./util/loopLag";
+import type { LoopLagMonitor } from "./util/loopLag";
 import { RpcClient } from "./util/rpc";
 import { WalletFeed } from "./wallets/feed";
 
@@ -146,9 +147,14 @@ export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
 
 export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const startedAt = Date.now();
-  const rpc = o.rpc ?? new RpcClient({ url: cfg.rpcUrl, fetchFn: o.fetchFn });
+  const rpc = o.rpc ?? new RpcClient({ url: cfg.rpcUrl, fetchFn: o.fetchFn, maxConcurrent: cfg.rpcMaxConcurrent });
   const db = o.db ?? openDb(cfg.dbPath);
-  const writer = new StorageWriter(db, { flushMs: cfg.flushIntervalMs, retentionHours: cfg.tradesRetentionHours });
+  const writer = new StorageWriter(db, {
+    flushMs: cfg.flushIntervalMs,
+    retentionHours: cfg.tradesRetentionHours,
+    // the server's own database file: inserts run on the writer thread, off the event loop
+    threadPath: o.db ? null : cfg.dbPath,
+  });
   const reader = new StorageReader(db);
   const solUsd = o.solUsd === undefined ? new SolUsdFeed({ urls: cfg.binanceWsUrls, staleMs: cfg.solUsdStaleMs }) : o.solUsd;
 
@@ -158,15 +164,17 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   // wallet:<address> feed (built once the gateway exists; it needs the topic hub).
   let walletFeed: WalletFeed | null = null;
   const resolver = new AccountResolver(rpc, {
-    pool: (p) => market?.onPoolReady(p),
-    mint: (m) => market?.onMintResolved(m),
-    curve: (c) => market?.onCurveResolved(c),
-    metaplex: (mint, md) => market?.onMetaplexResolved(mint, md),
+    pool: (p) => perf.time("market.onPoolReady", () => market?.onPoolReady(p)),
+    mint: (m) => perf.time("market.onMintResolved", () => market?.onMintResolved(m)),
+    curve: (c) => perf.time("market.onCurveResolved", () => market?.onCurveResolved(c)),
+    metaplex: (mint, md) => perf.time("market.onMetaplexResolved", () => market?.onMetaplexResolved(mint, md)),
     persistPool: (p) => writer.pool(p),
   });
   resolver.loadPools(reader.pools());
-  const loopLag = new LoopLagMonitor();
-  loopLag.start();
+  // The process's one event-loop lag monitor: /api/perf, /api/health and /metrics all read it. Process-wide
+  // like `perf` itself (its timer is unref'd), so stop() leaves it running for the next app in the process.
+  perf.start();
+  const loopLag = perf.loop;
   // Image and metadata fetches share one pacer (same IPFS gateways) and one pool of niced worker processes
   // for the CPU work (decode / resize / encode, JSON parsing), so the event loop only routes bytes.
   const pacer = new HostPacer({ limits: cfg.media.hostLimits, fallback: cfg.media.hostFallback });
@@ -245,14 +253,21 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
   const now = Date.now();
-  restoreMarket(m, reader, {
+  perf.externalStage("detect.trade", () => ringStat(m.latency));
+  perf.externalStage("detect.launch", () => ringStat(m.launchLatency));
+  const replaySinceMs = now - cfg.replayHours * 3_600_000;
+  // Phase 1 (records only) now; the trade replay that rebuilds holder books runs after ingest started.
+  const restored = restoreMarket(m, reader, {
     sinceMs: now - Math.max(cfg.pulse.migratedWindowMs, cfg.pulse.newMaxAgeMs),
-    replaySinceMs: now - cfg.replayHours * 3_600_000,
+    replaySinceMs,
     now,
   });
 
   const pulse = new PulseBoard(cfg.pulse);
   pulseRef = pulse;
+  // Seed the Pulse lists with the restored tokens so the very first snapshot is complete (otherwise a
+  // quiet restored token only appears once it trades again).
+  perf.time("restore.pulseSeed", () => pulse.update(m.tokens.keys(), (mint) => m.summary(mint), now));
   // Restored tokens' images: refetched in the background (priority 2, IMG_BACKGROUND_RPS), disk hits first.
   for (const [mint, rec] of m.tokens) if (rec.image) media.warm(mint, PRIORITY.background);
   let gateway: Gateway | null = null;
@@ -287,7 +302,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     o.source === undefined
       ? createSource(cfg, { rpc, txRpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) })
       : o.source;
-
+  if (source instanceof RpcLogsSource) {
+    const delay = source.slotDelay;
+    perf.externalStage("rpc.afterSlot", () => ringStat(delay));
+  }
   // Trade history: its own client and budget; on the live endpoint it yields while the live re-reads cool down.
   let history: HistoryService | null = null;
   const historyReader: HistoryReader | null =
@@ -328,9 +346,13 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   let orders: (OrderService & { ready: Promise<void> }) | null = null;
   const sink: IngestSink = {
     tx: (tx) => {
+      const t0 = performance.now();
       m.applyTx(tx);
+      const t1 = performance.now();
+      perf.span("market.applyTx", t1 - t0);
       o.user?.trackers.onTx(tx);
       orders?.engine.onIngestTx(tx);
+      perf.span("sink.trackersOrders", performance.now() - t1);
       if (reconciler) {
         for (const ev of tx.events) {
           if (ev.kind !== "pumpCreate" && ev.kind !== "pumpMigrate") continue;
@@ -576,6 +598,12 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     enricher?.start();
   }
   source?.start(sink);
+  let stopped = false;
+  const replay = restored.pending.length
+    ? replayHolders(m, reader, restored.pending, { replaySinceMs, receivedBefore: startedAt, cancelled: () => stopped }).catch((e) =>
+        log.error(`trade replay failed: ${e instanceof Error ? e.message : e}`),
+      )
+    : Promise.resolve();
   history?.start();
   pumpPortal?.start((ev) =>
     reconciler?.seenCross(ev.kind, ev.mint, ev.receivedAt, {
@@ -625,6 +653,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     history,
     health,
     async stop() {
+      stopped = true;
+      await replay;
       clearInterval(evictTimer);
       await history?.stop();
       if (raydiumTimer) clearInterval(raydiumTimer);
@@ -642,10 +672,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       metadata.stop();
       media.stop();
       workPool.stop();
-      loopLag.stop();
       await gateway?.stop();
       await user?.stop();
-      writer.stop();
+      await writer.stop();
       if (!o.db) db.close();
     },
   };

@@ -26,6 +26,105 @@ What changed:
 - Holder shares: a trade-only book that missed sells only grows (top 10 at 109% on DONALDMAXX). Shares are now scaled to what can be in circulation (curve: tokens sold, plus a mayhem coin's second 1e15; pool: supply minus pool base), never above 100%. An overcounted book on a viewed / listed coin triggers a gap-fill, and the rebuild from the full history makes it exact again.
 
 FLOP_BACKFILL_PLACEHOLDER
+## 2026-10-04: follow-ups (CSP style-src, one loop-lag monitor, WS_COMPRESSION on)
+
+Setup: Apple M3 laptop, Bun 1.3.14, `DRY_RUN=true`, headless Chromium (Playwright 1.63) at 1440x900.
+
+**CSP `style-src` violation.** Source: TradingView Lightweight Charts inserts a `<style>` element for its attribution logo (`layout.attributionLogo`, kept on for the Apache-2.0 NOTICE). `style-src 'self'` blocked it on every page with a chart (token page: 4 violations, two per policy, meta tag and edge header) and the logo fell into the document flow (`position: static` instead of `absolute` in the chart corner). index.html and its boot skeleton (classes only) were clean; React `style` props, the QR code's included, go through the CSSOM, which CSP does not restrict. Fix: `apps/web/csp.ts` hashes the rule from the installed library and the build puts `'sha256-3pRED1tOXas1FXFoPb9TGCjmYe9XQsmO9OV23khV2nY='` in the meta CSP; the Caddyfile carries the same hash. No 'unsafe-inline'. Guards: the build fails when the final index.html has a style attribute, an unhashed `<style>` or an inline script; `apps/web/src/csp.test.ts` fails when the Caddyfile's style-src stops matching the library (an upgrade) or index.html grows inline styles. `preview:live` now sends the edge's CSP header. Check: production live build under `preview:live` (edge header + meta tag), Pulse, a token page with its chart, Settings, Portfolio, Onboarding and the Fund modal (no wallet, so its empty state): 0 CSP violations on every page (the token page had 4 before), attribution logo `absolute`.
+
+**One event-loop lag monitor.** `src/perf.ts` (20 ms timer) and `src/util/loopLag.ts` (50 ms timer) both ran. Now `perf.loop` is the only `LoopLagMonitor` (20 ms, last 5 min, stall counters) and `/api/perf` (`loop`), `/api/health` (`eventLoopLag`) and `/metrics` (`zerofee_event_loop_lag_seconds`) read it; names unchanged.
+
+**`GET /api/health` twice on load.** The data source polled at construction and again when the socket went live ~100 ms later. The reconnect poll now skips when a poll is in flight or answered in the last 5 s: 2 -> 1 request on load; reconnects after a restart still refresh.
+
+**WS_COMPRESSION, now on by default.** Bun compresses `server.publish()` (deltas) once permessage-deflate is negotiated, but `ws.send()` only when asked, so with `WS_COMPRESSION=true` every snapshot (the largest messages) went out raw; that is why the speed pass saw no difference in first data. Snapshots now pass the flag. A/B: two servers on the same recorded feed (240 s of pump + PumpSwap logs, replayed at 1x, looped), 3 clients each subscribed like the web app (chain, three Pulse columns, one Final Stretch token's trades + token, refocused when quiet), 60 s warm-up then 5 min, wire bytes counted by a TCP proxy, server CPU from `ps`:
+
+| | off | on, snapshots raw (before) | on (after) |
+|---|---|---|---|
+| Payload per client | 825 KB/min | 825 KB/min | 820 KB/min |
+| Wire per client | 827-829 KB/min | 522 KB/min (-37%) | 381 KB/min (-54%) |
+| Server CPU (whole process) | 16.7-17.2 s/min | 16.8 s/min | 16.6 s/min |
+| Loop lag p50 / p99 | 0.6 / 4.1 ms | 0.6 / 4.1 ms | 0.6 / 4.0 ms |
+
+Connecting: the four first snapshots (three Pulse columns + a trade tape) are 320 KB raw, ~74 KB deflated (estimate with zlib, no context takeover). CPU in isolation (the captured client stream sent to 3 sockets in a loop): ~2 ms/MB raw vs ~12 ms/MB deflated (Bun's shared compressor, no context takeover); `publish()` compresses once per message for every subscriber. At ~0.8 MB per client per minute that is ~8 ms of CPU per client per minute for the snapshot path, invisible next to the process's ~17 s/min. Dedicated (context takeover) compressors were 2.5x the CPU and per-socket memory; not used.
+
+## 2026-10-04: end-to-end speed pass (server hot path, gateway, web load)
+
+Setup: Apple M3 laptop, Bun 1.3.14, residential network, `DRY_RUN=true`. Server runs come from `bun run perf` (apps/server/scripts/perf.ts): the server in a child process, one or three WebSocket clients on `chain` + the three Pulse columns + one active token's `trades`/`token`, breakdown from `GET /api/perf`. "Restored" runs start from a copy of a 1,225-token database a 4-minute run built (91 tokens with holder replay, 4,710 trades). "Before" is commit e417454 (the instrumentation alone on top of fc8145c); "after" is this branch. Web runs come from `bun run perf:web` (apps/web/scripts/perf-load.ts): the production live build served by `preview:live` (brotli, immutable caching), headless Chrome 153 at 1440x900, 5 cold runs, medians, both builds against the same gateway. Another server from the main checkout was streaming the same public endpoint from this IP for most of the session.
+
+### What was slow, and why
+
+- **Startup restore blocked the process.** Token records and the full trade replay ran synchronously before the gateway listened: 435-1,066 ms with 1,225 tokens (more under load), and the first Pulse snapshot after a restart was empty (`pulse:new` 0-3 KB): restored tokens appeared only when they traded again.
+- **SQLite writes ran on the event loop.** The 250 ms batch transaction grew with the tables: 22-64 ms of every second, single flushes up to 211-300 ms. It was the largest source of event-loop lag (p99 34-49 ms in 4-minute live runs, climbing as the run went on) and of queue wait behind it.
+- **The public RPC's WebSocket stream falls behind by itself.** A new `rpc.streamBehindSlots` stage (HTTP confirmed slot minus the streamed tip) shows backlogs of 18-127 slots (7-50 s) in some windows with our queue empty and the event loop idle. In those windows detection p50 is 5-21 s whatever the server does; in clean windows it is ~1.1 s. This, not the server, explains the 2.6 s / 7.0 s / 23.7 s observation: the backlog comes and goes by the minute (and a second server on the same IP makes it worse).
+- **Web: the first screen waited in series.** index.html was blank until the entry ran, then the live data layer (63 KB gzip, including the trade engine) loaded, then the wallet restore had to finish, then the Pulse route chunk loaded, and only then were the Pulse topics subscribed. First-screen JavaScript was 243 KB gzip (entry 126 + live 61 + Pulse 21 + shared chunks), against a 170 KB budget.
+
+### What changed
+
+Server (apps/server):
+- `src/perf.ts`: event-loop lag monitor (20 ms timer drift), per-hop latency stages and named work spans; `GET /api/perf`; a one-line summary in the minute log. Deltas carry the publish time (`ts`) so clients can measure gateway -> browser.
+- SQLite batches go to a writer thread (`storage/writerWorker.ts`, own WAL connection; one batch in flight, rows keep coalescing meanwhile). Token rows are serialized once per flush instead of on every persist.
+- Two-phase restore: records only before listening; the trade replay that rebuilds holder books runs after ingest started, in time-boxed slices (also inside a busy token), and only for trades received before the process started. The Pulse lists are seeded from the restored tokens, so the first snapshot is complete.
+- Pulse snapshots are serialized once per list change and shared by every connecting client; `GET /api/pulse` serves all three lists (gzip) for the page's bootstrap.
+- Failed transactions (~40% of notifications) are dropped before `JSON.parse`.
+- `RPC_MAX_CONCURRENT` budgets reads on `RPC_URL`; `.env.example` documents the endpoint split (the enrichment and Raydium re-reads already have their own clients).
+- `scripts/perf-feed.ts` records the logs feed and replays it (looped, relabelled, N times faster) for controlled A/B runs: `bun run perf --replay feed.jsonl.gz --speed 4 --entry <other checkout>/apps/server/src/main.ts`.
+
+Web (apps/web):
+- A static boot skeleton in index.html (classes only, CSP-safe) paints with the stylesheet, before any script. The stylesheet goes first in `<head>`; after it, `modulepreload` for the data layer and the Pulse route, `preload` for `GET /api/pulse` and the mono font (vite.config.ts).
+- The Pulse topics are subscribed and the REST bootstrap fetched while the data layer initialises; the first render waits at most 100 ms for the wallet restore; a column snapshot is applied on the next frame instead of waiting for the Pulse rate tick.
+- Off the first screen: the trade engine (LiveTradeService, packages/core builders), transfers, the SIWS formatter, copy trading and tracked-wallet sync, trade actions and every global overlay load lazily (idle preload). base58 is local (no @solana/kit codecs in the wallet layer).
+- react-router replaced by `src/lib/router.tsx` (aliased as `react-router`, same API for what the app uses): 11 KB gzip off the entry. Routes, deep links (`/t/<mint>`, `/portfolio?wallet=`), index redirects (replace), unknown paths, NavLink active state and back/forward were checked in the browser; matching is unit-tested.
+- Marks (`zf:boot`, `zf:services`, `zf:wallet`, `zf:ws-open`, `zf:ws-first-snapshot`, `zf:skeleton`, `zf:pulse-data`), gateway -> browser latency, receive -> paint and frame sampling (`zfPerf()` in the console).
+- Tools: `preview:live`, `perf:web` (`--throttle`, `--cpu`, `--warm`, `--soak`), `bundle:report` (170 KB gzip budget check).
+
+### Server, live public RPC (4 min, restored database, pump + PumpSwap, clean RPC windows)
+
+| | before | after |
+|---|---|---|
+| Trade detection (block time -> receive) p50 / p90 / p99 | 1,132 / 1,529 / 1,820 ms | 1,082 / 1,501 / 1,675 ms |
+| Launch detection p50 / p90 | 1,091 / 1,521 ms | 991 / 1,461 ms |
+| Client trade e2e (block time -> browser socket) p50 / p90 | 1,112 / 1,501 ms | 1,081 / 1,498 ms |
+| Client launch e2e p50 / p90 | 1,183 / 1,620 ms | 1,101 / 1,546 ms |
+| Receive -> tape publish p50 / p90 | 40 / 75 ms | 41 / 71 ms |
+| State change -> Pulse publish p50 / p90 (200 ms flush) | 108 / 189 ms | 108 / 186 ms |
+| Gateway publish -> client receive p50 / p99 | 0 / 8 ms | 0 / 5 ms |
+| Event-loop lag p99 / max | 34.3 / 493 ms (rising through the run) | 4.0 / 353 ms (max: startup tick) |
+| Stalls > 50 ms / > 100 ms | 34 / 5 | 10 / 4 |
+| SQLite on the event loop | 63.9 ms per second, max 211 ms | 2.5 ms per second hand-off, max 18 ms |
+| Startup: blocking restore, listen after spawn | 435 ms (records + replay), 1,180 ms | 201 ms (records), 788 ms |
+| First `pulse:new` snapshot after the restart | 0-3 KB (empty) | 111 KB (full list of 100) |
+
+In windows where the public stream fell behind (`rpc.streamBehindSlots` p50 18-51 slots) both builds measured detection p50 of 5-21 s with an empty queue and loop-lag p99 under 11 ms (after); one "before" run hit it too (p50 12 s at t+61 s). Those runs are left out of the table, not hidden: the stage is printed by every `bun run perf`.
+
+### Server, controlled replay (the same 150 s recording looped at 4x, 3 clients, restored database)
+
+| | before | after |
+|---|---|---|
+| Receive -> decode (queue) p50 / p90 / p99 | 7 / 57 / 180 ms | 5 / 41 / 98 ms |
+| Receive -> tape publish p90 / p99 | 181 / 216 ms | 80 / 166 ms |
+| State change -> Pulse publish p99 / max | 264 / 383 ms | 202 / 211 ms |
+| Event-loop lag p99 / max | 6.8 / 359 ms | 3.9 / 305 ms |
+| Stalls > 50 ms / > 100 ms | 27 / 8 | 2 / 1 |
+| Main-thread storage | 22.4 ms per second (max 154 ms) | 1.2 ms per second (max 9.5 ms) |
+| Restore before listening | 332 ms | 190 ms (+ background slices, max 68 ms) |
+
+Targets on public RPC (launch and trade p50 <= 1.2 s, p90 <= 2 s, loop-lag p99 < 50 ms) are met in clean windows. What remains is the free endpoint: block time is floored to 1 s, so ~1.1 s measured is ~0.5-0.6 s real, of which ~270 ms is the node's own pipeline after it announces the slot; the rest is propagation to the RPC node and its stream backlog. Expected with Chainstack (or any) Yellowstone gRPC, not measured yet: no stream backlog (the gRPC stream is not shared with HTTP reads), ~50-200 ms from slot to our socket, so measured detection p50 ~0.6-0.8 s (0.1-0.3 s real) and p90 ~1.1 s, plus the same ~40 ms (tape) / ~110 ms (Pulse) gateway cadence.
+
+### Web load (production build, same gateway)
+
+| profile | first paint | FCP | LCP | first Pulse row with data | JS until then (KB) |
+|---|---|---|---|---|---|
+| none | 40 -> 68 ms | 96 -> 128 ms | 436 -> 464 ms | **414 -> 415 ms** | 265.5 -> 271.9 |
+| fast4g | 288 -> 268 ms | 564 -> 492 ms | 952 -> 816 ms | **940 -> 776 ms** | 265.5 -> 222.8 |
+| slow4g | 744 -> 636 ms | 2,348 -> 1,976 ms | 4,324 -> 2,308 ms | **4,313 -> 2,266 ms** | 265.5 -> 160.6 |
+
+Medians of 5 cold runs, before -> after; throttling is DevTools emulation (fast4g: 40 ms, 9 Mbit/s; slow4g: Lighthouse's 150 ms, 1.6 Mbit/s). "First Pulse row" is the `zf:pulse-data` mark (the old build has no marks: the first non-empty Pulse card in the DOM, which the new build matches within ~25 ms). On a repeat visit (immutable cache) the first row lands at 399 ms (414 before), with 69 of the requests from cache; the after build transfers ~88 KB then, most of it the fresh `/api/pulse` data. On loopback the work is CPU-bound (~250 ms of main-thread tasks), so nothing moves there; first paint is ~30 ms later because the skeleton HTML is larger, but it is the terminal frame instead of an empty page.
+
+Bundle (bundle:report; first screen = entry, its imports, the data layer and the Pulse route): 243.2 -> 169.1 KB gzip (148.4 KB brotli), budget 170, after merging main's UI polish rounds (which added ~6 KB; the Pulse hover tips and card menu now load right after the first rows to make room). Entry chunk 125.6 -> 96.0 KB, data layer 61.1 -> 16.1 KB (the trade engine is a 26.8 KB lazy chunk now), CSS 13.9 -> 14.9 KB (the UI polish). Lazy: chart 11.1 + 54.7 KB (lightweight-charts), settings 23.8, onboarding 9.9, signer worker 47.2.
+
+Rendering (perf:web --soak 30000, three Pulse columns under the live feed): 60 fps median, frame p99 16.8 ms, no long tasks; with 4x CPU throttling frame p99 33 ms, one 55 ms task in 30 s. Receive -> paint p50 ~105 ms, p90 ~175 ms: the Pulse batch is applied at the user's Pulse rate (4-10 Hz) by design. `WS_COMPRESSION=true` made no measurable difference to first data on slow 4G (the REST bootstrap is already gzip and preloaded), so it stays off. (Later: snapshots were never compressed; fixed and on by default, see the follow-ups above.)
+
+Not done / noticed: on a loopback network the first Pulse row lands at ~0.4 s in both builds (main-thread time: parse and first render, ~250 ms of tasks); the console shows a CSP `style-src` violation from an inline style on some pages (present before this work; the chart attribution `<style>`, fixed in the follow-ups above).
 
 ## 2026-10-04: Raydium LaunchLab + CPMM in the live feed (public RPC, laptop)
 

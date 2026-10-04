@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { type HotkeyAction, registerHotkey } from "../../lib/hotkeys";
-import { buy, sell, sellInitials } from "../../lib/tradeActions";
+import { buy, sell, sellInitials } from "../../lib/tradeActionsLazy";
 import type { PulseColumnId } from "../../protocol";
 import { useSettings } from "../../state/settings";
 import { copyCa, hideToken } from "./actions";

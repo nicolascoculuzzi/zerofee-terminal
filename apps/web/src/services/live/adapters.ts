@@ -9,7 +9,6 @@
  * numbers (token creation time, curve totals the display quote does not use) get NaN, which renders the
  * same way. Nothing here invents a number.
  */
-import { USDC_MINT, WSOL_MINT } from "@zerofee/core";
 import type {
   ChainState,
   HealthResponse,
@@ -37,6 +36,13 @@ import type {
   Venue,
   WalletTag,
 } from "../../protocol";
+
+/**
+ * The quote mints the UI names (packages/core USDC_MINT / WSOL_MINT). Literals here so the first screen's
+ * chunk does not pull in core's constants module; adapters.test.ts checks they match core's.
+ */
+export const WSOL_MINT = "So11111111111111111111111111111111111111112";
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 const NaN_ = Number.NaN;
 /** For view fields typed as plain numbers: unknown becomes NaN (rendered "–"). */

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { USDC_MINT as CORE_USDC, WSOL_MINT as CORE_WSOL } from "@zerofee/core";
 import {
   adaptCandle,
   adaptToken,
@@ -9,11 +10,20 @@ import {
   feedHealthOf,
   isFullSummary,
   poolStateOf,
+  USDC_MINT,
   uiAmount,
+  WSOL_MINT,
 } from "./adapters";
 import { curveCtx, MINT, TRADER, trackedRow, WALLET, wireOrder, wireToken, wireTrade } from "./fixtures";
 import { adaptOrder, impliedPriceSol } from "./orderAdapter";
 import { WalletModel } from "./walletModel";
+
+describe("quote mints", () => {
+  test("the literals match packages/core", () => {
+    expect(WSOL_MINT).toBe(CORE_WSOL);
+    expect(USDC_MINT).toBe(CORE_USDC);
+  });
+});
 
 describe("token summary", () => {
   test("maps names, nesting and units; unknown values stay null, never zero", () => {
