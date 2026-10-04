@@ -11,7 +11,7 @@ import { buildPumpBuyInstructions, buildPumpSellInstructions } from "./pump/inst
 import { buildAmmBuyInstructions, buildAmmSellInstructions } from "./pumpswap/instructions";
 import { ammFeeRates, quoteAmmBuyExactQuoteIn, quoteAmmSell } from "./pumpswap/math";
 import type { TokenState } from "./state";
-import { applySlippageDown } from "./util/math";
+import { minOutForTrade } from "./util/math";
 
 export interface TradeRequest {
   side: "buy" | "sell";
@@ -63,7 +63,7 @@ export async function buildTrade(state: TokenState, req: TradeRequest): Promise<
     const feeBps = { protocol: rates.protocolFeeBps, creator: rates.creatorFeeBps, lp: 0n };
     if (req.side === "buy") {
       const q = quoteBuyExactQuoteIn(state.curve, req.amount, rates);
-      const minOut = applySlippageDown(q.tokenAmount, req.slippageBps);
+      const minOut = minOutForTrade(q.tokenAmount, req.slippageBps);
       const { instructions } = await buildPumpBuyInstructions(ctx, { mode: "exactQuoteIn", amount: req.amount, limit: minOut });
       return {
         quote: {
@@ -82,7 +82,7 @@ export async function buildTrade(state: TokenState, req: TradeRequest): Promise<
     }
     if (req.amount > state.userBaseBalance) throw new RangeError(`sell amount ${req.amount} exceeds balance ${state.userBaseBalance}`);
     const q = quoteSell(state.curve, req.amount, rates);
-    const minOut = applySlippageDown(q.quoteNet, req.slippageBps);
+    const minOut = minOutForTrade(q.quoteNet, req.slippageBps);
     const { instructions } = await buildPumpSellInstructions(ctx, {
       amount: req.amount,
       minQuoteOut: minOut,
@@ -124,7 +124,7 @@ export async function buildTrade(state: TokenState, req: TradeRequest): Promise<
   const feeBps = { protocol: rates.protocolFeeBps, creator: rates.creatorFeeBps, lp: rates.lpFeeBps };
   if (req.side === "buy") {
     const q = quoteAmmBuyExactQuoteIn(state.reserves, req.amount, rates);
-    const minOut = applySlippageDown(q.baseOut, req.slippageBps);
+    const minOut = minOutForTrade(q.baseOut, req.slippageBps);
     const { instructions } = await buildAmmBuyInstructions(ctx, { mode: "exactQuoteIn", amount: req.amount, limit: minOut });
     return {
       quote: {
@@ -143,7 +143,7 @@ export async function buildTrade(state: TokenState, req: TradeRequest): Promise<
   }
   if (req.amount > state.userBaseBalance) throw new RangeError(`sell amount ${req.amount} exceeds balance ${state.userBaseBalance}`);
   const q = quoteAmmSell(state.reserves, req.amount, rates);
-  const minOut = applySlippageDown(q.quoteOutNet, req.slippageBps);
+  const minOut = minOutForTrade(q.quoteOutNet, req.slippageBps);
   const { instructions } = await buildAmmSellInstructions(ctx, {
     baseAmountIn: req.amount,
     minQuoteOut: minOut,

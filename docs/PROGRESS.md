@@ -12,10 +12,10 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Armed-order nonce semantics | ✅ | Tested: one landed attempt per nonce ([experiment](experiments/nonce-failure/README.md)) |
 | CI + daily pump.fun interface watch | ✅ | GitHub Actions; opens an issue on drift |
 | Live data feed + backend gateway | ✅ | 6-min public-RPC run: 303 launches, 341 trades/s, 0 decode failures, ~0.5–1 s detection; Yellowstone gRPC client verified under Bun |
-| Wallet login (SIWS) + browser trading wallet + signer firewall | ✅ | Adversarial review: no critical bypass; 4 findings fixed. 346 tests across the repo |
+| Wallet login (SIWS) + browser trading wallet + signer firewall | ✅ | Adversarial review: no critical bypass. 524-case matrix: every engine transaction passes in all 3 modes; 477 tampered variants refused |
 | Web UI on simulated data | 🔨 | Shell done; screens in progress |
-| Design system (Mobbin-grounded, "no AI slop" checklist) | 🔨 | |
-| Local mainnet-fork test harness (real programs, real landed txs, no real money) | 🔨 | |
+| Design system (Mobbin-grounded, "no AI slop" checklist) | ✅ | [DESIGN.md](design/DESIGN.md): 161 Mobbin references, computed AA contrast, slop checklist |
+| Local mainnet-fork test harness (real programs, real landed txs, no real money) | ✅ | 10/10 e2e: curve, mayhem and PumpSwap buys/sells/exits land, exact to the lamport ([how](dev/FORK_TESTING.md)) |
 | Wire UI ↔ feed ↔ wallet ↔ engine | ⏳ | |
 | UI polish rounds against the design system | ⏳ | |
 | First real 0.001 SOL trade | 🙋 | Needs a throwaway dev wallet key in your local `.env` |
@@ -24,7 +24,7 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 
 | Piece | Status |
 |---|---|
-| Armed orders core: nonce slots, lookup tables, variant grids, triggers | 🔨 |
+| Armed orders core: nonce slots, lookup tables, variant grids, triggers | ✅ (validator suite 10/10; all armed txs pass the firewall; worst case 1,053 of 1,232 bytes) |
 | Armed orders: server engine + UI | ⏳ |
 | Raydium LaunchLab + CPMM (StonkFun, Bonk) | 🔨 |
 | Jupiter `/build` fallback for the long tail | ⏳ |
@@ -37,7 +37,7 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 
 | Piece | Status |
 |---|---|
-| Deploy config (Docker, Hetzner guide), monitoring, runbook | ⏳ |
+| Deploy config (Docker, Hetzner guide), monitoring, runbook | 🔨 |
 | Security review: signer firewall, front-end CSP/SRI | ⏳ (firewall reviewed once; signer must move to its own origin before launch) |
 | Chainstack gRPC, Helius key, domain, Hetzner server | 🙋 |
 | Legal review (ToS, risk disclosures, sanctions screening) | 🙋 |

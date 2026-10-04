@@ -1254,6 +1254,48 @@
           "address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
         }
       ]
+    },
+    {
+      "name": "extend_account",
+      "discriminator": [
+        234,
+        102,
+        194,
+        203,
+        150,
+        72,
+        62,
+        229
+      ],
+      "args": [],
+      "accounts": [
+        {
+          "name": "account",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "writable": false,
+          "signer": false,
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "event_authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "program",
+          "writable": false,
+          "signer": false
+        }
+      ]
     }
   ]
 }

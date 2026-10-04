@@ -20,6 +20,7 @@
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.2",
     "@types/bn.js": "^5.1.6",
+    "@zerofee/signer": "workspace:*",
     "bn.js": "^5.2.1"
   }
 }

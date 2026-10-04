@@ -86,7 +86,7 @@ export function loadConfig(): CliConfig {
     landingMode: oneOf<LandingMode>("LANDING_MODE", "standard", ["standard", "turbo", "protected"]),
     speedPreset: oneOf<SpeedPreset>("SPEED_PRESET", "fast", ["eco", "fast", "turbo"]),
     maxPriorityFeeLamports: sol("MAX_PRIORITY_FEE_SOL", "0.0005"),
-    maxTipLamports: sol("MAX_TIP_SOL", "0.0005"),
+    maxTipLamports: sol("MAX_TIP_SOL", "0.002"),
     heliusSwqosTipLamports: sol("HELIUS_SWQOS_TIP_SOL", "0.000005"),
     senderRegion: oneOf("SENDER_REGION", "fra", Object.keys(HELIUS_SENDER_ENDPOINTS) as HeliusSenderRegion[]),
     jitoRegion: oneOf("JITO_REGION", "frankfurt", Object.keys(JITO_BLOCK_ENGINES) as JitoRegion[]),

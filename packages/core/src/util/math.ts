@@ -39,6 +39,17 @@ export function applySlippageDown(amount: bigint, slippageBps: number): bigint {
   return (amount * (BPS_DENOMINATOR - s)) / BPS_DENOMINATOR;
 }
 
+/**
+ * Minimum-output argument for a trade: applySlippageDown, but never 0. A zero minimum lets anyone
+ * sandwich the trade for free (the signer firewall refuses it), so dust that rounds down is clamped
+ * to 1 and a quote of 0 is refused outright.
+ */
+export function minOutForTrade(expectedOut: bigint, slippageBps: number): bigint {
+  if (expectedOut <= 0n) throw new RangeError("trade output rounds to zero; refusing to build it");
+  const min = applySlippageDown(expectedOut, slippageBps);
+  return min > 0n ? min : 1n;
+}
+
 /** Parse a decimal UI amount (e.g. "0.05") into base units without floating point. */
 export function parseUiAmount(ui: string, decimals: number): bigint {
   const s = ui.trim();

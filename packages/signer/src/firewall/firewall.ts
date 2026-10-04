@@ -9,6 +9,10 @@
  *  4. Caps: tips (sum) <= maxTipLamports, priority fee <= maxPriorityFeeLamports, compute unit
  *     limit <= maxComputeUnitLimit, and buys <= maxBuyLamports / maxBuyQuote[mint], both per buy
  *     instruction and summed over the transaction.
+ *  5. Min-out floor: every sell, and every buy that spends a fixed amount (exact quote in), has a
+ *     minimum output above zero.
+ *  6. Optional expectations (the caller's own quote and max slippage, see TradeExpectation): when
+ *     supplied, every trade has one and its minimum output is within the slippage of the quote.
  *
  * Returns a plain-language summary of what the transaction does when it passes.
  */
@@ -16,7 +20,7 @@ import { type Address, isAddress } from "@solana/kit";
 import { readU32LE } from "../bytes";
 import { createAtaResolver } from "./ata";
 import { decodeTransaction } from "./decode";
-import { formatQuote, formatSol, shortAddress } from "./format";
+import { formatInteger, formatQuote, formatSol, shortAddress } from "./format";
 import {
   ASSOCIATED_TOKEN_PROGRAM,
   BASE_FEE_LAMPORTS_PER_SIGNATURE,
@@ -39,6 +43,8 @@ import type {
   FirewallResult,
   RuleEnv,
   SummaryAction,
+  TradeAction,
+  TradeExpectation,
   TransactionSummary,
   VenueRule,
 } from "./types";
@@ -50,6 +56,89 @@ function quoteCap(caps: FirewallContext["caps"], mint: string): bigint | undefin
   return Object.hasOwn(caps.maxBuyQuote, mint) ? caps.maxBuyQuote[mint] : undefined;
 }
 
+/**
+ * A trade whose minimum output is zero accepts any price: a sandwich, or a caller that lies about the
+ * quote, takes the whole sale (sells are not capped) or the whole spend. Exact-out buys are exempt:
+ * they receive exactly `baseAmount` and pay at most the capped max_quote_in.
+ */
+function zeroMinimumOut(action: TradeAction): string | undefined {
+  if (action.side === "sell" && !(action.minQuoteOut !== undefined && action.minQuoteOut > 0n)) {
+    return "minimum output is 0, so any price would fill (a sandwich could take the whole sale); sells need a minimum above zero";
+  }
+  if (action.side === "buy" && action.baseAmountIs === "min_out" && action.baseAmount <= 0n) {
+    return "minimum tokens out is 0, so the whole spend could buy nothing; buys need a minimum above zero";
+  }
+  return undefined;
+}
+
+/**
+ * Copies caller-supplied expectations into plain values (each property read once, so no getter can
+ * change its answer later) and validates them. Malformed expectations refuse the whole request.
+ */
+function readExpectations(value: unknown, problems: string[]): TradeExpectation[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    problems.push("expectations must be an array");
+    return undefined;
+  }
+  const out: TradeExpectation[] = [];
+  value.forEach((raw: unknown, i) => {
+    if (typeof raw !== "object" || raw === null) {
+      problems.push(`expectations[${i}] must be an object`);
+      return;
+    }
+    const { instruction, expectedOut, slippageBps } = raw as Record<string, unknown>;
+    const before = problems.length;
+    if (typeof instruction !== "number" || !Number.isSafeInteger(instruction) || instruction < 0) {
+      problems.push(`expectations[${i}].instruction must be a non-negative integer`);
+    }
+    if (typeof expectedOut !== "bigint" || expectedOut <= 0n) problems.push(`expectations[${i}].expectedOut must be a positive bigint`);
+    if (typeof slippageBps !== "number" || !Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
+      problems.push(`expectations[${i}].slippageBps must be an integer from 0 to 10000`);
+    }
+    if (problems.length === before)
+      out.push({ instruction: instruction as number, expectedOut: expectedOut as bigint, slippageBps: slippageBps as number });
+  });
+  return out;
+}
+
+/** Every trade has exactly one expectation, and its guaranteed output is within the slippage of the quote. */
+function checkExpectations(
+  expectations: readonly TradeExpectation[],
+  actions: readonly { ixIndex: number; action: SummaryAction }[],
+): string[] {
+  const violations: string[] = [];
+  const byInstruction = new Map<number, TradeExpectation>();
+  for (const e of expectations) {
+    if (byInstruction.has(e.instruction)) violations.push(`expectations: more than one for instruction #${e.instruction}`);
+    else byInstruction.set(e.instruction, e);
+  }
+  const trades = new Set<number>();
+  for (const { ixIndex, action } of actions) {
+    if (action.kind !== "trade") continue;
+    trades.add(ixIndex);
+    const label = `#${ixIndex} ${action.venue} ${action.instruction}`;
+    const e = byInstruction.get(ixIndex);
+    if (!e) {
+      violations.push(`${label}: no expected output was supplied for this trade (expectations must cover every trade)`);
+      continue;
+    }
+    // Sells: the minimum quote received. Buys: the minimum (exact-quote-in) or exact (exact-out) tokens.
+    const guaranteed = action.side === "sell" ? (action.minQuoteOut ?? 0n) : action.baseAmount;
+    const floor = (e.expectedOut * BigInt(10_000 - e.slippageBps)) / 10_000n;
+    if (guaranteed < floor) {
+      const units = (v: bigint) => (action.side === "sell" ? formatQuote(v, action.quoteMint) : `${formatInteger(v)} base units`);
+      violations.push(
+        `${label}: minimum output ${units(guaranteed)} is below your quote of ${units(e.expectedOut)} less your ${e.slippageBps / 100}% max slippage (${units(floor)})`,
+      );
+    }
+  }
+  for (const ix of byInstruction.keys()) {
+    if (!trades.has(ix)) violations.push(`expectations: instruction #${ix} is not a trade`);
+  }
+  return violations;
+}
+
 export async function checkTransaction(txBytes: Uint8Array, ctx: FirewallContext): Promise<FirewallResult> {
   const result = await inspectTransaction(txBytes, ctx);
   return result.ok ? { ok: true, summary: result.summary } : { ok: false, violations: result.violations };
@@ -58,6 +147,7 @@ export async function checkTransaction(txBytes: Uint8Array, ctx: FirewallContext
 /** Like checkTransaction, but also returns the decoded transaction (SignerService signs its message bytes). */
 export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallContext): Promise<InspectionResult> {
   const contextProblems = validateContext(ctx);
+  const expectations = contextProblems.length ? undefined : readExpectations(ctx.expectations, contextProblems);
   if (contextProblems.length) return { ok: false, violations: contextProblems.map((p) => `invalid firewall context: ${p}`) };
 
   const decoded = decodeTransaction(txBytes, ctx.addressLookupTables);
@@ -135,7 +225,10 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
   const maxBuyQuote: Record<string, bigint> = {};
   for (const { ixIndex, action } of actions) {
     if (action.kind === "tip") tipLamports += action.lamports;
-    if (action.kind !== "trade" || action.side !== "buy") continue;
+    if (action.kind !== "trade") continue;
+    const floor = zeroMinimumOut(action);
+    if (floor) violations.push(`#${ixIndex} ${action.venue} ${action.instruction}: ${floor}`);
+    if (action.side !== "buy") continue;
     const spend = action.maxQuoteIn;
     if (spend === undefined) {
       violations.push(`#${ixIndex}: buy without a spend amount`);
@@ -184,6 +277,8 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
     }
   }
 
+  if (expectations) violations.push(...checkExpectations(expectations, actions));
+
   if (violations.length) return { ok: false, violations };
 
   // Durable-nonce transaction: the first instruction advances a nonce (already validated above).
@@ -194,6 +289,9 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
       : undefined;
 
   const lines = actions.map(({ action }) => describeAction(action, ctx.signer, ctx.connectedWallet));
+  if (expectations && actions.some(({ action }) => action.kind === "trade")) {
+    lines.push("Checked against your own quote: every minimum output is within your max slippage.");
+  }
   if (budget.computeUnitPriceMicroLamports !== undefined && budget.priorityFeeLamports > 0n) {
     lines.push(
       `Priority fee up to ${formatSol(budget.priorityFeeLamports)} (${budget.computeUnitLimit ?? "default"} CU limit at ${budget.computeUnitPriceMicroLamports} micro-lamports per CU).`,
@@ -209,8 +307,11 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
   const networkFeeLamports = BASE_FEE_LAMPORTS_PER_SIGNATURE; // exactly one signature (checked above)
   const maxSolOutLamports = maxBuyLamports + tipLamports + budget.priorityFeeLamports + networkFeeLamports;
   const deposits = actions.some(({ action }) => action.kind === "create_ata" || action.kind === "nonce_create");
+  const extension = actions.some(({ action }) => action.kind === "extend_account");
   lines.push(
-    `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and fees${deposits ? "; refundable deposits are listed above" : ""}.`,
+    `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and fees${
+      deposits ? "; refundable deposits are listed above" : ""
+    }${extension ? "; plus the pool extension rent above" : ""}.`,
   );
 
   const summary: TransactionSummary = {

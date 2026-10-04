@@ -2,6 +2,32 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: armed-order transaction sizes and nonce/ALT mechanics
+
+**Sizes** (offline, from the mainnet account fixtures; `bun run packages/core/scripts/armed-sizes.ts`). Every armed variant is a v0 message: `AdvanceNonceAccount`, CU limit, CU price, the trade, then the tip(s). The operator lookup table holds only shared accounts (63 with wSOL: program ids except the token programs, Global/config/fee-config/event-authority/volume-accumulator PDAs, every fee/buyback recipient and its wSOL ATA, the RecentBlockhashes sysvar). The signer firewall requires everything else to be a static key: mints, token programs, System, user token accounts, the pool, transfer destinations, tips, the jitodontfront marker and the nonce account.
+
+| Trade (Token-2022 base) | Jito tip + dontfront: with ALT / without | Helius + Jito tips: with ALT / without |
+|---|---|---|
+| pump `buy_exact_quote_in_v2` + ATA | 964 / 1,240 | 1,013 / 1,289 |
+| pump mayhem buy + ATA | 964 / 1,240 | 1,013 / 1,289 |
+| pump `sell_v2` + close (full exit) | 928 / 1,204 | 977 / 1,253 |
+| PumpSwap buy (wrap + ATA) | 971 / 1,247 | 1,020 / 1,296 |
+| PumpSwap sell + close (full exit) | 910 / 1,155 | 959 / 1,204 |
+| PumpSwap cashback buy | 1,004 / 1,280 | 1,053 / 1,329 |
+| PumpSwap cashback sell + close | 976 / 1,221 | 1,025 / 1,270 |
+| Migration snipe (canonical pool buy) | 971 / 1,247 | 1,020 / 1,296 |
+
+Limit 1,232 bytes. Every shape fits with the table (worst case 1,053 B, 179 B of headroom). Without it, every buy overflows; the pump buy at 1,240 B matches the signer's own measurement. Allowing token programs and mints into the table would save about 93 bytes per buy, but the firewall rightly refuses lookups of identities that decide where funds go.
+
+**Local validator** (Agave 4.3.0 `solana-test-validator`, 8 ticks per slot ≈ 83 ms, `bun run test:validator`, 25 s; 68 s with `ZF_VALIDATOR_SLOW=1`):
+
+- A variant signed before its signing-time blockhash expired (>150 blocks) still landed. Siblings on the same nonce and the cancel were then refused at preflight, and no fee was charged.
+- A landed failure cost exactly the base fee plus the priority fee (5,040 lamports at 1,000 µL/CU × 40k CU). The tip transfer reverted and the nonce advanced.
+- A cancel (advance plus CU limit) consumed 300 CU and cost 5,000 lamports.
+- `AdvanceNonceAccount` works with the RecentBlockhashes sysvar loaded from the table (it appears in `loadedAddresses.readonly`). A nonce account loaded from a table is refused, which confirms SIMD-0242.
+- Rent for 80 bytes was 1,447,680 lamports on the local validator (pre-2026 rate) against about 1,056,640 on mainnet. Both are under the firewall's 2,000,000-lamport slot-funding cap, and rent is always read live.
+- A table cannot be closed during its cooldown. It closed about 513 slots after deactivation.
+
 ## 2026-10-03: mainnet-fork e2e (local Agave 4.3.0, mainnet binaries + cloned state)
 
 Setup: `bun run fork:start` + `bun run e2e`, standard mode, CLI defaults, fresh wallet per run. All 8 trades landed with fills matching the local quote to the lamport. CU across seven forks (limits in parentheses): curve buy with new Token-2022 ATA 104–118k (140k), curve sell 72–86k (100k), PumpSwap buy with wSOL wrap 118–132k (150k), PumpSwap sell 87–99k (130k). Sizes 1,058–1,189 B. Worst-case headroom is only 12% (PumpSwap buy) and 14% (curve sell), less than the 1.3× the CU-limit defaults assume. "Sent → landed" there is local slot timing (0.35–0.6 s), not a network measurement. Findings (fork rent, no mayhem buyback, exact-quote-in event fields): [docs/dev/FORK_TESTING.md](docs/dev/FORK_TESTING.md).

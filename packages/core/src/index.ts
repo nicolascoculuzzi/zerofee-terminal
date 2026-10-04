@@ -1,6 +1,7 @@
 /**
  * @zerofee/core - isomorphic trade engine (browser + Bun). No Node-only APIs.
  */
+export * from "./armed";
 export * from "./constants";
 export * from "./events";
 export * from "./fees";

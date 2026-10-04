@@ -70,10 +70,53 @@ export interface ServerConfig {
     heliusApiKey?: string;
     jitoUuid?: string;
   };
-  rateLimit: { restPerSec: number; restBurst: number; txPerSec: number; wsMsgPerSec: number; wsConnPerIp: number };
+  rateLimit: {
+    restPerSec: number;
+    restBurst: number;
+    txPerSec: number;
+    wsMsgPerSec: number;
+    wsConnPerIp: number;
+    /** Nonce + sign-in requests per IP per minute. */
+    authPerMin: number;
+    /** Authenticated API requests per user. */
+    userPerSec: number;
+    userBurst: number;
+    wsConnPerUser: number;
+    /** Admin calls per IP per minute (failed attempts count too: bounds audit-log flooding). */
+    adminPerMin: number;
+  };
   wsMaxSubscriptions: number;
   wsCompression: boolean;
   logLevel: "debug" | "info" | "warn" | "error";
+
+  /** User state: Postgres via Bun.sql when databaseUrl is set, else PGlite (development). */
+  userDb: { databaseUrl: string | null; pgliteDir: string };
+  auth: {
+    /** Origin users load the web app from (scheme://host[:port]); the SIWS message binds its host. */
+    publicOrigin: string;
+    /** Origins accepted on cookie-authenticated mutations and WebSocket upgrades (includes publicOrigin). */
+    allowedOrigins: string[];
+    /** SIWS `domain` (host[:port]); defaults to publicOrigin's host. */
+    siwsDomain: string;
+    cookieName: string;
+    sessionTtlMs: number;
+    maxSessionsPerUser: number;
+  };
+  /** ADMIN_TOKEN: one token, or `name:token,name:token` for named operators. Null disables /api/admin. */
+  adminToken: string | null;
+  notifications: {
+    /** 32-byte key (base64 or hex) encrypting Discord webhook URLs at rest. Null disables Discord channels. */
+    channelKey: string | null;
+    vapidPublicKey: string | null;
+    vapidPrivateKey: string | null;
+    vapidSubject: string;
+    telegramBotToken: string | null;
+    telegramBotUsername: string | null;
+    /** Set: Telegram updates arrive by webhook (POST /api/telegram/webhook); unset: long polling. */
+    telegramWebhookSecret: string | null;
+    alertSweepMs: number;
+    deliveryRetentionDays: number;
+  };
   /** GET /metrics access and alarm thresholds (src/metrics.ts). */
   monitoring: {
     /** Bearer token every /metrics caller must send; null = loopback, unproxied requests only. */
@@ -129,6 +172,75 @@ function list(env: Env, name: string, def: string[]): string[] {
 
 /** Maestro's documented fee wallet (token_analytics notes); extend via PRO_TRADER_WALLETS. */
 const DEFAULT_PRO_TRADER_WALLETS = ["MaestroUL88UBnZr3wfoN7hqmNWFi3ZYCGqZoJJHE36"];
+
+/** Session cookie. `__Host-` makes browsers require Secure, Path=/ and no Domain attribute. */
+export const SESSION_COOKIE_NAME = "__Host-zf_session";
+
+/** Validates and normalizes an http(s) origin (scheme://host[:port], nothing else). */
+export function normalizeOrigin(name: string, value: string): string {
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    throw new Error(`${name} must be an origin like https://zerofee.example (got ${JSON.stringify(value)})`);
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error(`${name} must use https (or http on loopback)`);
+  if (u.pathname !== "/" || u.search || u.hash || u.username || u.password) {
+    throw new Error(`${name} must be a bare origin: no path, query, fragment or credentials`);
+  }
+  return u.origin;
+}
+
+/** Loopback hosts count as secure contexts in browsers, so Secure cookies work over plain http there. */
+export function isLoopbackOrigin(origin: string): boolean {
+  const host = new URL(origin).hostname;
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host.endsWith(".localhost");
+}
+
+export interface AdminTokenEntry {
+  /** Operator name recorded in the audit log ("admin" for a single unnamed token). */
+  name: string;
+  token: string;
+  /** Unnamed tokens are logged as admin:<first 12 hex of SHA-256(token)>. */
+  named: boolean;
+}
+
+/** ADMIN_TOKEN = `<token>` or `name:<token>,name:<token>`. Tokens need at least 32 characters. */
+export function parseAdminTokens(spec: string): AdminTokenEntry[] {
+  const parts = spec
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const entries = parts.map((p): AdminTokenEntry => {
+    const i = p.indexOf(":");
+    if (i < 0) return { name: "admin", token: p, named: false };
+    const name = p.slice(0, i);
+    if (!/^[A-Za-z0-9_.-]{1,32}$/.test(name)) throw new Error("ADMIN_TOKEN names must be 1-32 of A-Z a-z 0-9 _ . -");
+    return { name, token: p.slice(i + 1), named: true };
+  });
+  if (!entries.length) throw new Error("ADMIN_TOKEN is empty");
+  if (entries.length > 1 && entries.some((e) => !e.named)) throw new Error("ADMIN_TOKEN with several tokens needs name:token pairs");
+  if (new Set(entries.map((e) => e.name)).size !== entries.length) throw new Error("ADMIN_TOKEN names must be unique");
+  for (const e of entries) {
+    if (e.token.length < 32 || /\s/.test(e.token)) throw new Error("ADMIN_TOKEN tokens must be at least 32 characters without spaces");
+  }
+  return entries;
+}
+
+/** 32 raw bytes from base64, base64url or hex text (CHANNEL_ENCRYPTION_KEY). */
+export function decodeKey32(name: string, text: string): Uint8Array {
+  const t = text.trim();
+  let bytes: Uint8Array | null = null;
+  if (/^[0-9a-fA-F]{64}$/.test(t)) bytes = new Uint8Array(Buffer.from(t, "hex"));
+  else if (/^[A-Za-z0-9+/_-]{43}=?$/.test(t)) bytes = new Uint8Array(Buffer.from(t.replaceAll("-", "+").replaceAll("_", "/"), "base64"));
+  if (bytes?.length !== 32) throw new Error(`${name} must be 32 bytes as 64 hex characters or base64 (openssl rand -base64 32)`);
+  return bytes;
+}
+
+function base64UrlBytes(text: string): Uint8Array | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(text)) return null;
+  return new Uint8Array(Buffer.from(text, "base64url"));
+}
 
 export function loadConfig(env: Env = process.env): ServerConfig {
   const rpcUrl = str(env, "RPC_URL", DEFAULT_RPC_URL);
@@ -197,10 +309,29 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       txPerSec: int(env, "RATE_LIMIT_TX_RPS", 5, 1, 10_000),
       wsMsgPerSec: int(env, "RATE_LIMIT_WS_MSG_RPS", 30, 1, 100_000),
       wsConnPerIp: int(env, "WS_MAX_CONN_PER_IP", 20, 1, 100_000),
+      authPerMin: int(env, "RATE_LIMIT_AUTH_PER_MIN", 30, 1, 100_000),
+      userPerSec: int(env, "RATE_LIMIT_USER_RPS", 10, 1, 100_000),
+      userBurst: int(env, "RATE_LIMIT_USER_BURST", 40, 1, 100_000),
+      wsConnPerUser: int(env, "WS_MAX_CONN_PER_USER", 10, 1, 10_000),
+      adminPerMin: int(env, "RATE_LIMIT_ADMIN_PER_MIN", 60, 1, 100_000),
     },
     wsMaxSubscriptions: int(env, "WS_MAX_SUBSCRIPTIONS", 64, 1, 10_000),
     wsCompression: bool(env, "WS_COMPRESSION", false),
     logLevel: oneOf(env, "LOG_LEVEL", "info", ["debug", "info", "warn", "error"]),
+    userDb: { databaseUrl: optional(env, "DATABASE_URL"), pgliteDir: str(env, "PGLITE_DIR", "data/pglite") },
+    auth: loadAuth(env),
+    adminToken: optional(env, "ADMIN_TOKEN"),
+    notifications: {
+      channelKey: optional(env, "CHANNEL_ENCRYPTION_KEY"),
+      vapidPublicKey: optional(env, "VAPID_PUBLIC_KEY"),
+      vapidPrivateKey: optional(env, "VAPID_PRIVATE_KEY"),
+      vapidSubject: "",
+      telegramBotToken: optional(env, "TELEGRAM_BOT_TOKEN"),
+      telegramBotUsername: optional(env, "TELEGRAM_BOT_USERNAME")?.replace(/^@/, "") ?? null,
+      telegramWebhookSecret: optional(env, "TELEGRAM_WEBHOOK_SECRET"),
+      alertSweepMs: int(env, "ALERT_SWEEP_MS", 10_000, 1_000, 3_600_000),
+      deliveryRetentionDays: int(env, "ALERT_DELIVERY_RETENTION_DAYS", 30, 1, 3_650),
+    },
     monitoring: {
       metricsToken: optional(env, "METRICS_TOKEN"),
       feedStallMs: int(env, "METRICS_FEED_STALL_SEC", 30, 5, 3_600) * 1_000,
@@ -208,9 +339,60 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
+  if (cfg.userDb.databaseUrl && !/^postgres(ql)?:\/\//.test(cfg.userDb.databaseUrl))
+    throw new Error("DATABASE_URL must be a postgres:// URL");
+  if (cfg.adminToken) parseAdminTokens(cfg.adminToken);
+  validateNotifications(env, cfg);
   if (cfg.monitoring.metricsToken !== null && cfg.monitoring.metricsToken.length < 16)
     throw new Error("METRICS_TOKEN must be at least 16 characters (openssl rand -hex 32)");
   return cfg;
+}
+
+function loadAuth(env: Env): ServerConfig["auth"] {
+  const port = env.SERVER_PORT?.trim() || "8787";
+  const publicOrigin = normalizeOrigin("PUBLIC_ORIGIN", str(env, "PUBLIC_ORIGIN", `http://127.0.0.1:${port}`));
+  if (publicOrigin.startsWith("http:") && !isLoopbackOrigin(publicOrigin)) {
+    throw new Error("PUBLIC_ORIGIN must be https: the session cookie is Secure (plain http only works on 127.0.0.1 / localhost)");
+  }
+  const extra = list(env, "ALLOWED_ORIGINS", []).map((o) => normalizeOrigin("ALLOWED_ORIGINS", o));
+  for (const o of extra) {
+    if (o.startsWith("http:") && !isLoopbackOrigin(o)) throw new Error(`ALLOWED_ORIGINS: ${o} must be https (http only on loopback)`);
+  }
+  const siwsDomain = str(env, "SIWS_DOMAIN", new URL(publicOrigin).host);
+  if (!/^[^\s/?#@]+$/.test(siwsDomain)) throw new Error("SIWS_DOMAIN must be a bare host[:port]");
+  return {
+    publicOrigin,
+    allowedOrigins: [...new Set([publicOrigin, ...extra])],
+    siwsDomain,
+    cookieName: SESSION_COOKIE_NAME,
+    sessionTtlMs: int(env, "SESSION_TTL_HOURS", 24, 1, 24 * 7) * 3_600_000,
+    maxSessionsPerUser: int(env, "SESSION_MAX_PER_USER", 10, 1, 100),
+  };
+}
+
+function validateNotifications(env: Env, cfg: ServerConfig): void {
+  const n = cfg.notifications;
+  if (n.channelKey) decodeKey32("CHANNEL_ENCRYPTION_KEY", n.channelKey);
+  if (!!n.vapidPublicKey !== !!n.vapidPrivateKey)
+    throw new Error("set both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (bun run --cwd apps/server vapid-keys)");
+  if (n.vapidPublicKey && n.vapidPrivateKey) {
+    const pub = base64UrlBytes(n.vapidPublicKey);
+    const priv = base64UrlBytes(n.vapidPrivateKey);
+    if (pub?.length !== 65 || pub[0] !== 4)
+      throw new Error("VAPID_PUBLIC_KEY must be an uncompressed P-256 point, base64url (87 characters)");
+    if (priv?.length !== 32) throw new Error("VAPID_PRIVATE_KEY must be 32 bytes, base64url (43 characters)");
+    const subject = optional(env, "VAPID_SUBJECT") ?? (cfg.auth.publicOrigin.startsWith("https:") ? cfg.auth.publicOrigin : null);
+    if (!subject || !/^(mailto:\S+@\S+|https:\/\/\S+)$/.test(subject)) {
+      throw new Error("VAPID_SUBJECT must be a mailto: address or an https: URL (push services reject anything else)");
+    }
+    n.vapidSubject = subject;
+  }
+  if (n.telegramBotToken && !/^\d{5,}:[A-Za-z0-9_-]{30,}$/.test(n.telegramBotToken)) throw new Error("TELEGRAM_BOT_TOKEN looks malformed");
+  if (n.telegramBotUsername && !/^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(n.telegramBotUsername))
+    throw new Error("TELEGRAM_BOT_USERNAME is invalid");
+  if (n.telegramWebhookSecret && !/^[A-Za-z0-9_-]{16,256}$/.test(n.telegramWebhookSecret)) {
+    throw new Error("TELEGRAM_WEBHOOK_SECRET must be 16-256 of A-Z a-z 0-9 _ -");
+  }
 }
 
 /** Redacts key-like query params and userinfo before printing a URL. */

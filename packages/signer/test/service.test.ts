@@ -5,10 +5,11 @@ import { bytesEqual } from "../src/bytes";
 import { isSignerError, type SignerErrorCode } from "../src/errors";
 import { type DailySpendCaps, type SpendState, SpendTracker } from "../src/firewall/spend-tracker";
 import * as publicApi from "../src/index";
+import { createSignerPolicy, DEFAULT_FIREWALL_CAPS, SIGNER_ALLOWED_PROGRAMS, SIGNER_TIP_ACCOUNTS } from "../src/policy";
 import { type SignerPolicy, SignerService, type SignRequest } from "../src/service";
 import { MemoryStore } from "../src/store";
 import { LAMPORTS_PER_SOL, makeContext, randomAddress, type TestActors } from "./helpers/fixtures";
-import { curveBuyV2 } from "./helpers/scenarios";
+import { curveBuyV2, curveSellV2 } from "./helpers/scenarios";
 import { buildTransaction, noop, transferSol } from "./helpers/tx";
 import { makeVault, PASSWORD } from "./helpers/vault";
 
@@ -112,6 +113,20 @@ describe("SignerService", () => {
     expect(violations.join()).toContain("fee payer");
   });
 
+  test("trade expectations are enforced when signing and in dry runs", async () => {
+    const { service, wallet, actors } = await setup();
+    // curveSellV2: the sell_v2 at #2 has min_sol_output 0.4 SOL.
+    const sell = buildTransaction({ feePayer: wallet.address, instructions: await curveSellV2(actors) });
+    const quote = (expectedOut: bigint): SignRequest => ({ expectations: [{ instruction: 2, expectedOut, slippageBps: 1500 }] });
+    expect((await service.checkTransaction(wallet.id, sell, quote(470_000_000n))).ok).toBe(true);
+    expect((await service.checkTransaction(wallet.id, sell, quote(500_000_000n))).ok).toBe(false);
+    const signed = await service.signTransaction(wallet.id, sell, quote(470_000_000n));
+    expect(signed.summary.text).toContain("Checked against your own quote");
+    const violations = await expectCode(service.signTransaction(wallet.id, sell, quote(500_000_000n)), "FIREWALL_REFUSED");
+    expect(violations.join()).toContain("below your quote of 0.5 SOL less your 15% max slippage (0.425 SOL)");
+    expect(service.auditLog.list().map((e) => e.status)).toEqual(["signed", "refused"]);
+  });
+
   test("dry-run check neither signs nor reserves", async () => {
     const { service, wallet, actors, spendTracker } = await setup();
     const result = await service.checkTransaction(
@@ -132,6 +147,33 @@ describe("SignerService", () => {
     await expectCode(service.signTransaction(wallet.id, cancel), "FIREWALL_REFUSED");
     const signed = await service.signTransaction(wallet.id, cancel, { ownedNonceAccounts: [actors.nonceAccount] });
     expect(signed.signature).toBeString();
+  });
+
+  test("the shipped policy: embedded allowlist and tip accounts, user caps applied, nothing mutable", async () => {
+    const policy = createSignerPolicy({ caps: { maxBuyLamports: SOL / 4n } });
+    expect(policy.tipAccounts).toBe(SIGNER_TIP_ACCOUNTS);
+    expect(policy.allowedPrograms).toBe(SIGNER_ALLOWED_PROGRAMS);
+    expect(policy.caps).toEqual({ ...DEFAULT_FIREWALL_CAPS, maxBuyLamports: SOL / 4n });
+    for (const frozen of [policy.caps, policy.tipAccounts, policy.allowedPrograms, policy.venueRules, DEFAULT_FIREWALL_CAPS]) {
+      expect(Object.isFrozen(frozen)).toBe(true);
+    }
+    const { vault, wallet, actors } = await setup();
+    const service = new SignerService({ vault, policy });
+    const buy = async (max: bigint) => buildTransaction({ feePayer: wallet.address, instructions: await curveBuyV2(actors, max) });
+    await service.signTransaction(wallet.id, await buy(SOL / 4n));
+    const violations = await expectCode(service.signTransaction(wallet.id, await buy(SOL / 4n + 1n)), "FIREWALL_REFUSED");
+    expect(violations.join()).toContain("above the per-trade cap");
+  });
+
+  test("a policy carrying a tip account the signer has not reviewed is refused outright", async () => {
+    const { vault, wallet, actors } = await setup();
+    // E.g. a host that "refreshes" tip accounts from the backend: the backend could name its own wallet.
+    const policy: SignerPolicy = { ...createSignerPolicy(), tipAccounts: [...SIGNER_TIP_ACCOUNTS, actors.attacker] };
+    const service = new SignerService({ vault, policy: async () => policy });
+    const tip = buildTransaction({ feePayer: wallet.address, instructions: [transferSol(wallet.address, actors.attacker, 1_000n)] });
+    await expectCode(service.signTransaction(wallet.id, tip), "INTERNAL");
+    await expectCode(service.checkTransaction(wallet.id, tip), "INTERNAL");
+    expect(service.auditLog.list()).toHaveLength(0);
   });
 
   test("the package API has no way to sign arbitrary bytes with a trading wallet", () => {

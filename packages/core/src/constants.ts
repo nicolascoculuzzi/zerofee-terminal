@@ -41,6 +41,79 @@ export const SYSTEM_PROGRAM_ID: Address = address("11111111111111111111111111111
 export const COMPUTE_BUDGET_PROGRAM_ID: Address = address("ComputeBudget111111111111111111111111111111");
 /** Metaplex Token Metadata (legacy `create` coins keep name/symbol/uri here). https://developers.metaplex.com/token-metadata */
 export const MPL_TOKEN_METADATA_PROGRAM_ID: Address = address("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+/** Address Lookup Table program. https://solana.com/developers/guides/advanced/lookup-tables */
+export const ADDRESS_LOOKUP_TABLE_PROGRAM_ID: Address = address("AddressLookupTab1e1111111111111111111111111");
+
+/** RecentBlockhashes sysvar (nonce initialize / advance / withdraw). https://docs.rs/solana-sysvar/latest/solana_sysvar/recent_blockhashes/ */
+export const SYSVAR_RECENT_BLOCKHASHES_ID: Address = address("SysvarRecentB1ockHashes11111111111111111111");
+/** Rent sysvar (nonce initialize / withdraw). https://docs.rs/solana-sysvar/latest/solana_sysvar/rent/ */
+export const SYSVAR_RENT_ID: Address = address("SysvarRent111111111111111111111111111111111");
+
+// ---------------------------------------------------------------------------------------------
+// Durable nonces and address lookup tables (armed orders)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * System program instruction tags (bincode u32 LE).
+ * https://github.com/anza-xyz/solana-sdk/blob/master/system-interface/src/instruction.rs
+ */
+export const SYSTEM_IX = {
+  createAccount: 0,
+  transfer: 2,
+  createAccountWithSeed: 3,
+  advanceNonceAccount: 4,
+  withdrawNonceAccount: 5,
+  initializeNonceAccount: 6,
+  authorizeNonceAccount: 7,
+} as const;
+
+/**
+ * Nonce account size: bincode `Versions<State>` = u32 version + u32 state + authority (32) +
+ * durable nonce (32) + fee calculator (u64) = 80 bytes. Rent is ALWAYS read with
+ * `getMinimumBalanceForRentExemption(80)` (it dropped in 2026 and differs per cluster).
+ * https://github.com/anza-xyz/solana-sdk/blob/master/nonce/src/state.rs
+ */
+export const NONCE_ACCOUNT_LENGTH = 80;
+/** Max length of a `create_with_seed` seed. https://github.com/anza-xyz/solana-sdk/blob/master/pubkey/src/lib.rs (MAX_SEED_LEN) */
+export const MAX_SEED_LENGTH = 32;
+/**
+ * Seed prefix for nonce slots. Slots are created with `CreateAccountWithSeed` (base = trading
+ * wallet) so the trading wallet stays the ONLY signer, as the signer firewall requires
+ * (packages/signer/src/firewall/rules/system.ts). Ours, not a chain constant.
+ */
+export const NONCE_SLOT_SEED_PREFIX = "zerofee-nonce-";
+/**
+ * Max lamports a nonce slot may be funded with: the signer firewall's default cap
+ * (packages/signer/src/firewall/programs.ts DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS, 0.002 SOL). Rent
+ * itself is read live; this only rejects a funding the firewall would refuse.
+ */
+export const MAX_NONCE_SLOT_LAMPORTS = 2_000_000n;
+
+/**
+ * Address Lookup Table program instruction tags (bincode u32 LE) and account layout.
+ * https://github.com/anza-xyz/solana-sdk/blob/master/address-lookup-table-interface/src/instruction.rs
+ * https://github.com/anza-xyz/solana-sdk/blob/master/address-lookup-table-interface/src/state.rs
+ */
+export const ALT_IX = {
+  createLookupTable: 0,
+  freezeLookupTable: 1,
+  extendLookupTable: 2,
+  deactivateLookupTable: 3,
+  closeLookupTable: 4,
+} as const;
+/** `LOOKUP_TABLE_META_SIZE`: addresses start at this byte offset. */
+export const LOOKUP_TABLE_META_SIZE = 56;
+/** `LOOKUP_TABLE_MAX_ADDRESSES`. */
+export const LOOKUP_TABLE_MAX_ADDRESSES = 256;
+/**
+ * A deactivated table stays usable until its deactivation slot leaves the 512-entry SlotHashes
+ * sysvar; only then can it be closed. Armed orders that reference a table die when it closes, so
+ * operator tables are never deactivated while referenced.
+ * https://github.com/anza-xyz/agave/blob/master/programs/address-lookup-table/src/processor.rs
+ */
+export const LOOKUP_TABLE_DEACTIVATION_COOLDOWN_SLOTS = 513;
+/** Addresses per ExtendLookupTable instruction that keep the extend tx well under 1,232 bytes (25 x 32 B + overhead). */
+export const LOOKUP_TABLE_EXTEND_CHUNK = 25;
 
 // ---------------------------------------------------------------------------------------------
 // Mints

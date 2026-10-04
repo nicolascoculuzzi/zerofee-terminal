@@ -196,3 +196,24 @@ export async function ammInstruction(
   remaining.push(ro(buyback), w(await ata(buyback, quoteMint, qtp)), ...(options.extraAccounts ?? []));
   return buildIdlInstruction({ programAddress: PROGRAMS.pumpAmm, program: "pump_amm", name, accounts, args, remaining });
 }
+
+/** PumpSwap extend_account(account, user), as pump-swap-sdk prepends it for pools shorter than 300 bytes. */
+export async function ammExtendInstruction(
+  p: { user: Address; account: Address; overrides?: Record<string, Address> },
+  options: { extraAccounts?: AccountMeta[] } = {},
+): Promise<Instruction> {
+  return buildIdlInstruction({
+    programAddress: PROGRAMS.pumpAmm,
+    program: "pump_amm",
+    name: "extend_account",
+    accounts: {
+      account: p.account,
+      user: p.user,
+      event_authority: await pda(PROGRAMS.pumpAmm, text("__event_authority")),
+      program: PROGRAMS.pumpAmm,
+      ...p.overrides,
+    },
+    args: {},
+    remaining: options.extraAccounts ?? [],
+  });
+}
