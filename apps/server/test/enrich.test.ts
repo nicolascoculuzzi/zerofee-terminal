@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { type Address, getAddressEncoder } from "@solana/kit";
-import type { PumpMigrationEvent } from "@zerofee/core";
+import { bondingCurvePda, decodeTokenAccount, type PumpMigrationEvent } from "@zerofee/core";
 import { type EnrichConfig, loadEnrichConfig } from "../src/enrich/config";
 import { dexPaidFrom, parseOrders, parseProfileMints } from "../src/enrich/dexscreener";
 import { Enricher, watchedMints } from "../src/enrich/index";
@@ -17,6 +17,7 @@ import { StorageReader } from "../src/storage/reader";
 import { StorageWriter } from "../src/storage/writer";
 import { RpcClient } from "../src/util/rpc";
 import dex from "./fixtures/dexscreener.json";
+import recorded from "./fixtures/token-accounts.json";
 import { addr, FakeCurve, FakeResolver, mockFetch, synthTx, waitFor } from "./helpers";
 
 setLogLevel("error");
@@ -25,6 +26,8 @@ const T0 = Math.floor(Date.now() / 1000) - 120;
 const RPC_URL = "http://rpc.test/";
 const PULSE = { finalStretchBps: 6_000, migratedWindowMs: 86_400_000, newMaxAgeMs: 86_400_000, finalMaxIdleMs: 3_600_000, listLimit: 100 };
 const enc = getAddressEncoder();
+
+const b64 = (s: string) => new Uint8Array(Buffer.from(s, "base64"));
 
 /** A 165-byte SPL token account: mint | owner | amount (u64 LE) | zeros. */
 function tokenAccountData(mint: string, owner: string, amount: bigint): string {
@@ -256,6 +259,57 @@ describe("holder reconciliation", () => {
     expect(sum?.top10Pct).toBeCloseTo(4, 3); // 40M of 1B; the curve's 700M is excluded
     expect(s.market.tokens.get(mint)?.holders?.transferRecipients()).toEqual([addr("receiver")]);
     expect(largestCalls).toBe(1);
+  });
+
+  test("recorded mainnet Token-2022 accounts: owners decoded, curve vault excluded, emptied accounts ignored", async () => {
+    // 11 real token accounts (170 B: base layout + ImmutableOwner) of a live pump coin, read with one
+    // getMultipleAccounts on 2026-10-04 (fixtures/token-accounts.json): 4 holders, the curve vault, 6 emptied.
+    const accounts = recorded.getMultipleAccounts.value;
+    const addresses = Object.keys(recorded.owners);
+    const s = setup({ DEXSCREENER_ENABLED: "false" }, (url, body) => {
+      if (url !== RPC_URL) return null;
+      if (body?.method === "getTokenLargestAccounts") {
+        const value = addresses.map((address, i) => ({
+          address,
+          amount: String(decodeTokenAccount(b64(accounts[i]?.data[0] ?? "")).amount),
+        }));
+        return [200, { jsonrpc: "2.0", id: 1, result: { context: { slot: recorded.slot }, value } }];
+      }
+      if (body?.method === "getMultipleAccounts") {
+        const keys = (body.params as [string[]])[0];
+        return [
+          200,
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            result: { context: recorded.getMultipleAccounts.context, value: keys.map((k) => accounts[addresses.indexOf(k)] ?? null) },
+          },
+        ];
+      }
+      return null;
+    });
+    const mint = recorded.mint;
+    const curve = await bondingCurvePda(mint as Address);
+    const c = new FakeCurve(mint, addr("recorded-dev"), curve);
+    s.market.applyTx(synthTx(recorded.slot - 500, [c.create(T0), c.buy(addr("recorded-dev"), 1_000_000_000n, T0)]));
+    s.market.applyTx(synthTx(recorded.slot - 400, [c.buy(addr("moved-away"), 2_000_000_000n, T0 + 1)])); // not in the snapshot
+    s.focused.add(mint);
+    s.enricher.tick();
+    await waitFor(() => s.enricher.stats.rpcChecks === 1);
+    const holders = new Map<string, bigint>();
+    for (const a of accounts) {
+      const t = decodeTokenAccount(b64(a?.data[0] ?? ""));
+      if (t.owner !== curve && t.amount > 0n) holders.set(t.owner, (holders.get(t.owner) ?? 0n) + t.amount);
+    }
+    expect(holders.size).toBe(4);
+    const book = s.market.tokens.get(mint)?.holders;
+    for (const [owner, amount] of holders) expect(book?.balanceOf(owner)).toBe(amount);
+    // the curve vault (256M tokens) is excluded, never a holder; wallets missing from a complete list hold nothing
+    expect(book?.excluded.has(curve)).toBe(true);
+    expect([book?.balanceOf(curve), book?.balanceOf(addr("moved-away")), book?.balanceOf(addr("recorded-dev"))]).toEqual([0n, 0n, 0n]);
+    const sum = [...holders.values()].reduce((x, y) => x + y, 0n);
+    expect(s.market.summary(mint)).toMatchObject({ holders: 4, holdersSource: "rpc" });
+    expect(s.market.summary(mint)?.top10Pct).toBeCloseTo(Number((sum * 1_000_000n) / 1_000_000_000_000_000n) / 10_000, 6);
   });
 
   test("a refused getTokenLargestAccounts (public RPC) backs off instead of retrying every tick", async () => {

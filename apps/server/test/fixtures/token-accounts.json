@@ -1,0 +1,147 @@
+{
+ "_source": "Recorded from https://api.mainnet-beta.solana.com on 2026-10-04: token accounts of 72SZVRcj9VidyYRXiv97RkjTgoCYhoXPBcWeGpmpump found in its recent transactions' postTokenBalances, read with one getMultipleAccounts.",
+ "mint": "72SZVRcj9VidyYRXiv97RkjTgoCYhoXPBcWeGpmpump",
+ "slot": 453104856,
+ "owners": {
+  "FjrqSULyQzQQwJD5uoB3puVWyniSJMWUMRGPqtvDcQk6": "Am5FK1fELetwM8fduzUsJF9Vb5d1sracp9dtoQHy7TGa",
+  "GbvEzTUnDYPmJx1x3rNgsXNHCmVcjpFXYvfpRWqC7XG2": "HFoL8GtfUvFYW4XNtZE5fUrymJ8GoCzk7A1UhVZTTSZc",
+  "8uF4nJZ3bXHywfi5z8uP65UtnnJC82hJvqZR9sZyLxwQ": "Bh5aJpx9r9nuhAwLRq3P2VjUEyRi9PLHSpCv4PTQyCB3",
+  "9YowzAbN1zRxyFPfUXQbgH3rqUdstxai3iufrgR7E5dA": "9sSJ7Kmhna23UjqzdpmgSdJBipA2FWaG4gy5roQTxaR1",
+  "EsD8KRgheQqqEaTBRgoij47yo5hQP4rjTzmh5Ymqsjv": "BbD6aH5XtEFFcdUnkhUCERs2JT4VDanwmAJVqZUx2eLo",
+  "6ZMUMgNntsWguUBhPjh4jHGyfCjuynGXeM49TJRamnFf": "EJ7hxfVwS6g23oEYQARcrrYLat4R1GUUDezytNtkCs7X",
+  "Hwd9wThEQoUbMbDMszptLuabobBBVB1Y1rX8gcUK1CUw": "ACDgDEnfTze4kzqZkgNqzyjtnntzgCXDNHjJtWwF7viH",
+  "8hCRQom4u4RvhRArSFJ5kpxjfoDzhs7Ep9dghMcnBRmH": "ANoh89dQuEsqhnMtJ8rbjKAcC4Ytfw2GH1W1khzWNeCN",
+  "73qxgAkbwkWpP236sqXtoWvNdp7gdHUG8EQH1Q9Jzfc7": "HL4MfW2zMfsfKcisJ8crZR434hNZrxwJdAYhaVB31jKU",
+  "FXQVzJyNCY7M5AXUkfZBengQjgHGb8FNGYXVQ4j4gQuR": "Hq2BVm8oySZwer6YcpJtXSBTubCvpxxZthnP2wPGX8ib",
+  "4feS18N8F2hH7Ek3ywL9inRdZcqbxfJdGaxLgo21bMzJ": "Hq9c5mL4x9x5eLcB3VmCjCGLCKgHpgUC11xH6boEHX6U"
+ },
+ "getMultipleAccounts": {
+  "context": {
+   "apiVersion": "4.3.0",
+   "slot": 453104856
+  },
+  "value": [
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y+RA4or9kPXNcSEqAU2texlg5S8KcnWnDDIsvp2xzVBXzKDBORSAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0AgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y/xhYHif3GDaXpR4r3ET/fBvTfp4BkeKyfGhomoUfmRl7wo2igJ6QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y+e2UYVaT+O09Qxjmy4XfHtA+vgu5/ikdDBsLw+LECKQgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y+DySMR/k4ZeYm5aE+wGIGBVjK6fSmXsaXbqeftlPfUrAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y+dWEs7YkXIBAVkihEAc2wjl4kQd+Ank+odcHDUw3+VKPjQPzg/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0AgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y/FimLzN9teAhYEg/aMSQUf6oWk6ohRAJ10oRthYnRzigAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0AgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y+ImOdyuP5KldB+L3DuXw2JTLPEf+EIsp9ZrTbRLOevHta01glAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y+LTyyEL2fY12np0Hqepw3+EplSX35960RerrvzBmr4/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0AgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y/ynNI2dPDr9Z7eCy2/J5lKfvUtKjVls9/0LKQjq8Ap9wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y/6CDR5XKODr12iUNESXeh8mBrKw9UhToxRowrUB7yxyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0AgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   },
+   {
+    "data": [
+     "AYsdJVPbPwNQaL4D5CYhSBp8MwoPSGyTP1uiWmaf/y/6EJllu99HXknWbBBsp+0tgXOe9P48L8tsYOu+Nm8ZhXZlUqEfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0AgcAAAA=",
+     "base64"
+    ],
+    "executable": false,
+    "lamports": 1513840,
+    "owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "rentEpoch": 18446744073709552000,
+    "space": 170
+   }
+  ]
+ }
+}
