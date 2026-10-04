@@ -405,6 +405,7 @@ describe("nonce probe", () => {
     const r = await b.json<NonceProbeResponse>("GET", `/api/orders/nonce-probe?wallet=${signer.address}&count=3`);
     expect(r.status).toBe(200);
     expect(r.body.wallet).toBe(signer.address);
+    expect(r.body.rentLamports).toBeNull(); // the fake chain has no rent method
     expect(r.body.slots.map((s) => s.nonceAccount)).toEqual([slot0.account, slot1.account, slot2.account]);
     expect(r.body.slots[0]).toMatchObject({ index: 0, state: "ready", orderId: heldAccount === slot0.account ? held.id : null });
     expect(r.body.slots[0]?.nonceValue).not.toBeNull();

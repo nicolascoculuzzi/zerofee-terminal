@@ -46,6 +46,8 @@ export interface ChainReader {
   /** Newest first. */
   signaturesForAddress(address: string, limit: number): Promise<AddressSignature[]>;
   simulate(wireBase64: string): Promise<Simulation>;
+  /** Rent-exempt minimum for an account of `size` bytes (lamports); optional (test chains leave it out). */
+  minimumBalanceForRentExemption?(size: number): Promise<bigint>;
 }
 
 /** ChainReader over the server's JSON-RPC client (shares its rate-limit cooldown). */
@@ -74,6 +76,10 @@ export class RpcChainReader implements ChainReader {
       { limit, commitment: "confirmed" },
     ]);
     return r.map((x) => ({ signature: x.signature, slot: x.slot, err: x.err ?? null }));
+  }
+
+  async minimumBalanceForRentExemption(size: number): Promise<bigint> {
+    return BigInt(await this.rpc.call<number>("getMinimumBalanceForRentExemption", [size]));
   }
 
   async simulate(wireBase64: string): Promise<Simulation> {

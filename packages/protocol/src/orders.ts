@@ -282,4 +282,6 @@ export interface NonceProbeResponse {
   /** Context slot of the chain read. */
   slot: number;
   slots: NonceSlotProbe[];
+  /** Rent-exempt minimum of a new slot (lamports, getMinimumBalanceForRentExemption(80)); null when unread. */
+  rentLamports: string | null;
 }

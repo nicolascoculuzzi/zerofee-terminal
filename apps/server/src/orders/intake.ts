@@ -26,6 +26,7 @@ import {
   JITO_DONT_FRONT,
   JITO_MIN_TIP_LAMPORTS,
   LAMPORTS_PER_SOL,
+  NONCE_ACCOUNT_LENGTH,
   nonceSlotAddresses,
   reviewedTipAccounts,
   validateUserArmedOrders,
@@ -126,6 +127,7 @@ const FUTURE_SKEW_MS = 5 * 60_000;
 
 export class OrderIntake {
   private readonly locks = new KeyedMutex();
+  private nonceRent: Promise<bigint | null> | undefined;
 
   constructor(private readonly d: IntakeDeps) {}
 
@@ -153,6 +155,10 @@ export class OrderIntake {
       throw new IntakeError(503, "unavailable", `cannot read the nonce accounts right now (${e instanceof Error ? e.message : e}); retry`);
     }
     const held = new Map((await this.d.repo.slots(userId)).filter((s) => s.status === "in-use").map((s) => [s.nonceAccount, s.orderId]));
+    // Rent of a new slot, read once (the browser has no RPC and must not hardcode it).
+    this.nonceRent ??= this.d.chain.minimumBalanceForRentExemption?.(NONCE_ACCOUNT_LENGTH).catch(() => null) ?? Promise.resolve(null);
+    const rent = await this.nonceRent;
+    if (rent === null) this.nonceRent = undefined;
     const slots = addresses.map((nonceAccount, index): NonceSlotProbe => {
       const raw = read.accounts[index] ?? null;
       const snap = nonceSnapshot(raw);
@@ -166,7 +172,7 @@ export class OrderIntake {
         orderId: held.get(nonceAccount) ?? null,
       };
     });
-    return { wallet, slot: read.slot, slots };
+    return { wallet, slot: read.slot, slots, rentLamports: rent === null ? null : rent.toString() };
   }
 
   /** Validates and stores `orders` for `userId`; returns their views. Throws IntakeError on refusal. */
