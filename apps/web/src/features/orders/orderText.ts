@@ -1,8 +1,36 @@
-import { fmtPct, fmtSol, fmtSolPrice, fmtSolShort, fmtTokens, fmtUsd } from "../../lib/format";
-import type { LandingPreset, Order, OrderKind, OrderSize, OrderStatus, OrderTrigger } from "../../protocol";
+import { DASH, fmtCompact, fmtPriceText, fmtSolShort, fmtUsd } from "../../lib/format";
+import { LANDING_INFO } from "../../lib/landing";
+import type { LandingPreset, Order, OrderKind, OrderStatus } from "../../protocol";
 import { isOpenOrder } from "../../state/orders";
+import type { QuoteCurrency } from "../../state/settings";
 
+/** Status presentation (DESIGN.md 4.20): the dot colour, the label, and how loud the row is. */
+export type StatusTone = "info" | "warn" | "sell" | "filled" | "muted";
+
+export const STATUS_INFO: Record<OrderStatus, { label: string; tone: StatusTone }> = {
+  armed: { label: "Armed", tone: "info" },
+  submitted: { label: "Sending", tone: "warn" },
+  filled: { label: "Filled", tone: "filled" },
+  // A failed attempt consumes the durable nonce (SPEC): the order needs re-arming.
+  failed: { label: "Consumed · re-arm", tone: "sell" },
+  stale: { label: "Needs re-arm", tone: "warn" },
+  cancelled: { label: "Cancelled", tone: "muted" },
+};
+
+/** Short type names for the 12ch Type column; TP and SL legs get numbers (typeLabels). */
 export const KIND_LABEL: Record<OrderKind, string> = {
+  limit_buy: "Limit buy",
+  limit_sell: "Limit sell",
+  take_profit: "TP",
+  stop_loss: "SL",
+  migration_buy: "Migration buy",
+  migration_sell: "Migration sell",
+  copy_buy: "Copy buy",
+  dev_snipe: "Dev snipe",
+};
+
+/** Full names for the drawer and dialogs. */
+export const KIND_NAME: Record<OrderKind, string> = {
   limit_buy: "Limit buy",
   limit_sell: "Limit sell",
   take_profit: "Take profit",
@@ -13,30 +41,67 @@ export const KIND_LABEL: Record<OrderKind, string> = {
   dev_snipe: "Dev snipe",
 };
 
-export const STATUS_LABEL: Record<OrderStatus, string> = {
-  armed: "armed",
-  submitted: "submitted",
-  filled: "filled",
-  stale: "stale, needs re-arm",
-  failed: "failed",
-  cancelled: "cancelled",
-};
+/** Lane column (8ch): where the pre-signed transaction is sent (SPEC "Landing presets"). */
+export const LANE_LABEL: Record<LandingPreset, string> = { reduced: "Sender", secure: "Jito", fast: "All lanes" };
 
-export const LANDING_LABEL: Record<LandingPreset, string> = { reduced: "Reduced", secure: "Secure", fast: "Fast" };
-
-function comparator(direction: OrderTrigger["direction"]): string {
-  if (direction === "below") return "≤";
-  if (direction === "above") return "≥";
-  return "at";
+export function laneTitle(landing: LandingPreset): string {
+  const info = LANDING_INFO[landing];
+  return `${info.label}: ${info.route}`;
 }
 
-/** "MC ≤ $12.4K", "Price ≥ 0.0₇41 SOL", "On migration"… */
-export function triggerText(t: OrderTrigger): string {
+/**
+ * "TP1", "TP2"… by trigger price within each token (lowest first), "SL" (numbered when a token
+ * has several), everything else its kind label.
+ */
+export function typeLabels(orders: readonly Order[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const legs = new Map<string, Order[]>();
+  for (const o of orders) {
+    if (o.kind === "take_profit" || o.kind === "stop_loss") {
+      const key = `${o.mint ?? o.symbol}:${o.kind}`;
+      const list = legs.get(key) ?? [];
+      list.push(o);
+      legs.set(key, list);
+    } else {
+      out.set(o.id, KIND_LABEL[o.kind]);
+    }
+  }
+  for (const list of legs.values()) {
+    list.sort((a, b) => (a.trigger.value ?? 0) - (b.trigger.value ?? 0) || a.createdAt - b.createdAt);
+    list.forEach((o, i) => {
+      const base = KIND_LABEL[o.kind];
+      out.set(o.id, o.kind === "stop_loss" && list.length === 1 ? base : `${base}${i + 1}`);
+    });
+  }
+  return out;
+}
+
+export interface TriggerContext {
+  quote: QuoteCurrency;
+  solUsd: number;
+  /** Token supply when the token is in the live set (turns price triggers into market caps). */
+  supply: number | null;
+}
+
+function mcText(mcSol: number, ctx: TriggerContext): string {
+  return ctx.quote === "USD" ? fmtUsd(mcSol * ctx.solUsd) : `${fmtCompact(mcSol)} SOL`;
+}
+
+/**
+ * The trigger in words (DESIGN.md 4.20, 2.2: "MC above 120K", never comparison symbols). Price triggers are
+ * shown as the market cap they imply when the supply is known, so every row reads in MC.
+ */
+export function triggerText(order: Order, ctx: TriggerContext): string {
+  const t = order.trigger;
+  const word = t.direction === "above" ? "above" : t.direction === "below" ? "below" : "at";
   switch (t.metric) {
     case "mc":
-      return t.value === null ? "Market cap" : `MC ${comparator(t.direction)} ${fmtUsd(t.value)}`;
+      if (t.value === null) return "Market cap";
+      return `MC ${word} ${mcText(ctx.solUsd > 0 ? t.value / ctx.solUsd : 0, ctx)}`;
     case "price":
-      return t.value === null ? "Price" : `Price ${comparator(t.direction)} ${fmtSolPrice(t.value)} SOL`;
+      if (t.value === null) return "Price";
+      if (ctx.supply !== null && ctx.supply > 0) return `MC ${word} ${mcText(t.value * ctx.supply, ctx)}`;
+      return `Price ${word} ${fmtPriceText(t.value)} SOL`;
     case "migration":
       return "On migration";
     case "leader_buy":
@@ -46,95 +111,167 @@ export function triggerText(t: OrderTrigger): string {
   }
 }
 
-/** "0.5 SOL" or "50%" (of the holding when the order fires). */
-export function sizeText(size: OrderSize): string {
-  return size.kind === "sol" ? `${fmtSolShort(size.sol)} SOL` : `${fmtSolShort(size.pct)}%`;
+export interface Distance {
+  /** Signed % move from the live value to the trigger. */
+  pct: number;
+  /** The live value is already past the trigger (the order is firing or about to). */
+  crossed: boolean;
 }
 
-/** Live value of the metric the trigger watches, formatted like the trigger. */
-export function currentText(order: Order, current: number): string {
-  if (order.trigger.metric === "mc") return `MC ${fmtUsd(current)}`;
-  if (order.trigger.metric === "price") return `${fmtSolPrice(current)} SOL`;
-  return `Bonding ${fmtPct(current * 100)}`;
-}
-
-/** Signed % move from the live value to the trigger, or "at trigger" once it is crossed. */
-export function distanceText(order: Order, current: number): string | null {
+/** Distance from the live market cap (or price) to the trigger; null when it doesn't apply. */
+export function triggerDistance(order: Order, live: { mcUsd: number | null; priceSol: number | null }): Distance | null {
   const { metric, value, direction } = order.trigger;
-  if ((metric !== "mc" && metric !== "price") || value === null || !(current > 0)) return null;
-  if ((direction === "above" && current >= value) || (direction === "below" && current <= value)) return "at trigger";
-  return `${fmtPct(((value - current) / current) * 100, { signed: true })} to trigger`;
+  if (!isOpenOrder(order) || value === null) return null;
+  const current = metric === "mc" ? live.mcUsd : metric === "price" ? live.priceSol : null;
+  if (current === null || !(current > 0)) return null;
+  const crossed = (direction === "above" && current >= value) || (direction === "below" && current <= value);
+  return { pct: ((value - current) / current) * 100, crossed };
 }
 
-/** "1 nonce slot", or "shared (OCO)" for the leg riding on its sibling's nonce. */
-export function nonceText(order: Order): string {
-  if (order.nonceSlots === 0) {
-    if (order.ocoGroupId) return "shared (OCO)";
-    return order.runsWithTabClosed ? "no nonce slot" : "no nonce (signed live)";
+/** "Sell 25%", "Buy 0.5 SOL" (user-entered amounts as entered, DESIGN.md 3.4). */
+export function sizeText(order: Order): string {
+  const verb = order.side === "buy" ? "Buy" : "Sell";
+  return order.size.kind === "sol" ? `${verb} ${fmtSolShort(order.size.sol)} SOL` : `${verb} ${fmtSolShort(order.size.pct)}%`;
+}
+
+/** Nonce column: whether the order holds a durable-nonce slot, shares one (OCO), or has none. */
+export function nonceInfo(order: Order): { text: string; shared: boolean; title: string } {
+  if (order.ocoGroupId) {
+    return {
+      text: "Shared",
+      shared: true,
+      title: "One durable nonce shared with its OCO sibling: once either leg lands, the other can't.",
+    };
   }
-  return `${order.nonceSlots} nonce slot${order.nonceSlots === 1 ? "" : "s"}`;
+  if (order.nonceSlots > 0) {
+    return {
+      text: `${order.nonceSlots} slot${order.nonceSlots === 1 ? "" : "s"}`,
+      shared: false,
+      title: "Holds its own durable-nonce slot.",
+    };
+  }
+  return { text: "None", shared: false, title: "Nothing is pre-signed: this browser signs it live when it fires." };
 }
 
-export function variantsText(order: Order): string {
-  if (order.variants > 0) return `${order.variants} pre-signed variant${order.variants === 1 ? "" : "s"}`;
-  return "signed when it fires";
+/** Variants column: pre-signed min-out grid size, or "Live" for orders signed when they fire. */
+export function variantsText(order: Order): { text: string; title: string } {
+  if (order.variants > 0) {
+    return { text: String(order.variants), title: `${order.variants} pre-signed variants on a min-out grid` };
+  }
+  return { text: "Live", title: "Signed in this browser when it fires" };
 }
 
-export function fillText(order: Order): string | null {
-  const f = order.fill;
-  if (!f) return null;
-  return `${order.side === "buy" ? "Bought" : "Sold"} ${fmtTokens(f.tokenAmount)} for ${fmtSol(f.solAmount)} SOL at ${fmtSolPrice(f.priceSol)}`;
-}
+export type OrderTab = "all" | "armed" | "rearm" | "filled" | "consumed" | "cancelled";
 
-export type OrderFilter = "all" | "open" | "rearm" | "history";
+export const ORDER_TABS: { id: OrderTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "armed", label: "Armed" },
+  { id: "rearm", label: "Needs re-arm" },
+  { id: "filled", label: "Filled" },
+  { id: "consumed", label: "Consumed" },
+  { id: "cancelled", label: "Cancelled" },
+];
 
-export const FILTER_TEST: Record<OrderFilter, (o: Order) => boolean> = {
+export const TAB_TEST: Record<OrderTab, (o: Order) => boolean> = {
   all: () => true,
-  open: isOpenOrder,
+  armed: (o) => o.status === "armed" || o.status === "submitted",
   rearm: (o) => o.status === "stale",
-  history: (o) => !isOpenOrder(o),
+  filled: (o) => o.status === "filled",
+  consumed: (o) => o.status === "failed",
+  cancelled: (o) => o.status === "cancelled",
 };
 
-/** Open orders first (newest first), then finished ones (most recently finished first). */
-export function compareOrders(a: Order, b: Order): number {
-  const ao = isOpenOrder(a);
-  const bo = isOpenOrder(b);
-  if (ao !== bo) return ao ? -1 : 1;
-  if (ao) return b.createdAt - a.createdAt;
-  return (b.filledAt ?? b.updatedAt) - (a.filledAt ?? a.updatedAt);
+export function tabCounts(orders: readonly Order[]): Record<OrderTab, number> {
+  const c: Record<OrderTab, number> = { all: 0, armed: 0, rearm: 0, filled: 0, consumed: 0, cancelled: 0 };
+  for (const o of orders) {
+    c.all++;
+    for (const t of ORDER_TABS) if (t.id !== "all" && TAB_TEST[t.id](o)) c[t.id]++;
+  }
+  return c;
 }
+
+const STATUS_RANK: Record<OrderStatus, number> = { submitted: 0, armed: 1, stale: 2, failed: 3, filled: 4, cancelled: 5 };
 
 export interface OrderGroup {
+  /** Mint, or "kind:<kind>" for orders whose token isn't known yet (copy buys, dev snipes). */
   key: string;
-  /** Legs sharing one durable nonce (take profit + stop loss). */
-  oco: boolean;
-  open: boolean;
+  mint: string | null;
+  symbol: string;
   orders: Order[];
+  openCount: number;
 }
 
-/** Groups OCO legs together, keeping each group where its first (highest-sorted) leg falls. */
-export function groupOrders(sorted: Order[]): OrderGroup[] {
-  const groups: OrderGroup[] = [];
-  const byOco = new Map<string, OrderGroup>();
-  for (const o of sorted) {
-    const open = isOpenOrder(o);
-    if (o.ocoGroupId) {
-      const g = byOco.get(o.ocoGroupId);
-      if (g) {
-        g.orders.push(o);
-        g.open ||= open;
-        continue;
-      }
-      const group: OrderGroup = { key: `oco:${o.ocoGroupId}`, oco: true, open, orders: [o] };
-      byOco.set(o.ocoGroupId, group);
-      groups.push(group);
-    } else {
-      groups.push({ key: o.id, oco: false, open, orders: [o] });
-    }
+/**
+ * Groups orders by token (DESIGN.md 4.20). Groups with open orders come first (most recently
+ * armed first); inside a group open orders lead, then the ladder in arming order, so OCO legs
+ * sit next to each other.
+ */
+export function groupByToken(orders: readonly Order[]): OrderGroup[] {
+  const map = new Map<string, OrderGroup>();
+  for (const o of orders) {
+    const key = o.mint ?? `kind:${o.kind}`;
+    const g = map.get(key) ?? { key, mint: o.mint, symbol: o.mint ? o.symbol : KIND_NAME[o.kind], orders: [], openCount: 0 };
+    g.orders.push(o);
+    if (isOpenOrder(o)) g.openCount++;
+    map.set(key, g);
   }
-  // Legs in the order they were armed (take profit before its stop loss).
+  const groups = [...map.values()];
   for (const g of groups) {
-    if (g.oco) g.orders.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id, "en", { numeric: true }));
+    g.orders.sort((a, b) => {
+      const ao = isOpenOrder(a);
+      const bo = isOpenOrder(b);
+      if (ao !== bo) return ao ? -1 : 1;
+      if (!ao) return (b.filledAt ?? b.updatedAt) - (a.filledAt ?? a.updatedAt);
+      return (
+        STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.createdAt - b.createdAt || a.id.localeCompare(b.id, "en", { numeric: true })
+      );
+    });
   }
+  const latest = (g: OrderGroup) => Math.max(...g.orders.map((o) => (isOpenOrder(o) ? o.createdAt : (o.filledAt ?? o.updatedAt))));
+  groups.sort((a, b) => {
+    if (a.openCount > 0 !== b.openCount > 0) return a.openCount > 0 ? -1 : 1;
+    return latest(b) - latest(a);
+  });
   return groups;
 }
+
+/** Orders to cancel so each durable nonce is advanced once (cancelling one OCO leg cancels both). */
+export function cancelTargets(orders: readonly Order[]): Order[] {
+  const seen = new Set<string>();
+  const out: Order[] = [];
+  for (const o of orders) {
+    if (!isOpenOrder(o)) continue;
+    if (o.ocoGroupId) {
+      if (seen.has(o.ocoGroupId)) continue;
+      seen.add(o.ocoGroupId);
+    }
+    out.push(o);
+  }
+  return out;
+}
+
+/** Every open order the cancels will kill: the targets plus the OCO legs that share their nonces. */
+export function affectedOrders(targets: readonly Order[], all: readonly Order[]): Order[] {
+  const ids = new Set(targets.map((o) => o.id));
+  const groups = new Set(targets.map((o) => o.ocoGroupId).filter((g): g is string => g !== null));
+  const out = [...targets];
+  for (const o of all) {
+    if (ids.has(o.id) || !isOpenOrder(o) || !o.ocoGroupId || !groups.has(o.ocoGroupId)) continue;
+    out.push(o);
+  }
+  return out;
+}
+
+export function canCancel(o: Order): boolean {
+  return o.status === "armed" || o.status === "stale" || o.status === "submitted";
+}
+
+export function canRearm(o: Order): boolean {
+  return o.status === "stale" || o.status === "failed";
+}
+
+/** Rent held by durable-nonce accounts: 80-byte accounts at the rent-exempt minimum (1,447,680 lamports each). */
+export const NONCE_RENT_SOL = 0.00144768;
+
+/** "–" when a value is unknown (DESIGN.md 3.1). */
+export const UNKNOWN = DASH;

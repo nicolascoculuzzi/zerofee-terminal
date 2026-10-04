@@ -1,251 +1,252 @@
-import { ChevronDown, Info, type LucideIcon, Monitor, OctagonX, ShieldCheck } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { ListChecks } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { Button } from "../../components/ui/Button";
-import { EmptyState, ProgressBar } from "../../components/ui/bits";
-import { Modal } from "../../components/ui/Modal";
+import { EmptyState } from "../../components/ui/bits";
+import { Hotkey } from "../../components/ui/controls";
+import { HoldButton } from "../../components/ui/HoldButton";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { fmtCount, fmtSol, fmtUsd } from "../../lib/format";
+import { fmtCount, fmtFee, fmtSol } from "../../lib/format";
+import { registerHotkey } from "../../lib/hotkeys";
 import { panic } from "../../lib/tradeActions";
-import { useMarket } from "../../state/market";
-import { isOpenOrder, useOrders } from "../../state/orders";
+import { BREAKPOINT, useMediaQuery } from "../../lib/useMediaQuery";
+import type { Order, Position } from "../../protocol";
+import { useOrders } from "../../state/orders";
+import { useSettings } from "../../state/settings";
+import { useUi } from "../../state/ui";
 import { useActiveStatus } from "../../state/wallet";
-import { OrdersList } from "./OrdersList";
+import { PanelTabs, panelId, tabId } from "../portfolio/Tabs";
+import { SkeletonRows, TABLE, Th } from "../portfolio/table";
+import { OrderDrawer } from "./OrderDrawer";
+import { OrdersMobileList, OrdersTable } from "./OrdersTable";
+import { startOrderLog } from "./orderLog";
+import { canCancel, canRearm, groupByToken, NONCE_RENT_SOL, ORDER_TABS, type OrderTab, TAB_TEST, tabCounts, typeLabels } from "./orderText";
+import { useOrderActions } from "./useOrderActions";
 
-/*
- * Armed orders: pre-signed durable-nonce transactions the server holds (SPEC "Armed orders").
- * Page anatomy follows Coinbase Advanced's order management (filters left, destructive
- * "Cancel all" kept apart) https://mobbin.com/screens/e8bc99dd-2b98-4b12-95b3-5ca277255b09
- * with summary cells after Kraken Pro's account modules
- * https://mobbin.com/screens/fe204312-8607-4018-b0dd-a36dc71f4978
+/**
+ * Nonce meter (DESIGN.md 4.20): "Nonce slots 7/10", a 64 × 4 px bar (accent on surface-3), the
+ * rent the nonce accounts hold, and "Manage" (Settings > Wallets and security > Nonce slots).
  */
-
-const TAB_CLOSED = [
-  "Limit buy/sell on a known token",
-  "TP ladder + SL",
-  "Stop-loss grid",
-  "Trailing stop (within the grid's range)",
-  "DCA tranches",
-  "Dev-sell exits",
-  "pump.fun migration snipe",
-  "Copy-trade sells after the buy fills",
-];
-
-const BROWSER_OPEN = [
-  "Copy-trade buys",
-  "AFK filter snipes",
-  "X contract-address snipes",
-  "Dev-wallet snipes (the mint isn't known in advance)",
-  "Re-arming",
-  "Creating nonce slots",
-  "Withdrawals",
-  "Key export",
-];
-
-function Stat({ label, value, sub }: { label: string; value: ReactNode; sub: ReactNode }) {
+function NonceMeter({ used, total }: { used: number; total: number }) {
+  const openSettings = useUi((s) => s.openSettings);
+  const share = total > 0 ? Math.min(1, used / total) : 0;
   return (
-    <div className="flex min-w-0 flex-col gap-1 bg-surface-1 p-3">
-      <span className="zf-label">{label}</span>
-      <span className="truncate text-display-2 font-semibold">{value}</span>
-      <div className="min-h-4 text-label text-fg-2">{sub}</div>
+    <div className="flex items-center gap-2 text-data">
+      <Tooltip content="Durable-nonce accounts: each armed order holds one (an OCO pair shares one). Cancelling or filling frees it.">
+        {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so keyboard users get the definition */}
+        <span tabIndex={0} className="zf-metric rounded-xs text-fg-2">
+          Nonce slots{" "}
+          <span className="zf-num text-fg-1">
+            {fmtCount(used)}/{fmtCount(total)}
+          </span>
+        </span>
+      </Tooltip>
+      {/* The "7/10" text carries the value; the bar repeats it visually. */}
+      <span aria-hidden="true" className="h-1 w-16 overflow-hidden rounded-xs bg-surface-3">
+        <span className="block h-full bg-accent" style={{ width: `${share * 100}%` }} />
+      </span>
+      <Tooltip content={`${fmtCount(total)} nonce accounts × ${fmtFee(NONCE_RENT_SOL)} SOL, refundable when a slot is closed`}>
+        <span className="zf-num text-fg-3">{fmtFee(total * NONCE_RENT_SOL)} SOL rent</span>
+      </Tooltip>
+      <Button size="xs" variant="ghost" onClick={() => openSettings("security")}>
+        Manage
+      </Button>
     </div>
   );
 }
 
-function NoteColumn({ icon: Icon, title, items, tone }: { icon: LucideIcon; title: string; items: string[]; tone: "buy" | "warn" }) {
-  return (
-    <div className="min-w-0">
-      <h3 className={cn("flex items-center gap-1 text-data font-medium", tone === "buy" ? "text-buy" : "text-warn")}>
-        <Icon className="icon-sm" />
-        {title}
-      </h3>
-      <ul className="mt-2 grid gap-x-4 gap-y-1 text-label text-fg-2 sm:grid-cols-2">
-        {items.map((item) => (
-          <li key={item} className="flex gap-2">
-            <span className="mt-2 size-1 shrink-0 rounded-full bg-fg-3" />
-            {item}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-const NOTE_KEY = "zerofee.orders.tabNote";
-
-function readNoteOpen(): boolean {
-  try {
-    return localStorage.getItem(NOTE_KEY) !== "closed";
-  } catch {
-    return true;
-  }
-}
-
-/* What keeps running without the browser, from SPEC "Armed orders" (two-column comparison). */
-function TabClosedNote() {
-  const [open, setOpen] = useState(readNoteOpen);
-  return (
-    <details
-      open={open}
-      onToggle={(e) => {
-        const next = e.currentTarget.open;
-        setOpen(next);
-        try {
-          localStorage.setItem(NOTE_KEY, next ? "open" : "closed");
-        } catch {
-          // Storage unavailable (private mode): the note just reopens next time.
-        }
-      }}
-      className="group rounded-md border border-hairline bg-surface-1"
-    >
-      <summary className="flex h-8 cursor-pointer list-none items-center gap-2 px-3 text-data font-semibold [&::-webkit-details-marker]:hidden">
-        <Info className="icon-sm text-fg-3" />
-        What keeps running when you close this tab
-        <ChevronDown className="icon-sm ml-auto text-fg-3 transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="flex flex-col gap-3 border-t border-hairline p-3">
-        <p className="text-data text-fg-2">
-          Your browser pre-signs each order against a durable nonce, so it never expires. The server holds the signed transactions and
-          submits one only when its trigger fires; it can't change the size, minimum output, fees or destination. Every order also stores a
-          pre-signed cancel. Orders whose token isn't known in advance have to be built and signed live, so they need this browser open.
-        </p>
-        <div className="grid gap-4 md:grid-cols-2">
-          <NoteColumn icon={ShieldCheck} tone="buy" title="Runs with the tab closed" items={TAB_CLOSED} />
-          <NoteColumn icon={Monitor} tone="warn" title="Needs the browser open" items={BROWSER_OPEN} />
-        </div>
-      </div>
-    </details>
-  );
-}
-
-/*
- * Kill-switch confirmation in the shared Modal (Linear's dialog anatomy: title row, body,
- * actions bottom-right) https://mobbin.com/screens/eddaff7c-37b8-4382-b53c-e4e09c1003d0
- * Focus starts on the safe choice.
+/**
+ * Panic in the header (DESIGN.md 4.20, 1.7): danger styling, a 1,000 ms hold, and the label
+ * that names the outcome. The hold is the confirmation. The button remounts after each use,
+ * because HoldButton stays filled once it has fired.
  */
-function PanicDialog({
-  open,
-  onClose,
-  openCount,
-  reservedSol,
-}: {
-  open: boolean;
-  onClose: () => void;
-  openCount: number;
-  reservedSol: number;
-}) {
-  const [busy, setBusy] = useState(false);
-  const confirm = async () => {
-    setBusy(true);
-    try {
-      await panic();
-      onClose();
-    } finally {
-      setBusy(false);
-    }
-  };
+function PanicHold({ openCount, className }: { openCount: number; className?: string }) {
+  const [uses, setUses] = useState(0);
+  const binding = useSettings((s) => s.hotkeys.panic?.[0]);
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Panic"
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="md" onClick={onClose} data-autofocus>
-            Keep orders
-          </Button>
-          <Button variant="sell" size="md" disabled={busy} onClick={() => void confirm()}>
-            {busy ? "Cancelling…" : "Cancel all and lock"}
-          </Button>
-        </div>
+    <Tooltip
+      content={
+        <span className="block">
+          <span className="block">
+            Fires the pre-signed cancel for {openCount === 1 ? "the open order" : `all ${fmtCount(openCount)} open orders`} and locks the
+            keystore.
+          </span>
+          <span className="mt-1 inline-flex items-center gap-2 text-fg-3">
+            Or press <Hotkey binding={binding} /> for the dialog
+          </span>
+        </span>
       }
     >
-      <p className="text-body text-fg-1">Panic cancels every armed order and locks the keystore.</p>
-      <ul className="mt-3 flex flex-col gap-1 text-data text-fg-2">
-        <li>
-          Fires the stored pre-signed cancel for {fmtCount(openCount)} open order{openCount === 1 ? "" : "s"}; their nonces advance, so the
-          signed transactions can never land.
-        </li>
-        <li>{fmtSol(reservedSol)} SOL reserved by those orders becomes spendable again.</li>
-        <li>To trade or arm new orders afterwards, unlock the keystore and re-arm what you still want.</li>
-      </ul>
-    </Modal>
+      <HoldButton
+        key={uses}
+        className={className}
+        onConfirm={() => {
+          void panic().finally(() => setUses((n) => n + 1));
+        }}
+      >
+        Hold to cancel all and lock
+      </HoldButton>
+    </Tooltip>
   );
 }
 
+/*
+ * Armed orders (DESIGN.md 5.7, 4.20): a 48 px header strip (title, summary, nonce meter, Panic),
+ * status tabs with counts, then the grouped data grid; clicking a row opens the 560 px drawer.
+ * Status tabs with counts after Square's orders: https://mobbin.com/screens/14618499-6730-4721-9822-bad566504229
+ * Dot + label + duration statuses after Vercel: https://mobbin.com/screens/e9576405-bcef-419a-922a-8fb84b044a54
+ * Severity tints (warn and sell only where they mean something) after Railway:
+ * https://mobbin.com/screens/ea8d53dc-8270-430d-bbdd-1df73b4ca531
+ */
 export default function OrdersPage() {
+  const navigate = useNavigate();
   const byId = useOrders((s) => s.byId);
   const loaded = useOrders((s) => s.loaded);
   const status = useActiveStatus();
-  const solUsd = useMarket((s) => s.solUsd);
-  const [panicOpen, setPanicOpen] = useState(false);
+  const mobile = !useMediaQuery(BREAKPOINT.md);
+  const [tab, setTab] = useState<OrderTab>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
-  const orders = useMemo(() => Object.values(byId), [byId]);
-  const { openCount, staleCount } = useMemo(() => {
-    let openN = 0;
-    let staleN = 0;
-    for (const o of orders) {
-      if (isOpenOrder(o)) openN++;
-      if (o.status === "stale") staleN++;
-    }
-    return { openCount: openN, staleCount: staleN };
-  }, [orders]);
+  useEffect(() => {
+    startOrderLog();
+  }, []);
 
+  const all = useMemo(() => Object.values(byId), [byId]);
+  const labels = useMemo(() => typeLabels(all), [all]);
+  const counts = useMemo(() => tabCounts(all), [all]);
+  const groups = useMemo(() => groupByToken(all.filter(TAB_TEST[tab])), [all, tab]);
+  const positions = useMemo(() => {
+    const m = new Map<string, Position>();
+    for (const p of status?.positions ?? []) m.set(p.mint, p);
+    return m;
+  }, [status]);
+  const actions = useOrderActions(labels);
+  const { requestCancel, rearm } = actions;
+
+  const armedCount = counts.armed;
+  const openCount = counts.armed + counts.rearm;
   const reserved = status?.reservedSol ?? 0;
   const slots = status?.nonceSlots ?? null;
-  const slotShare = slots && slots.total > 0 ? slots.used / slots.total : 0;
+  const selected = selectedId ? (byId[selectedId] ?? null) : null;
+  const drawerOrder = openId ? (byId[openId] ?? null) : null;
+
+  // Orders keys (DESIGN.md 6.4): Delete cancels the selected order (confirm), R re-arms it.
+  useEffect(() => {
+    const offs = [
+      registerHotkey("orders.cancel", () => {
+        if (selected && canCancel(selected)) requestCancel([selected]);
+      }),
+      registerHotkey("orders.rearm", () => {
+        if (selected && canRearm(selected)) rearm(selected);
+      }),
+    ];
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [selected, requestCancel, rearm]);
+
+  const onSelect = useCallback((o: Order) => setSelectedId(o.id), []);
+  const onOpen = useCallback((o: Order) => {
+    setSelectedId(o.id);
+    setOpenId(o.id);
+  }, []);
+
+  const tabs = ORDER_TABS.map((t) => ({ id: t.id, label: t.label, count: counts[t.id], attention: t.id === "rearm" && counts.rearm > 0 }));
+  const emptyAll = (
+    <EmptyState
+      icon={<ListChecks />}
+      title="No armed orders"
+      body="Arm a limit, take-profit or stop-loss from any token page."
+      action={
+        <Button variant="secondary" size="sm" onClick={() => navigate("/pulse")}>
+          Open Pulse
+        </Button>
+      }
+    />
+  );
+  const emptyTab = (
+    <EmptyState
+      title={`No ${ORDER_TABS.find((t) => t.id === tab)?.label.toLowerCase() ?? ""} orders`}
+      body="Orders move between these tabs as their status changes."
+    />
+  );
+
+  const summary = (
+    <p className="text-data whitespace-nowrap text-fg-2">
+      <span className="zf-num">{fmtCount(armedCount)}</span> armed
+      {counts.rearm > 0 && (
+        <>
+          {" · "}
+          <span className="zf-num text-warn">{fmtCount(counts.rearm)}</span> need re-arm
+        </>
+      )}
+      {" · "}
+      <span className="zf-num">{fmtSol(reserved)}</span> SOL reserved
+    </p>
+  );
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
-        <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-title font-semibold">Armed orders</h1>
-          <p className="text-data text-fg-2">Pre-signed on durable nonces. The server can submit them, never change them.</p>
-        </header>
-
-        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-hairline bg-hairline lg:grid-cols-4">
-          <Stat
-            label="Open orders"
-            value={fmtCount(openCount)}
-            sub={staleCount > 0 ? <span className="text-warn">{fmtCount(staleCount)} need re-arm</span> : "None need re-arm"}
-          />
-          <Stat
-            label="Reserved"
-            value={status ? `${fmtSol(reserved)} SOL` : "—"}
-            sub={status ? `${fmtUsd(reserved * solUsd)} held back from your balance` : "No trading wallet"}
-          />
-          <Stat
-            label="Nonce slots"
-            value={slots ? `${fmtCount(slots.used)} / ${fmtCount(slots.total)}` : "—"}
-            sub={
-              slots ? (
-                <div className="flex items-center gap-2">
-                  <ProgressBar
-                    value={slotShare}
-                    className="max-w-24"
-                    color={slots.used >= slots.total ? "bg-sell" : slotShare >= 0.8 ? "bg-warn" : "bg-info"}
-                  />
-                  <span className="whitespace-nowrap">{fmtCount(Math.max(0, slots.total - slots.used))} free</span>
-                </div>
-              ) : (
-                "No trading wallet"
-              )
-            }
-          />
-          <div className="flex min-w-0 flex-col justify-center gap-1 bg-surface-1 p-3">
-            <Button variant="danger" size="md" icon={<OctagonX className="icon-sm" />} onClick={() => setPanicOpen(true)}>
-              Panic
-            </Button>
-            <span className="text-center text-micro text-fg-3">Cancel all orders, lock keystore</span>
-          </div>
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-bg md:overflow-hidden">
+      <header
+        className={cn(
+          "flex shrink-0 border-b border-hairline bg-surface-1 px-3",
+          mobile ? "flex-col gap-2 py-3" : "h-12 items-center gap-4 overflow-x-auto",
+        )}
+      >
+        <h1 className="text-heading font-semibold whitespace-nowrap text-fg-1">Armed orders</h1>
+        {summary}
+        {slots && <NonceMeter used={slots.used} total={slots.total} />}
+        <div className={cn(mobile ? "pt-1" : "ml-auto shrink-0")}>
+          <PanicHold openCount={openCount} className={mobile ? "h-11! w-full" : undefined} />
         </div>
-
-        <TabClosedNote />
-
-        <section className="min-w-0 rounded-md border border-hairline bg-surface-1">
-          {loaded ? <OrdersList orders={orders} /> : <EmptyState title="Loading orders…" />}
-        </section>
-      </div>
-      <PanicDialog open={panicOpen} onClose={() => setPanicOpen(false)} openCount={openCount} reservedSol={reserved} />
+      </header>
+      <section aria-label="Orders" className="flex min-h-0 flex-1 flex-col bg-surface-1">
+        <PanelTabs base="orders" tabs={tabs} value={tab} onChange={setTab} label="Order status" />
+        <div role="tabpanel" id={panelId("orders", tab)} aria-labelledby={tabId("orders", tab)} className="flex min-h-0 flex-1 flex-col">
+          {!loaded ? (
+            <table className={TABLE} aria-label="Armed orders" aria-busy="true">
+              <thead>
+                <tr>
+                  <Th>Status</Th>
+                  <Th>Type</Th>
+                  <Th>Trigger</Th>
+                  <Th align="right">Distance</Th>
+                  <Th>Size</Th>
+                </tr>
+              </thead>
+              <tbody>
+                <SkeletonRows rows={6} cells={["text", "text", "text", "num", "text"]} rowClassName="h-[calc(var(--zf-row)+4px)]" />
+              </tbody>
+            </table>
+          ) : mobile ? (
+            <OrdersMobileList groups={groups} labels={labels} onOpen={onOpen} empty={counts.all === 0 ? emptyAll : emptyTab} />
+          ) : (
+            <OrdersTable
+              groups={groups}
+              labels={labels}
+              positions={positions}
+              rearming={actions.rearming}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              onOpen={onOpen}
+              onCancel={requestCancel}
+              onRearm={rearm}
+              empty={counts.all === 0 ? emptyAll : emptyTab}
+            />
+          )}
+        </div>
+      </section>
+      <OrderDrawer
+        order={drawerOrder}
+        label={drawerOrder ? (labels.get(drawerOrder.id) ?? drawerOrder.kind) : ""}
+        rearming={drawerOrder ? actions.rearming.has(drawerOrder.id) : false}
+        onClose={() => setOpenId(null)}
+        onCancel={(o) => requestCancel([o])}
+        onRearm={rearm}
+      />
+      {actions.dialog}
     </div>
   );
 }
