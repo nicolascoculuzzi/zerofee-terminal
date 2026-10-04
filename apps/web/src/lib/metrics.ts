@@ -247,8 +247,8 @@ export function buyRiskReasons(
 }
 
 /**
- * Launchpads in the Pulse "Protocols" filter. Badges are monochrome, one letter (DESIGN.md 4.4):
- * colour is reserved for meaning.
+ * Launchpads in the Pulse "Protocols" filter. Badges show each launchpad's own logo
+ * (components/ui/logos.ts, DESIGN.md 2.11); `short` is the neutral letter for ids without one.
  */
 export const LAUNCHPADS: { id: Launchpad; label: string; short: string }[] = [
   { id: "pump", label: "Pump", short: "P" },

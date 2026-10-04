@@ -34,3 +34,13 @@ shipped unmodified via @fontsource-variable/ibm-plex-sans 5.3.0 and
 @fontsource/ibm-plex-mono 5.3.0. The full licence text is in
 licenses/OFL-IBM-Plex.txt, and Settings > About shows it.
 --------------------------------------------------------------------------------
+
+Simple Icons 16.34.0 (simple-icons)
+Icon path data released under CC0 1.0 Universal (https://simpleicons.org). Used for
+the X, Telegram, Discord and Solana marks. Brand marks remain trademarks of their
+owners; see the package's DISCLAIMER.md.
+
+Platform logos (public/venues/*.webp)
+Each launchpad, AMM and aggregator logo is that platform's own site icon, used only
+to identify the platform; sources are listed in public/venues/LOGOS.md.
+--------------------------------------------------------------------------------
