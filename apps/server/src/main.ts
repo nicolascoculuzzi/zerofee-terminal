@@ -16,7 +16,10 @@ setLogLevel(cfg.logLevel);
 log.info(
   `starting: source=${cfg.source} rpc=${redactUrl(cfg.rpcUrl)} ws=${redactUrl(cfg.rpcWsUrl)} db=${cfg.dbPath} dryRun=${cfg.dryRun} bind=${cfg.host}:${cfg.port}`,
 );
-if (!cfg.dryRun) log.warn("DRY_RUN=false: POST /api/tx will SEND transactions to the landing lanes");
+if (!cfg.dryRun) {
+  log.warn("DRY_RUN=false: POST /api/tx will SEND transactions to the landing lanes");
+  if (cfg.orders.enabled) log.warn("DRY_RUN=false: triggered armed orders will be SENT (Jito bundle-only) and their cancels fired");
+}
 log.info(
   `accounts: origin=${cfg.auth.publicOrigin} siws domain=${cfg.auth.siwsDomain} allowed origins=${cfg.auth.allowedOrigins.join(",")}`,
 );
