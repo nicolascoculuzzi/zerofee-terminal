@@ -7,7 +7,8 @@
  * rolled-back events go out as `correction` messages. Slow clients that exceed the backpressure limit
  * are disconnected (they reconnect and resnapshot).
  *
- * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts, /api/lookup-tables; POST /api/tx;
+ * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts, /api/lookup-tables,
+ * /api/img (media/proxy.ts); POST /api/tx;
  * GET /debug; GET /metrics (Prometheus, token or loopback only: src/metrics.ts). Per-IP token-bucket
  * rate limits; an AuthProvider seam for SIWS sessions.
  *
@@ -122,6 +123,8 @@ export interface GatewayDeps {
   onTokensChanged?: (mints: string[]) => void;
   /** GET /metrics (src/metrics.ts); refused requests get the normal 404. */
   metrics?: MetricsEndpoint;
+  /** GET /api/img (src/media/proxy.ts), with its own per-IP limits; absent = 404. */
+  media?: { handle(req: Request, url: URL, ip: string): Promise<Response> } | null;
 }
 
 const DEBUG_TOPIC = "debug";
@@ -304,6 +307,13 @@ export class Gateway {
       this.connsPerIp.set(ip, conns);
       if (userId) this.connsPerUser.set(userId, (this.connsPerUser.get(userId) ?? 1) - 1);
       return apiError(400, "bad_request", "websocket upgrade failed");
+    }
+    // Token images: a page loads dozens at once, so they have their own (larger) per-IP budget.
+    if (url.pathname === "/api/img" && this.d.media) {
+      return this.d.media.handle(req, url, ip).catch((e) => {
+        log.error(`GET /api/img failed: ${e instanceof Error ? e.message : e}`);
+        return apiError(500, "internal", "internal error");
+      });
     }
     if (!this.restLimiter.allow(ip)) {
       this.stats.rejected++;

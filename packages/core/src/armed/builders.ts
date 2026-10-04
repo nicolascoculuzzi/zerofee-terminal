@@ -6,7 +6,8 @@
  *  - OCO pair sharing a nonce                       armOcoPair
  *  - full-exit sell attempt ladder over N nonces    armOrder with several nonces (refused for
  *                                                   buys and partial sells: double-fill risk)
- *  - migration snipe against the canonical pool     armMigrationSnipe
+ *  - migration snipe against the canonical pool     armMigrationSnipe (pump.fun -> PumpSwap;
+ *                                                   raydium.ts armLaunchLabMigrationSnipe for LaunchLab -> CPMM)
  *  - a pre-signed cancel per nonce, always          (an order without one is never "armed")
  */
 import type { Address, AddressesByLookupTableAddress, Instruction, Transaction, TransactionPartialSigner } from "@solana/kit";
@@ -55,6 +56,7 @@ import {
   type ArmedVenue,
   DEFAULT_MAX_ARMED_BUY_VARIANTS,
   type FrozenAccounts,
+  isGraduationTarget,
   type Reservation,
 } from "./model";
 
@@ -72,14 +74,18 @@ export interface TradeTemplate {
   closesBaseAccount: boolean;
   /** Trade instructions for one min-out level. Accounts and fee recipients are pinned at creation. */
   build(minOut: bigint): Promise<Instruction[]>;
+  /** Account facts of the trade (see FrozenVenueAccounts). */
   frozen: {
     baseTokenProgram: Address;
     quoteMint: Address;
     creator: Address;
-    /** Bonding curve (pump) or pool (pumpswap). */
+    /** Bonding curve (pump), pool (pumpswap / cpmm) or LaunchLab pool. */
     market: Address;
-    feeRecipient: Address;
-    buybackFeeRecipient: Address;
+    /** pump / PumpSwap only. */
+    feeRecipient?: Address;
+    buybackFeeRecipient?: Address;
+    /** Raydium: LaunchLab platform_config / CPMM amm_config. */
+    config?: Address;
     /** Coin flags that shape the account list (fee recipient list, PumpSwap remaining accounts). */
     isMayhemMode?: boolean;
     isCashbackCoin?: boolean;
@@ -361,7 +367,15 @@ function validateSpec(spec: ArmedOrderSpec, signer: Address): ArmedSide {
       fail((e as Error).message);
     }
   }
-  if (spec.trigger.type === "migration" && !venues.has("pumpswap")) fail("a migration trigger needs a PumpSwap template");
+  const t0 = spec.templates[0] as TradeTemplate;
+  for (const t of spec.templates) {
+    if (t.frozen.quoteMint !== t0.frozen.quoteMint)
+      fail(`templates disagree on the quote mint (${t.frozen.quoteMint} != ${t0.frozen.quoteMint})`);
+    if (t.frozen.baseTokenProgram !== t0.frozen.baseTokenProgram) fail("templates disagree on the base token program");
+  }
+  if (spec.trigger.type === "migration" && ![...venues].some(isGraduationTarget)) {
+    fail("a migration trigger needs a template on a graduation venue (PumpSwap or CPMM)");
+  }
   if (side === "buy") {
     const variants = spec.minOuts.length * spec.tipLevels.length * spec.templates.length * spec.nonces.length;
     const cap = spec.maxBuyVariants ?? DEFAULT_MAX_ARMED_BUY_VARIANTS;
@@ -546,8 +560,9 @@ function frozenAccounts(spec: ArmedOrderSpec, levels: readonly TipLevel[]): Froz
       venue: t.venue,
       creator: t.frozen.creator,
       market: t.frozen.market,
-      feeRecipient: t.frozen.feeRecipient,
-      buybackFeeRecipient: t.frozen.buybackFeeRecipient,
+      ...(t.frozen.feeRecipient !== undefined ? { feeRecipient: t.frozen.feeRecipient } : {}),
+      ...(t.frozen.buybackFeeRecipient !== undefined ? { buybackFeeRecipient: t.frozen.buybackFeeRecipient } : {}),
+      ...(t.frozen.config !== undefined ? { config: t.frozen.config } : {}),
       ...(t.frozen.isMayhemMode !== undefined ? { isMayhemMode: t.frozen.isMayhemMode } : {}),
       ...(t.frozen.isCashbackCoin !== undefined ? { isCashbackCoin: t.frozen.isCashbackCoin } : {}),
     })),

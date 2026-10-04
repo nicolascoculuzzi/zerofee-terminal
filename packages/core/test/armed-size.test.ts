@@ -3,6 +3,7 @@
  * accounts (token programs, mints, user accounts, pool, transfer destinations stay static):
  * nonce advance + compute budget + tip(s) + pump buy_v2/sell_v2 (+ ATA) and the PumpSwap
  * equivalents fit in 1,232 bytes with the operator lookup table, and buys do not without it.
+ * Raydium LaunchLab / CPMM variants (every account the firewall pins static) fit too.
  * Also checks the assembly invariants (nonce first, firewall-sensitive accounts static).
  */
 import { describe, expect, test } from "bun:test";
@@ -74,7 +75,9 @@ describe("operator lookup table contents", () => {
       expect(staticSet).not.toContain(a);
     expect(() => assertShareableLookupTableContents(staticSet)).not.toThrow();
     expect(() => assertShareableLookupTableContents([...staticSet, TOKEN_PROGRAM_ID])).toThrow("static keys");
-    expect(staticSet).toHaveLength(63);
+    // 63 pump / PumpSwap accounts + the SOL LaunchLab GlobalConfig + 3 graduation AmmConfigs.
+    expect(staticSet).toHaveLength(67);
+    expect((await armedStaticAccounts({ pumpGlobal: global, ammGlobalConfig: globalConfig, raydium: false })).length).toBe(63);
     // Fallback lists are used when no live config is given.
     expect((await armedStaticAccounts()).length).toBe(staticSet.length);
   });
@@ -86,11 +89,16 @@ describe("armed transaction sizes (offline mainnet fixtures)", async () => {
   test.each(rows.map((r) => [r.trade, r.tips, r] as const))("%s, %s: fits 1,232 bytes with the table", (_t, _tips, r) => {
     expect(r.size.fits).toBe(true);
     expect(r.size.size).toBeLessThanOrEqual(PACKET_DATA_SIZE);
-    expect(r.size.lookedUpAccounts).toBeGreaterThanOrEqual(9);
+    // Raydium pins almost every venue account static: only the sysvar and the shared configs load from the table.
+    expect(r.size.lookedUpAccounts).toBeGreaterThanOrEqual(r.family === "pump" ? 9 : 1);
   });
 
-  test("without the table every buy overflows, so armed buys need it", () => {
-    for (const r of rows.filter((x) => /buy|snipe/.test(x.trade))) expect(r.size.sizeWithoutLookupTables).toBeGreaterThan(PACKET_DATA_SIZE);
+  test("without the table every pump / PumpSwap buy overflows, so armed buys need it; Raydium variants fit either way", () => {
+    for (const r of rows.filter((x) => x.family === "pump" && /buy|snipe/.test(x.trade)))
+      expect(r.size.sizeWithoutLookupTables).toBeGreaterThan(PACKET_DATA_SIZE);
+    const raydium = rows.filter((x) => x.family === "raydium");
+    expect(raydium).toHaveLength(20);
+    for (const r of raydium) expect(r.size.sizeWithoutLookupTables).toBeLessThanOrEqual(PACKET_DATA_SIZE);
   });
 
   test("worst case keeps ~180 bytes of headroom; the signer's measurement (buy + ATA + tip = 1,240 B without a table) matches", () => {

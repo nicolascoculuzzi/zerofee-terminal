@@ -1251,5 +1251,10 @@ export class MarketState {
     if (rec.isMayhem && !rec.supplyExact && rec.supply === ONE_BILLION_SUPPLY) rec.supply = 2n * ONE_BILLION_SUPPLY;
     this.tokens.set(rec.mint, rec);
     if (rec.creator) this.setCreator(rec, rec.creator, rec.migrated ? "pool" : "curve");
+    // Metadata that failed (e.g. on a since-retired IPFS gateway) or was in flight at shutdown: fetch it again.
+    if (rec.uri && rec.metadataState !== "ok") {
+      rec.metadataState = "requested";
+      this.deps.requestMetadata?.(rec.mint, rec.uri);
+    }
   }
 }

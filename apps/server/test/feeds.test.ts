@@ -43,7 +43,7 @@ describe("metadata", () => {
       image: `https://ipfs.io/ipfs/${CID}`,
       socials: { x: "https://x.com/spectre_sol", telegram: "https://t.me/spec", website: null },
     });
-    expect(parseMetadataJson({ extensions: { website: "https://spec.xyz" } }, GW).socials.website).toBe("https://spec.xyz");
+    expect(parseMetadataJson({ extensions: { website: "https://spec.xyz" } }, GW).socials.website).toBe("https://spec.xyz/");
   });
 
   test("SSRF guard: private, local and credentialed URLs are refused", async () => {

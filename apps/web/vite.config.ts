@@ -6,11 +6,12 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
  * Strict Content-Security-Policy for production builds (SPEC.md, "Front-end integrity").
  * The simulation needs no network origin besides 'self'. A live build also connects to the gateway
  * (VITE_API_ORIGIN and its ws:/wss: twin; same-origin needs nothing extra) and to Jupiter's Swap API,
- * which the browser calls itself for the long-tail fallback (quotes and routes). Token images come through
- * the gateway's same-origin image proxy, so img-src stays 'self' (data: covers wallet logos from Wallet
- * Standard). The signer worker is a same-origin module ('self'); its Argon2 WebAssembly runs inside the
- * worker, which this meta-tag policy does not cover. Dev builds skip the policy because Vite injects
- * inline styles for HMR.
+ * which the browser calls itself for the long-tail fallback (quotes and routes). The signer worker is a
+ * same-origin module ('self'); its Argon2 WebAssembly runs inside the worker.
+ * Images are same-origin only: token images through the server's image proxy (GET /api/img), platform
+ * logos bundled in public/venues/; data: is for the Pulse card icon masks, blob: for chart and share-card
+ * previews. The edge (deploy/docker/Caddyfile) sends the same img-src.
+ * Dev builds skip it because Vite injects inline styles for HMR.
  */
 const JUPITER_API_ORIGIN = "https://api.jup.ag";
 

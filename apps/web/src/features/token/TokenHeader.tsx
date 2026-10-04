@@ -4,13 +4,15 @@ import { Age } from "../../components/ui/Age";
 import { IconButton } from "../../components/ui/Button";
 import { MetricLabel, SocialLinks } from "../../components/ui/bits";
 import { CopyButton, Hotkey } from "../../components/ui/controls";
+import { PlatformMark } from "../../components/ui/Logo";
+import { LAUNCHPAD_LOGO, sameBrand, VENUE_LOGO } from "../../components/ui/logos";
 import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { fmtCount, fmtPct, fmtProgress, fmtSol, fmtUsd, shortAddr, signClass } from "../../lib/format";
-import type { MetricKey } from "../../lib/metrics";
+import { LAUNCHPAD_BY_ID, type MetricKey, VENUE_LABEL } from "../../lib/metrics";
 import { useMediaQuery } from "../../lib/useMediaQuery";
 import type { TokenSummary } from "../../protocol";
 import { useSettings } from "../../state/settings";
@@ -163,6 +165,7 @@ function Identity({ token }: { token: TokenSummary }) {
         <div className="flex h-5 items-center gap-2">
           <h1 className="max-w-[10ch] truncate text-heading font-semibold text-fg-1">{token.symbol}</h1>
           <span className="max-w-40 truncate text-data text-fg-3">{token.name}</span>
+          <VenueMarks token={token} />
         </div>
         <div className="flex h-5 items-center gap-2 text-label text-fg-3">
           <span className="flex items-center">
@@ -172,10 +175,22 @@ function Identity({ token }: { token: TokenSummary }) {
             <CopyButton text={token.mint} label="Copy contract address" />
           </span>
           <Age ts={token.createdAt} />
-          <SocialLinks socials={token.socials} />
+          <SocialLinks socials={token.socials} mint={token.mint} pump={token.launchpad === "pump" || token.launchpad === "mayhem"} />
         </div>
       </div>
     </div>
+  );
+}
+
+/** Launchpad logo, plus the venue's when the token trades elsewhere now (migrated), each with its name on hover. */
+function VenueMarks({ token }: { token: TokenSummary }) {
+  const launch = LAUNCHPAD_LOGO[token.launchpad];
+  const venue = VENUE_LOGO[token.venue];
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {launch && <PlatformMark logo={launch} size={14} label={`Launched on ${LAUNCHPAD_BY_ID[token.launchpad]?.label ?? "Other"}`} />}
+      {venue && !sameBrand(venue, launch) && <PlatformMark logo={venue} size={14} label={`Trades on ${VENUE_LABEL[token.venue]}`} />}
+    </span>
   );
 }
 

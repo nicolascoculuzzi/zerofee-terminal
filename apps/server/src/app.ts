@@ -24,6 +24,7 @@ import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
+import { ImageProxy } from "./media";
 import { Metrics } from "./metrics";
 import { createOrderService, type OrderService, type OrderServiceOverrides } from "./orders";
 import { openDb } from "./storage/db";
@@ -75,6 +76,8 @@ export interface App {
   user: UserLayer | null;
   /** Armed-orders engine (with the accounts layer and ORDERS_ENABLED); `ready` settles once it loaded. */
   orders: (OrderService & { ready: Promise<void> }) | null;
+  /** Token image proxy (GET /api/img). */
+  media: ImageProxy;
   metrics: Metrics;
   health(): HealthResponse;
   stop(): Promise<void>;
@@ -114,12 +117,27 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     persistPool: (p) => writer.pool(p),
   });
   resolver.loadPools(reader.pools());
+  // Token images: the proxy fetches only the image a known token's metadata names (by mint).
+  const media = new ImageProxy({
+    cfg: cfg.media,
+    gateways: cfg.metadataGateways,
+    fetchFn: o.fetchFn,
+    lookup: (mint) => {
+      const rec = market?.tokens.get(mint);
+      if (rec) return { image: rec.image, pump: rec.launchpad === "pump" };
+      const row = reader.token(mint);
+      return row ? { image: row.summary.image ?? null, pump: row.summary.launchpad === "pump" } : null;
+    },
+  });
   const metadata = new MetadataFetcher({
     gateways: cfg.metadataGateways,
     timeoutMs: cfg.metadataTimeoutMs,
     fetchFn: o.fetchFn,
     store: reader.metadataStore((k, json, ok) => writer.metadata(k, json, ok)),
-    onResult: (mint, meta) => market?.setMetadata(mint, meta),
+    onResult: (mint, meta) => {
+      market?.setMetadata(mint, meta);
+      if (meta?.image) media.warm(mint); // the first viewer of a new launch gets a cache hit
+    },
   });
   const m = new MarketState(cfg.metrics, {
     resolver,
@@ -266,6 +284,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         ...notes,
         `rpc: ${rpc.stats.calls} calls, ${rpc.stats.errors} errors, ${rpc.stats.dataAllowance} data-allowance, ${rpc.stats.rateLimited} rate-limited`,
         ...(enricher?.notes() ?? ["enrich: off"]),
+        `metadata: ${metadata.stats.requested} requested, ${metadata.stats.cacheHits} cached, ${metadata.stats.fetched} fetched, ` +
+          `${metadata.stats.failed} failed, ${metadata.stats.withImage} with an image; images: ${media.stats.requests} requests, ` +
+          `${media.stats.memoryHits + media.stats.diskHits} hits, ${media.stats.misses} misses, ${media.stats.notFound} not found`,
       );
     return {
       ok: !!source && srcHealth[0]?.connected === true,
@@ -324,6 +345,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     solUsd,
     sources,
     gateway: () => gateway,
+    media,
     // The admin kill switch (POST /api/admin/halt) shows up as zerofee_halted{scope="tx"} too.
     halted: user ? () => user.halt.isHalted() : undefined,
   });
@@ -342,6 +364,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     health,
     debugStats,
     user,
+    media,
     onTokensChanged: user
       ? (mints) => {
           user.alerts.onTokensChanged(mints);
@@ -439,6 +462,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     enricher,
     user,
     orders,
+    media,
     metrics,
     health,
     async stop() {

@@ -1,0 +1,137 @@
+{
+  "captured": "2026-10-04 from mainnet pump.fun CreateEvent URIs (public RPC logs); pump.fun JSON via pump.mypinata.cloud, the others from their own hosts",
+  "samples": [
+    {
+      "source": "pump.fun (bafkrei metadata, bafkrei image, coin_community)",
+      "mint": "6FrwqBPGwwbyxwzwkWnks2qmVRXbu53LGnhnvM7apump",
+      "uri": "https://ipfs.io/ipfs/bafkreig7q57gv5azdnw2fqvmazl6oe5deqhbnyl2nzo2qlotqsgloggrpu",
+      "json": {
+        "name": "GOlDEN",
+        "symbol": "WONTON",
+        "description": "ASIAN GOLD",
+        "image": "https://ipfs.io/ipfs/bafkreicv5dyh3aydneshkq3j4a6eajc4h3yqgnk5kssyfgqtk7ikhwqs6q",
+        "showName": true,
+        "createdOn": "https://pump.fun",
+        "coin_community": "https://coincommunities.org/communities/6FrwqBPGwwbyxwzwkWnks2qmVRXbu53LGnhnvM7apump"
+      },
+      "expect": {
+        "image": "https://pump.mypinata.cloud/ipfs/bafkreicv5dyh3aydneshkq3j4a6eajc4h3yqgnk5kssyfgqtk7ikhwqs6q",
+        "socials": { "x": null, "telegram": null, "website": null }
+      }
+    },
+    {
+      "source": "pump.fun (Qm metadata, bafybei image)",
+      "mint": "",
+      "uri": "https://ipfs.io/ipfs/QmXsDNnAiQ5ZRw4c6mgfjED3XLShaex52UosjRWTPhyCq1",
+      "json": {
+        "name": "Green RUN 2026",
+        "symbol": "$GP",
+        "description": "",
+        "showName": true,
+        "image": "https://ipfs.io/ipfs/bafybeiabrsmyumptwync2psqdwenux4532qmsmwopebzbuhlvrefoydkvy",
+        "createdOn": "https://pump.fun"
+      },
+      "expect": {
+        "image": "https://pump.mypinata.cloud/ipfs/bafybeiabrsmyumptwync2psqdwenux4532qmsmwopebzbuhlvrefoydkvy",
+        "socials": { "x": null, "telegram": null, "website": null }
+      }
+    },
+    {
+      "source": "agency launchpad (own CDN, webp, X profile, website)",
+      "mint": "B4fHi8Fdt4SCZ3C9kMCsPBgCHTQVxQP2y83iaQjPpump",
+      "uri": "https://www.agencypad.fun/media/AezREpqxpecb61rN6Uwiy925KGSvTR6PgJ7i2SpUokH9/metadata.json",
+      "json": {
+        "name": "Noah The Master",
+        "symbol": "NOAH",
+        "description": "Money lessons they don't teach you in school.",
+        "image": "https://www.agencypad.fun/media/AezREpqxpecb61rN6Uwiy925KGSvTR6PgJ7i2SpUokH9/image-03038dfaae2fb80e.webp",
+        "showName": true,
+        "createdOn": "AGENCY",
+        "twitter": "https://x.com/noahmoneytips",
+        "website": "https://www.agencypad.fun/coin/AezREpqxpecb61rN6Uwiy925KGSvTR6PgJ7i2SpUokH9"
+      },
+      "expect": {
+        "image": "https://www.agencypad.fun/media/AezREpqxpecb61rN6Uwiy925KGSvTR6PgJ7i2SpUokH9/image-03038dfaae2fb80e.webp",
+        "socials": {
+          "x": "https://x.com/noahmoneytips",
+          "telegram": null,
+          "website": "https://www.agencypad.fun/coin/AezREpqxpecb61rN6Uwiy925KGSvTR6PgJ7i2SpUokH9"
+        }
+      }
+    },
+    {
+      "source": "Axiom (short-link JSON host, axiom-cdn image, tweet link, explicit nulls)",
+      "mint": "22vrQA7GA7RjSWw2FMU4U5evmgMRjatQ3vHTNpR9hyRs",
+      "uri": "https://xyzzzzzzzzzzzzzzzzzz.com/s/asHMqeJNaKMMIr8",
+      "json": {
+        "name": "ube",
+        "symbol": "ube",
+        "description": "",
+        "image": "https://axiomtrading-v2.axiom-cdn.io/BzhZkVgRuusuUKTmzSURdWZ37Gx8R9aQQXMRNbqipump.webp",
+        "showName": true,
+        "createdOn": "pumpfun",
+        "twitter": "https://x.com/economictimes/status/2106592241246703995",
+        "telegram": null,
+        "website": null
+      },
+      "expect": {
+        "image": "https://axiomtrading-v2.axiom-cdn.io/BzhZkVgRuusuUKTmzSURdWZ37Gx8R9aQQXMRNbqipump.webp",
+        "socials": { "x": "https://x.com/economictimes/status/2106592241246703995", "telegram": null, "website": null }
+      }
+    },
+    {
+      "source": "uxento (Filebase dedicated gateway image, tweet with ?s=20, Instagram as website)",
+      "mint": "EvQdWnuEsBEeL3wZEjtxdzmG6dCj8gXbukeL8QSjpump",
+      "uri": "https://meta.uxento.io/data/a400a8ea-f74c-4e96-9a68-b74bca963419",
+      "json": {
+        "name": "Subway Mink",
+        "symbol": "Mink",
+        "image": "https://desperate-moccasin-minnow.myfilebase.com/ipfs/QmYBkznXe1zJxpfpTwVzoapGFaTZ2bHpzwrgs8ixXEUZ6J",
+        "createdOn": "https://pump.fun",
+        "website": "https://www.instagram.com/p/DeC3yx9Ile2/",
+        "twitter": "https://x.com/ZzzzzSol/status/2106592494989259095"
+      },
+      "expect": {
+        "image": "https://desperate-moccasin-minnow.myfilebase.com/ipfs/QmYBkznXe1zJxpfpTwVzoapGFaTZ2bHpzwrgs8ixXEUZ6J",
+        "socials": {
+          "x": "https://x.com/ZzzzzSol/status/2106592494989259095",
+          "telegram": null,
+          "website": "https://www.instagram.com/p/DeC3yx9Ile2/"
+        }
+      }
+    },
+    {
+      "source": "uxento (tweet with tracking query)",
+      "mint": "jyiFf7kUMZ5SxPpvuHiQMWSVbtfuJiNBfngga4Cpump",
+      "uri": "https://meta.uxento.io/data/ee25a71a-efa9-4d21-b65e-4da8835f9d1f",
+      "json": {
+        "name": "Hawk Dev",
+        "symbol": "HAWK",
+        "image": "https://desperate-moccasin-minnow.myfilebase.com/ipfs/QmV1kzYWKenrPrGnR56bc1tnknH6dLk4KFszDhUCR7s6Tq",
+        "createdOn": "https://pump.fun",
+        "website": "https://hawkdev.lol/",
+        "twitter": "https://x.com/hawkdevlol/status/2106592482259882395?s=20"
+      },
+      "expect": {
+        "image": "https://desperate-moccasin-minnow.myfilebase.com/ipfs/QmV1kzYWKenrPrGnR56bc1tnknH6dLk4KFszDhUCR7s6Tq",
+        "socials": { "x": "https://x.com/hawkdevlol/status/2106592482259882395", "telegram": null, "website": "https://hawkdev.lol/" }
+      }
+    },
+    {
+      "source": "uxento (own image edge, no website)",
+      "mint": "DpZfWLzGjdk99EE1zgiELwz14YvSjf1yxdjwUnXgcPTB",
+      "uri": "https://meta.uxento.io/data/921e1652-19fd-45b1-9fd4-4c0be50ea9cb",
+      "json": {
+        "name": "LUNAR APE MOnkey ",
+        "symbol": "MONKEY",
+        "image": "https://edge.uxento.io/image/5sfd9bEWskHpHY59hPZCEdQvo6i9vfjJqxN3idnNi5QM",
+        "createdOn": "https://pump.fun",
+        "twitter": "https://x.com/apecoin/status/2106591569243717996"
+      },
+      "expect": {
+        "image": "https://edge.uxento.io/image/5sfd9bEWskHpHY59hPZCEdQvo6i9vfjJqxN3idnNi5QM",
+        "socials": { "x": "https://x.com/apecoin/status/2106591569243717996", "telegram": null, "website": null }
+      }
+    }
+  ]
+}

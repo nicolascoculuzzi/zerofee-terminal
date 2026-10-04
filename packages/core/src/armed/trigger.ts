@@ -6,17 +6,37 @@
  * margin, and holds (reason "below-grid") when no variant clears it.
  */
 import type { Address } from "@solana/kit";
-import { BPS_DENOMINATOR as BPS, HELIUS_SENDER_TIP_ACCOUNTS } from "../constants";
+import { BPS_DENOMINATOR as BPS, HELIUS_SENDER_TIP_ACCOUNTS, LAUNCHLAB_POOL_STATUS } from "../constants";
 import type { FeeConfig } from "../fees";
 import type { PumpGlobal } from "../pump/accounts";
 import { CurveCompleteError, type CurveState, curveFeeRates, quoteBuyExactQuoteIn, quoteSell } from "../pump/curve";
 import type { AmmGlobalConfig, Pool } from "../pumpswap/accounts";
 import { type AmmReserves, ammFeeRates, quoteAmmBuyExactQuoteIn, quoteAmmSell } from "../pumpswap/math";
+import { isCpmmSwapEnabled } from "../raydium/cpmm/accounts";
+import { type CpmmFeeRates, type CpmmPoolState, quoteCpmmSwapBaseInput } from "../raydium/cpmm/math";
+import {
+  LaunchLabCurveCompleteError,
+  type LaunchLabCurveState,
+  type LaunchLabTradeParams,
+  type LaunchLabTransferFees,
+  quoteLaunchLabBuyExactIn,
+  quoteLaunchLabSellExactIn,
+} from "../raydium/launchlab/math";
+import type { TransferFeeConfig } from "../token2022";
 import { ceilDiv } from "../util/math";
 import { type LookupTableState, lookupTableStatus } from "./alt";
 import type { ArmedMarketEvent } from "./events";
 import { changedInterfaces, interfacesForVenue } from "./interfaceVersion";
-import { type ArmedOrder, type ArmedSide, type ArmedVariant, type ArmedVenue, isAttemptOpen, nextLiveAttempt } from "./model";
+import {
+  type ArmedOrder,
+  type ArmedSide,
+  type ArmedVariant,
+  type ArmedVenue,
+  GRADUATION_VENUE,
+  isAttemptOpen,
+  isGraduationTarget,
+  nextLiveAttempt,
+} from "./model";
 import type { NonceSlotSnapshot } from "./nonce";
 
 // ---------------------------------------------------------------------------------------------
@@ -85,7 +105,69 @@ export type LiveMarketState =
         AmmGlobalConfig,
         "lpFeeBasisPoints" | "protocolFeeBasisPoints" | "coinCreatorFeeBasisPoints" | "creatorFeeConfigurable" | "buybackBasisPoints"
       >;
+    }
+  | {
+      venue: "launchlab";
+      pool: LaunchLabCurveState;
+      /** launchLabTradeParams(GlobalConfig, PlatformConfig) with share_fee_rate 0 (what armed variants sign). */
+      params: LaunchLabTradeParams;
+      /** Token-2022 transfer fees of the base / quote mints at the current epoch (StonkFun coins, xStock quotes). */
+      transferFees?: LaunchLabTransferFees;
+      /** Base mint supply (market-cap targets). */
+      mintSupply: bigint;
+    }
+  | {
+      venue: "cpmm";
+      pool: CpmmPoolState;
+      /** Raw vault balances (fees owed are subtracted by the math). */
+      vault0Amount: bigint;
+      vault1Amount: bigint;
+      /** cpmmFeeRates(AmmConfig, pool). */
+      rates: CpmmFeeRates;
+      /** The coin; the other pool mint is the quote. */
+      baseMint: Address;
+      /** Token-2022 transfer fees of the base / quote mints and the current epoch. */
+      transferFees?: { base?: TransferFeeConfig | null; quote?: TransferFeeConfig | null; epoch: bigint };
+      /** Current unix time: before the pool's open_time a swap fails (and would burn the nonce), so there is no quote. */
+      unixTimestamp?: bigint;
+      /** Base mint supply (market-cap targets). */
+      baseMintSupply: bigint;
     };
+
+/** LaunchLab: what the user receives (post transfer fee), the conservative side of what min-out is checked against. */
+function launchLabQuoteOut(side: ArmedSide, amount: bigint, m: Extract<LiveMarketState, { venue: "launchlab" }>): bigint | null {
+  if (m.pool.status !== LAUNCHLAB_POOL_STATUS.fund) return null;
+  if (side === "sell") return quoteLaunchLabSellExactIn(m.pool, amount, m.params, m.transferFees).quoteReceived;
+  const q = quoteLaunchLabBuyExactIn(m.pool, amount, m.params, m.transferFees);
+  // A buy past the curve's end is cut to the remaining base at a different spend: not what the variant signed.
+  return q.capped ? null : q.baseReceived;
+}
+
+/** CPMM swap_base_input: amount_received, which the program checks against minimum_amount_out. */
+function cpmmQuoteOut(side: ArmedSide, amount: bigint, m: Extract<LiveMarketState, { venue: "cpmm" }>): bigint | null {
+  const { pool } = m;
+  const quoteMint = pool.token0Mint === m.baseMint ? pool.token1Mint : pool.token1Mint === m.baseMint ? pool.token0Mint : null;
+  if (quoteMint === null || !isCpmmSwapEnabled(pool)) return null;
+  if (m.unixTimestamp !== undefined && m.unixTimestamp < pool.openTime) return null;
+  const fees = m.transferFees;
+  return quoteCpmmSwapBaseInput({
+    pool,
+    vault0Amount: m.vault0Amount,
+    vault1Amount: m.vault1Amount,
+    inputMint: side === "buy" ? quoteMint : m.baseMint,
+    rates: m.rates,
+    ...(fees
+      ? {
+          transferFees: {
+            input: side === "buy" ? fees.quote : fees.base,
+            output: side === "buy" ? fees.base : fees.quote,
+            epoch: fees.epoch,
+          },
+        }
+      : {}),
+    amountIn: amount,
+  }).amountReceived;
+}
 
 /**
  * Quote out for `amount` right now (buy: tokens for a fixed spend; sell: quote for fixed tokens,
@@ -94,6 +176,8 @@ export type LiveMarketState =
  */
 export function liveQuoteOut(side: ArmedSide, amount: bigint, market: LiveMarketState): bigint | null {
   try {
+    if (market.venue === "launchlab") return launchLabQuoteOut(side, amount, market);
+    if (market.venue === "cpmm") return cpmmQuoteOut(side, amount, market);
     if (market.venue === "pump") {
       const rates = curveFeeRates({
         curve: market.curve,
@@ -117,7 +201,7 @@ export function liveQuoteOut(side: ArmedSide, amount: bigint, market: LiveMarket
       ? quoteAmmBuyExactQuoteIn(market.reserves, amount, rates).baseOut
       : quoteAmmSell(market.reserves, amount, rates).quoteOutNet;
   } catch (e) {
-    if (e instanceof RangeError || e instanceof CurveCompleteError) return null;
+    if (e instanceof RangeError || e instanceof CurveCompleteError || e instanceof LaunchLabCurveCompleteError) return null;
     throw e;
   }
 }
@@ -130,7 +214,7 @@ export function liveQuoteOut(side: ArmedSide, amount: bigint, market: LiveMarket
 export interface TriggerState {
   /** Trailing stops: highest live quote seen since arming (raw, before the grid cap). */
   highWater?: bigint;
-  /** Migration snipes: CompletePumpAmmMigrationEvent seen for the mint. */
+  /** Migration snipes: the mint migrated (CompletePumpAmmMigrationEvent, or the LaunchLab coin's CPMM pool went live). */
   migrated?: boolean;
   /** Dev-sell exits: a qualifying dev sell was seen (sticky). */
   devSold?: boolean;
@@ -261,7 +345,7 @@ export function evaluateTrigger(
       met = input.nowMs >= t.notBeforeMs && (t.minQuoteOut === undefined || q >= t.minQuoteOut);
       break;
     case "migration":
-      met = s.migrated === true && input.venue === "pumpswap";
+      met = s.migrated === true && isGraduationTarget(input.venue);
       break;
     case "dev-sell":
       met = s.devSold === true;
@@ -291,7 +375,8 @@ export type StaleReason =
   | "lookup-table-deactivated"
   | "interface-upgrade"
   | "tip-account-retired"
-  | "balance-changed";
+  | "balance-changed"
+  | "graduation-pool-changed";
 
 export interface StaleFinding {
   reason: StaleReason;
@@ -312,6 +397,14 @@ export interface StalenessObservation {
   curve?: ({ creator: Address; complete: boolean } & CoinFlags) | null;
   /** Live pool (null = not created yet, expected before a migration). */
   pool?: ({ coinCreator: Address } & CoinFlags) | null;
+  /** Live LaunchLab pool of a Raydium order (null = account gone). */
+  launchLabPool?: { creator: Address; status: number } | null;
+  /**
+   * The CPMM pool the LaunchLab coin graduates (or graduated) into, derived from the LIVE
+   * PlatformConfig.cpswap_config (launchLabGraduationPoolContext). A CPMM leg signed against another
+   * pool can never fill.
+   */
+  launchLabGraduationPool?: Address;
   /** Currently valid fee recipients per venue (pump: fee + reserved lists; pumpswap: protocol + reserved lists). */
   feeRecipients?: Partial<Record<ArmedVenue, readonly Address[]>>;
   buybackFeeRecipients?: Partial<Record<ArmedVenue, readonly Address[]>>;
@@ -366,11 +459,26 @@ export function detectStaleness(order: ArmedOrder, obs: StalenessObservation): S
         flagsChanged(v, obs.curve, "curve (pre-migration)");
       }
     }
+    if (v.venue === "launchlab" && obs.launchLabPool !== undefined) {
+      const live = obs.launchLabPool;
+      if (live === null) add("curve-missing", true, `LaunchLab pool ${v.market} not found`);
+      else {
+        const next = GRADUATION_VENUE.launchlab as ArmedVenue;
+        if (live.status !== LAUNCHLAB_POOL_STATUS.fund && !venues.has(next)) {
+          add("migrated", true, `LaunchLab curve is no longer funding (status ${live.status}) and the order has no CPMM variants`);
+        }
+        if (live.creator !== v.creator)
+          add("creator-changed", true, `LaunchLab creator ${v.creator} -> ${live.creator} (creator fee vault moved)`);
+      }
+    }
+    if (v.venue === "cpmm" && obs.launchLabGraduationPool !== undefined && obs.launchLabGraduationPool !== v.market) {
+      add("graduation-pool-changed", true, `the coin graduates into ${obs.launchLabGraduationPool}, not the signed pool ${v.market}`);
+    }
     const fee = obs.feeRecipients?.[v.venue];
-    if (fee && !fee.includes(v.feeRecipient))
+    if (fee && v.feeRecipient !== undefined && !fee.includes(v.feeRecipient))
       add("fee-recipient-rotated", true, `${v.venue} fee recipient ${v.feeRecipient} is no longer valid`);
     const buyback = obs.buybackFeeRecipients?.[v.venue];
-    if (buyback && !buyback.includes(v.buybackFeeRecipient)) {
+    if (buyback && v.buybackFeeRecipient !== undefined && !buyback.includes(v.buybackFeeRecipient)) {
       add("buyback-recipient-rotated", true, `${v.venue} buyback recipient ${v.buybackFeeRecipient} is no longer valid`);
     }
   }
@@ -402,7 +510,7 @@ export function detectStaleness(order: ArmedOrder, obs: StalenessObservation): S
   if (obs.interfaceVersion) {
     const deps = new Set([...venues].flatMap(interfacesForVenue));
     const changed = changedInterfaces(order.frozen.interfaceVersion, obs.interfaceVersion).filter((n) => deps.has(n));
-    if (changed.length) add("interface-upgrade", false, `pump interface changed (${changed.join(", ")}); verify and re-arm`);
+    if (changed.length) add("interface-upgrade", false, `venue interface changed (${changed.join(", ")}); verify and re-arm`);
   }
 
   if (obs.jitoTipAccounts?.length) {

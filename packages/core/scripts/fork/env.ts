@@ -118,16 +118,17 @@ export const loopbackOnlyFetch = ((input: string | URL | Request, init?: Request
  * curve2022 / curveSpl / mayhem / pumpswap: coins the trade suites buy and sell.
  * migration: a second Token-2022 curve coin that the armed suite drives to completion and migrates to
  * PumpSwap (irreversible on the fork), so it never shares a coin with the other suites.
+ * launchlab / cpmm: a Raydium LaunchLab curve and a Raydium CPMM pool, both SOL-quoted (optional).
  */
-export type TargetKind = "curve2022" | "curveSpl" | "mayhem" | "migration" | "pumpswap";
+export type TargetKind = "curve2022" | "curveSpl" | "mayhem" | "migration" | "pumpswap" | "launchlab" | "cpmm";
 
 export interface ForkTarget {
   kind: TargetKind;
   mint: Address;
-  venue: "pump" | "pumpswap";
+  venue: "pump" | "pumpswap" | "launchlab" | "cpmm";
   /** Owner program of the base mint. */
   tokenProgram: Address;
-  /** Bonding curve (pump) or canonical pool (pumpswap). */
+  /** Bonding curve (pump), canonical pool (pumpswap), LaunchLab pool or CPMM pool. */
   market: Address;
   note: string;
 }

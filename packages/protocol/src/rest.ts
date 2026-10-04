@@ -8,6 +8,7 @@
  *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
  *   GET  /api/program-accounts               ProgramAccountsResponse  (pump Global / FeeConfig, PumpSwap GlobalConfig / FeeConfig)
  *   GET  /api/lookup-tables?addresses        LookupTablesResponse     (1-8 comma-separated lookup table addresses, read from chain)
+ *   GET  /api/img?mint&v&s                   token image (webp / png / jpeg / gif bytes, not JSON): media.ts
  *   POST /api/tx                             TxSubmitRequest -> TxSubmitResponse (503 "halted" while the kill switch is on)
  *
  * Accounts, settings and the wallet tracker: user.ts. Alerts and notification channels: alerts.ts.

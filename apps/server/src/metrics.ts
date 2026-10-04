@@ -25,6 +25,7 @@ import type { TxHandler } from "./gateway/tx";
 import type { Source } from "./ingest/types";
 import type { PulseBoard } from "./market/pulse";
 import type { MarketState } from "./market/state";
+import type { ImageProxy } from "./media";
 import type { StorageWriter } from "./storage/writer";
 import type { RpcClient } from "./util/rpc";
 import { RateCounter } from "./util/stats";
@@ -62,6 +63,8 @@ export interface MetricsDeps {
   gateway(): Pick<Gateway, "connectionCount" | "stats" | "hub"> | null;
   /** App-level halt (POST /api/halt, Phase 5), OR-ed with the edge HALT_TX flag. */
   halted?(): boolean;
+  /** Token image proxy (GET /api/img). */
+  media?: Pick<ImageProxy, "stats" | "latency" | "health" | "diskBytes" | "memoryBytes">;
 }
 
 type Labels = Record<string, string>;
@@ -171,6 +174,64 @@ export class Metrics implements MetricsEndpoint {
     } catch {
       return false;
     }
+  }
+
+  private renderMedia(e: Exposition, p: NonNullable<MetricsDeps["media"]>): void {
+    const s = p.stats;
+    e.add("zerofee_img_requests_total", "counter", "GET /api/img requests.", s.requests);
+    e.add("zerofee_img_responses_total", "counter", "GET /api/img answers by kind.", [
+      [{ kind: "memory_hit" }, s.memoryHits],
+      [{ kind: "disk_hit" }, s.diskHits],
+      [{ kind: "miss" }, s.misses],
+      [{ kind: "not_modified" }, s.notModified],
+      [{ kind: "not_found" }, s.notFound],
+      [{ kind: "rate_limited" }, s.rateLimited],
+    ]);
+    e.add(
+      "zerofee_img_failures_total",
+      "counter",
+      "Upstream image fetch and check failures by reason.",
+      Object.entries(s.failures).map(([reason, n]): Row => [{ reason }, n]),
+    );
+    e.add("zerofee_img_upstream_total", "counter", "Upstream image fetch attempts by result.", [
+      [{ result: "ok" }, s.upstreamOk],
+      [{ result: "failed" }, s.upstreamFailed],
+    ]);
+    e.add(
+      "zerofee_img_source_total",
+      "counter",
+      "Successful upstream image fetches by host.",
+      Object.entries(s.sources).map(([host, n]): Row => [{ host }, n]),
+    );
+    e.add(
+      "zerofee_img_source_down",
+      "gauge",
+      "1 while an image or metadata source host is skipped after repeated failures.",
+      p.health.snapshot().map((h): Row => [{ host: h.host }, h.down]),
+    );
+    e.add("zerofee_img_outputs_total", "counter", "Images re-encoded to WebP, or passed through when they could not be decoded.", [
+      [{ kind: "resized" }, s.resized],
+      [{ kind: "passthrough" }, s.passthrough],
+    ]);
+    e.add("zerofee_img_prefetched_total", "counter", "Images fetched ahead of the first request (new launches).", s.prefetched);
+    e.add("zerofee_img_bytes_out_total", "counter", "Image bytes sent.", s.bytesOut);
+    e.add("zerofee_img_cache_bytes", "gauge", "Image cache size by tier.", [
+      [{ tier: "memory" }, p.memoryBytes],
+      [{ tier: "disk" }, p.diskBytes],
+    ]);
+    const [h50, h90] = p.latency.hit.percentiles([50, 90]);
+    const [m50, m90] = p.latency.miss.percentiles([50, 90]);
+    e.add(
+      "zerofee_img_latency_seconds",
+      "gauge",
+      "GET /api/img latency percentiles, served from cache (hit) or after an upstream fetch (miss).",
+      [
+        [{ path: "hit", quantile: "0.5" }, sec(h50)],
+        [{ path: "hit", quantile: "0.9" }, sec(h90)],
+        [{ path: "miss", quantile: "0.5" }, sec(m50)],
+        [{ path: "miss", quantile: "0.9" }, sec(m90)],
+      ],
+    );
   }
 
   render(now = Date.now()): string {
@@ -353,6 +414,9 @@ export class Metrics implements MetricsEndpoint {
       [{ outcome: "sent" }, t.sent],
       [{ outcome: "rejected" }, t.rejected],
     ]);
+
+    // --- GET /api/img ----------------------------------------------------------------------------
+    if (d.media) this.renderMedia(e, d.media);
 
     // --- storage, RPC, market ---------------------------------------------------------------------
     const w = d.writer.stats;

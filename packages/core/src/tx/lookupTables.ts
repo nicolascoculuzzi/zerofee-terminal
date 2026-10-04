@@ -8,7 +8,7 @@
  *   - the fee payer, token programs, the System program, the quote mints, tip accounts, jitodontfront;
  *   - every account of a System, SPL Token, Token-2022 or ATA instruction (transfer destinations, ATAs,
  *     owners, mints, close destinations);
- *   - the venue positions the firewall pins: pump / PumpSwap (armed/staticAccounts.ts) and Jupiter's
+ *   - the venue positions the firewall pins: pump / PumpSwap / Raydium LaunchLab / CPMM (armed/staticAccounts.ts) and Jupiter's
  *     route_v2 / shared_accounts_route_v2 user side (authority, user token accounts, mints, token programs).
  * Route hops and venue-validated accounts may still come from the tables.
  */

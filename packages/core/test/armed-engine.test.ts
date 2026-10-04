@@ -704,7 +704,18 @@ describe("staleness detection", () => {
     });
     expect(changedInterfaces(currentInterfaceVersion(), changedPump)).toEqual(["pump"]);
     expect(interfacesForVenue("pumpswap")).toEqual(["pump_amm", "pump_fees"]);
-    expect(Object.keys(parseInterfaceVersion(currentInterfaceVersion()))).toEqual(["pump", "pump_amm", "pump_fees"]);
+    expect(Object.keys(parseInterfaceVersion(currentInterfaceVersion()))).toEqual([
+      "pump",
+      "pump_amm",
+      "pump_fees",
+      "raydium_launchpad",
+      "raydium_cp_swap",
+    ]);
+    expect(interfacesForVenue("launchlab")).toEqual(["raydium_launchpad"]);
+    expect(interfacesForVenue("cpmm")).toEqual(["raydium_cp_swap"]);
+    // A Raydium IDL change does not touch pump orders.
+    const changedLaunchLab = formatInterfaceVersion({ ...parseRaw(), "raydium_launchpad.json": "d".repeat(64) });
+    expect(detectStaleness(o, { interfaceVersion: changedLaunchLab })).toEqual([]);
   });
 
   test("retired Jito tip account (flag) and balance changes (definitive)", () => {
@@ -723,7 +734,13 @@ describe("staleness detection", () => {
 /** Current IDL hashes as `file -> 64-hex` (reconstructed from the 12-hex version for formatting). */
 function parseRaw(): Record<string, string> {
   const v = parseInterfaceVersion(currentInterfaceVersion());
-  return { "pump.json": `${v.pump}`, "pump_amm.json": `${v.pump_amm}`, "pump_fees.json": `${v.pump_fees}` };
+  return {
+    "pump.json": `${v.pump}`,
+    "pump_amm.json": `${v.pump_amm}`,
+    "pump_fees.json": `${v.pump_fees}`,
+    "raydium_launchpad.json": `${v.raydium_launchpad}`,
+    "raydium_cp_swap.json": `${v.raydium_cp_swap}`,
+  };
 }
 
 describe("safety validators and reservations", () => {

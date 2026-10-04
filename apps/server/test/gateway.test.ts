@@ -240,6 +240,18 @@ describe("REST", () => {
     expect((await fetch(`${base}/api/lookup-tables?addresses=${nine}`)).status).toBe(400);
   });
 
+  test("GET /api/img is routed to the image proxy (token summaries carry imageProxied)", async () => {
+    const body = (await (await fetch(`${base}/api/tokens/${mint}`)).json()) as TokenResponse;
+    expect(body.token.image).toBeNull();
+    expect(body.token.imageProxied).toBeNull();
+    const r = await fetch(`${base}/api/img?mint=${mint}&s=48`);
+    expect(r.status).toBe(404); // known token, no image yet
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(((await r.json()) as { code: string }).code).toBe("not_found");
+    expect((await fetch(`${base}/api/img?mint=nope`)).status).toBe(400);
+    expect(app.media.stats.requests).toBeGreaterThanOrEqual(2);
+  });
+
   test("GET /api/candles merges stored and in-memory candles", async () => {
     await Bun.sleep(300); // a writer flush
     const r = await fetch(`${base}/api/candles?mint=${mint}&tf=1s&from=0&to=${Date.now() + 60_000}`);

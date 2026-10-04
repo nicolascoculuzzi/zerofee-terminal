@@ -19,6 +19,7 @@ import type {
   TokenSummary as WireToken,
   Trade as WireTrade,
 } from "@zerofee/protocol";
+import { imageProxyUrl } from "@zerofee/protocol";
 import { FINAL_STRETCH_PROGRESS } from "../../config";
 import type {
   Candle,
@@ -106,7 +107,8 @@ export function adaptToken(t: WireToken, ctx: TokenAdaptContext): TokenSummary {
     mint: t.mint,
     name: t.name,
     symbol: t.symbol,
-    imageUri: t.image,
+    // Same-origin proxy URL (TokenAvatar appends &s=<px>); the raw metadata URL is never loaded directly.
+    imageUri: t.imageProxied ?? t.image,
     launchpad: launchpadOf(t),
     quote: quoteTokenOf(t.quoteMint),
     venue: venueOf(t),
@@ -300,7 +302,8 @@ export function adaptTrackedRow(
       mint: r.mint,
       symbol: r.symbol || t?.symbol || "",
       name: r.name || t?.name || "",
-      imageUri: r.image ?? t?.imageUri ?? null,
+      // Rows carry the raw metadata URL: go through the same-origin proxy like every token image.
+      imageUri: t?.imageUri ?? imageProxyUrl(r.mint, r.image),
       launchpad: r.launchpad === "pump" ? "pump" : "other",
       createdAt: t?.createdAt ?? NaN_,
       marketCapUsd: r.mcUsd ?? mul(r.mcSol, rate),

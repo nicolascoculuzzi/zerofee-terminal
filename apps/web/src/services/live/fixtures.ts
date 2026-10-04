@@ -15,6 +15,7 @@ export function wireToken(over: Partial<TokenSummary> = {}): TokenSummary {
     name: "Solana Cat",
     symbol: "SCAT",
     image: "https://ipfs.io/ipfs/Qm1",
+    imageProxied: `/api/img?mint=${MINT}&v=1`,
     description: null,
     launchpad: "pump",
     quoteMint: "So11111111111111111111111111111111111111112",

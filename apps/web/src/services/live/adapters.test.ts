@@ -21,7 +21,8 @@ describe("token summary", () => {
     expect(t).toMatchObject({
       mint: MINT,
       symbol: "SCAT",
-      imageUri: "https://ipfs.io/ipfs/Qm1",
+      // The same-origin proxy URL, never the metadata host.
+      imageUri: `/api/img?mint=${MINT}&v=1`,
       launchpad: "pump",
       quote: "SOL",
       venue: "pump_curve",

@@ -9,7 +9,9 @@
  *  - an order does not count as armed until every nonce has a valid pre-signed cancel;
  *  - the signed bytes must match the metadata the trigger engine relies on (amount, min-out, tips,
  *    priority fee, nonce) and pass the signer-firewall rules (allowlisted programs, transfers only
- *    to tip accounts or the wallet's own wSOL account, no Approve / SetAuthority).
+ *    to tip accounts or the wallet's own wSOL account, no Approve / SetAuthority). Venues: pump.fun,
+ *    PumpSwap, Raydium LaunchLab (buy_exact_in / sell_exact_in, share_fee_rate 0) and Raydium CPMM
+ *    (swap_base_input).
  */
 import {
   type Address,
@@ -32,6 +34,10 @@ import {
   PUMP_AMM_PROGRAM_ID,
   PUMP_IX,
   PUMP_PROGRAM_ID,
+  RAYDIUM_CPMM_IX,
+  RAYDIUM_CPMM_PROGRAM_ID,
+  RAYDIUM_LAUNCHLAB_IX,
+  RAYDIUM_LAUNCHLAB_PROGRAM_ID,
   SYSTEM_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -39,6 +45,7 @@ import {
 } from "../constants";
 import { creatorVaultPda } from "../pump/accounts";
 import { coinCreatorVaultAuthorityPda } from "../pumpswap/accounts";
+import { launchLabCreatorFeeVaultPda, launchLabPlatformFeeVaultPda } from "../raydium/launchlab/accounts";
 import { findAssociatedTokenAddress } from "../token";
 import { priorityFeeLamports } from "../tx/computeBudget";
 import { Reader, startsWith } from "../util/bytes";
@@ -277,6 +284,8 @@ const ALLOWED_PROGRAMS = new Set<Address>([
   TOKEN_2022_PROGRAM_ID,
   PUMP_PROGRAM_ID,
   PUMP_AMM_PROGRAM_ID,
+  RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+  RAYDIUM_CPMM_PROGRAM_ID,
 ]);
 
 const base58 = getBase58Decoder();
@@ -289,8 +298,8 @@ interface Ctx {
   tipAccounts: Set<Address>;
   tables: AddressesByLookupTableAddress;
   policy: ArmedSafetyPolicy;
-  /** Frozen facts per venue, with the creator vault (pump) / coin creator vault authority (PumpSwap) they imply. */
-  venues: Map<ArmedVenue, { frozen: FrozenVenueAccounts; creatorVault: Address }>;
+  /** Frozen facts per venue, with the accounts they imply (creator vault, fee vaults, ...). */
+  venues: Map<ArmedVenue, { frozen: FrozenVenueAccounts; implied: ImpliedAccounts }>;
   out: ArmedViolation[];
 }
 
@@ -341,7 +350,15 @@ interface Scan {
   tips: bigint;
   cuLimit: number | null;
   cuPrice: bigint;
-  trades: { index: number; program: Address; accounts: (Address | null)[]; disc: Uint8Array; amount: bigint; limit: bigint }[];
+  trades: {
+    index: number;
+    program: Address;
+    accounts: (Address | null)[];
+    disc: Uint8Array;
+    data: Uint8Array;
+    amount: bigint;
+    limit: bigint;
+  }[];
   /** Token CloseAccount instructions: position, closed account, token program. */
   closes: { index: number; account: Address | null; program: Address }[];
 }
@@ -423,13 +440,21 @@ function scanInstructions(c: Ctx, insp: ArmedTxInspection, label: string, varian
       }
       continue;
     }
-    // pump / PumpSwap trade
+    // pump / PumpSwap / LaunchLab / CPMM trade: discriminator, then amount and limit (u64 LE)
     if (d.length < 24) {
       add("trade-mismatch", `instruction ${i}: trade data too short`);
       continue;
     }
     const r = new Reader(d, 8);
-    scan.trades.push({ index: i, program: ix.program, accounts: ix.accounts, disc: d.subarray(0, 8), amount: r.u64(), limit: r.u64() });
+    scan.trades.push({
+      index: i,
+      program: ix.program,
+      accounts: ix.accounts,
+      disc: d.subarray(0, 8),
+      data: d,
+      amount: r.u64(),
+      limit: r.u64(),
+    });
   }
   return scan;
 }
@@ -439,11 +464,112 @@ function scannedPriorityFee(scan: Scan): bigint {
   return scan.cuPrice > 0n ? priorityFeeLamports(scan.cuPrice, scan.cuLimit ?? MAX_COMPUTE_UNIT_LIMIT) : 0n;
 }
 
-/** Account positions of the trade instruction (pumpV2AccountMetas / ammSwapAccountMetas). */
-const TRADE_POSITIONS = {
-  pump: { mint: 1, baseTokenProgram: 3, feeRecipient: 6, buyback: 8, market: 10, userBase: 14, creatorVault: 16 },
-  pumpswap: { mint: 3, baseTokenProgram: 11, feeRecipient: 9, buyback: -2, market: 0, userBase: 5, creatorVault: 18 },
-} as const;
+/** Accounts the frozen venue facts imply (null where the venue has none). */
+interface ImpliedAccounts {
+  /** pump creator_vault / PumpSwap coin-creator vault authority / LaunchLab creator fee vault. */
+  creatorVault: Address | null;
+  /** LaunchLab platform fee vault [platform_config, quote_mint]. */
+  platformFeeVault: Address | null;
+}
+
+async function impliedAccounts(f: FrozenVenueAccounts, quoteMint: Address): Promise<ImpliedAccounts> {
+  switch (f.venue) {
+    case "pump":
+      return { creatorVault: await creatorVaultPda(f.creator), platformFeeVault: null };
+    case "pumpswap":
+      return { creatorVault: await coinCreatorVaultAuthorityPda(f.creator), platformFeeVault: null };
+    case "launchlab":
+      return {
+        creatorVault: await launchLabCreatorFeeVaultPda(f.creator, quoteMint),
+        platformFeeVault: f.config ? await launchLabPlatformFeeVaultPda(f.config, quoteMint) : null,
+      };
+    case "cpmm":
+      return { creatorVault: null, platformFeeVault: null };
+  }
+}
+
+/**
+ * Where the trade instruction keeps what the order relies on (pumpV2AccountMetas / ammSwapAccountMetas /
+ * launchLabSwapAccountMetas / cpmmSwapAccountMetas). Negative positions count from the end.
+ */
+interface TradeLayout {
+  program: Address;
+  disc: Uint8Array;
+  /** Exact data length, where the venue's instruction has one. */
+  dataLength?: number;
+  mint: number;
+  quoteMint?: number;
+  baseTokenProgram: number;
+  userBase: number;
+  /** [what, position, expected (undefined = missing from the frozen facts)] */
+  facts: (facts: { frozen: FrozenVenueAccounts; implied: ImpliedAccounts }) => [string, number, Address | null | undefined][];
+}
+
+function tradeLayout(venue: ArmedVenue, side: "buy" | "sell"): TradeLayout {
+  const buy = side === "buy";
+  switch (venue) {
+    case "pump":
+      return {
+        program: PUMP_PROGRAM_ID,
+        disc: buy ? PUMP_IX.buyExactQuoteInV2 : PUMP_IX.sellV2,
+        mint: 1,
+        baseTokenProgram: 3,
+        userBase: 14,
+        facts: ({ frozen, implied }) => [
+          ["market", 10, frozen.market],
+          ["fee recipient", 6, frozen.feeRecipient],
+          ["buyback recipient", 8, frozen.buybackFeeRecipient],
+          ["creator vault", 16, implied.creatorVault],
+        ],
+      };
+    case "pumpswap":
+      return {
+        program: PUMP_AMM_PROGRAM_ID,
+        disc: buy ? PUMP_AMM_IX.buyExactQuoteIn : PUMP_AMM_IX.sell,
+        mint: 3,
+        baseTokenProgram: 11,
+        userBase: 5,
+        facts: ({ frozen, implied }) => [
+          ["market", 0, frozen.market],
+          ["fee recipient", 9, frozen.feeRecipient],
+          ["buyback recipient", -2, frozen.buybackFeeRecipient],
+          ["creator vault", 18, implied.creatorVault],
+        ],
+      };
+    case "launchlab":
+      // buy_exact_in / sell_exact_in(amount, minimum_amount_out, share_fee_rate = 0)
+      return {
+        program: RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+        disc: buy ? RAYDIUM_LAUNCHLAB_IX.buyExactIn : RAYDIUM_LAUNCHLAB_IX.sellExactIn,
+        dataLength: 32,
+        mint: 9,
+        quoteMint: 10,
+        baseTokenProgram: 11,
+        userBase: 5,
+        facts: ({ frozen, implied }) => [
+          ["market", 4, frozen.market],
+          ["platform config", 3, frozen.config],
+          ["platform fee vault", 16, implied.platformFeeVault],
+          ["creator fee vault", 17, implied.creatorVault],
+        ],
+      };
+    case "cpmm":
+      // swap_base_input(amount_in, minimum_amount_out): a buy spends the quote mint, a sell the base mint.
+      return {
+        program: RAYDIUM_CPMM_PROGRAM_ID,
+        disc: RAYDIUM_CPMM_IX.swapBaseInput,
+        dataLength: 24,
+        mint: buy ? 11 : 10,
+        quoteMint: buy ? 10 : 11,
+        baseTokenProgram: buy ? 9 : 8,
+        userBase: buy ? 5 : 4,
+        facts: ({ frozen }) => [
+          ["market", 3, frozen.market],
+          ["amm config", 2, frozen.config],
+        ],
+      };
+  }
+}
 
 function checkTrade(c: Ctx, v: ArmedVariant, scan: Scan, label: string): void {
   const add = (code: ArmedViolationCode, message: string) =>
@@ -453,42 +579,38 @@ function checkTrade(c: Ctx, v: ArmedVariant, scan: Scan, label: string): void {
     return;
   }
   const t = scan.trades[0] as Scan["trades"][number];
-  const expectedProgram = v.venue === "pump" ? PUMP_PROGRAM_ID : PUMP_AMM_PROGRAM_ID;
-  if (t.program !== expectedProgram) add("trade-mismatch", `trade program ${t.program} does not match venue ${v.venue}`);
-  const disc =
-    c.order.side === "buy"
-      ? v.venue === "pump"
-        ? PUMP_IX.buyExactQuoteInV2
-        : PUMP_AMM_IX.buyExactQuoteIn
-      : v.venue === "pump"
-        ? PUMP_IX.sellV2
-        : PUMP_AMM_IX.sell;
-  if (!startsWith(t.disc, disc)) add("trade-mismatch", `unexpected trade instruction for a ${c.order.side} on ${v.venue}`);
+  const layout = tradeLayout(v.venue, c.order.side);
+  if (t.program !== layout.program) add("trade-mismatch", `trade program ${t.program} does not match venue ${v.venue}`);
+  if (!startsWith(t.disc, layout.disc)) add("trade-mismatch", `unexpected trade instruction for a ${c.order.side} on ${v.venue}`);
+  if (layout.dataLength !== undefined && t.data.length !== layout.dataLength) {
+    add("trade-mismatch", `trade data is ${t.data.length} bytes, expected ${layout.dataLength}`);
+  }
+  if (v.venue === "launchlab" && t.data.length >= 32 && new Reader(t.data, 24).u64() !== 0n) {
+    add("trade-mismatch", "share_fee_rate must be 0 (a referral share fee pays part of the trade to another account)");
+  }
   if (t.amount !== c.order.amount) add("trade-mismatch", `signed amount ${t.amount} != order amount ${c.order.amount}`);
   if (t.limit !== v.minOut) add("trade-mismatch", `signed min-out ${t.limit} != declared ${v.minOut}`);
 
   // The account facts triggers, staleness checks and reservations rely on must be what was signed.
-  const pos = TRADE_POSITIONS[v.venue];
   const at = (k: number) => (k < 0 ? t.accounts[t.accounts.length + k] : t.accounts[k]) ?? null;
   const facts = c.venues.get(v.venue);
-  if (at(pos.mint) !== c.order.mint) add("trade-mismatch", `signed base mint ${at(pos.mint)} != order mint ${c.order.mint}`);
+  if (at(layout.mint) !== c.order.mint) add("trade-mismatch", `signed base mint ${at(layout.mint)} != order mint ${c.order.mint}`);
+  if (layout.quoteMint !== undefined && at(layout.quoteMint) !== c.order.frozen.quoteMint) {
+    add("trade-mismatch", `signed quote mint ${at(layout.quoteMint)} != frozen ${c.order.frozen.quoteMint}`);
+  }
   if (!facts) add("account-mismatch", `no frozen account facts for venue ${v.venue}`);
   else {
-    for (const [what, k, expected] of [
-      ["market", pos.market, facts.frozen.market],
-      ["fee recipient", pos.feeRecipient, facts.frozen.feeRecipient],
-      ["buyback recipient", pos.buyback, facts.frozen.buybackFeeRecipient],
-      ["creator vault", pos.creatorVault, facts.creatorVault],
-    ] as const) {
+    for (const [what, k, expected] of layout.facts(facts)) {
       const actual = at(k);
-      if (actual === null) add("unresolved-account", `${what} is loaded from a lookup table that was not supplied`);
+      if (!expected) add("account-mismatch", `the frozen facts of ${v.venue} carry no ${what}`);
+      else if (actual === null) add("unresolved-account", `${what} is loaded from a lookup table that was not supplied`);
       else if (actual !== expected) add("account-mismatch", `signed ${what} ${actual} != frozen ${expected}`);
     }
   }
   // Full exits must close the base token account after the sale: the on-chain guard against a second fill.
   if (c.order.fullExit) {
-    const userBase = at(pos.userBase);
-    const tokenProgram = at(pos.baseTokenProgram);
+    const userBase = at(layout.userBase);
+    const tokenProgram = at(layout.baseTokenProgram);
     const guarded = scan.closes.some(
       (cl) => cl.index > t.index && cl.account !== null && cl.account === userBase && cl.program === tokenProgram,
     );
@@ -526,16 +648,7 @@ export async function verifyArmedOrderTransactions(order: ArmedOrder, opts: Veri
     policy: opts.policy ?? DEFAULT_ARMED_SAFETY_POLICY,
     venues: new Map(
       await Promise.all(
-        order.frozen.venues.map(
-          async (f) =>
-            [
-              f.venue,
-              {
-                frozen: f,
-                creatorVault: f.venue === "pump" ? await creatorVaultPda(f.creator) : await coinCreatorVaultAuthorityPda(f.creator),
-              },
-            ] as const,
-        ),
+        order.frozen.venues.map(async (f) => [f.venue, { frozen: f, implied: await impliedAccounts(f, order.frozen.quoteMint) }] as const),
       ),
     ),
     out: [],

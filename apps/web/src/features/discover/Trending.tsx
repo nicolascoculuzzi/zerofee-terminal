@@ -5,6 +5,7 @@ import { Age } from "../../components/ui/Age";
 import { Button, IconButton } from "../../components/ui/Button";
 import { EmptyState, SocialLinks } from "../../components/ui/bits";
 import { Checkbox, NumberInput, Segmented } from "../../components/ui/controls";
+import { LaunchpadMark } from "../../components/ui/Logo";
 import { BottomSheet } from "../../components/ui/Modal";
 import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
@@ -132,10 +133,11 @@ const TrendingRow = memo(function TrendingRow({ fallback, rank, active }: { fall
         </Link>
         <TokenAvatar mint={t.mint} symbol={t.symbol} imageUri={t.imageUri} size="2xs" />
         <span className="max-w-[10ch] shrink-0 truncate font-semibold text-fg-1">{t.symbol}</span>
+        <LaunchpadMark launchpad={t.launchpad} />
         <span className={cn("min-w-0 truncate text-fg-3", COL.name)}>{t.name}</span>
         <Age ts={t.createdAt} className="shrink-0" />
         <span className={cn("relative shrink-0", COL.socials)}>
-          <SocialLinks socials={t.socials} />
+          <SocialLinks socials={t.socials} mint={t.mint} pump={t.launchpad === "pump" || t.launchpad === "mayhem"} />
         </span>
       </Cell>
       <Cell className={cn("shrink-0 text-fg-1", COL.price)}>
@@ -190,6 +192,7 @@ const MobileTrendingRow = memo(function MobileTrendingRow({ fallback, rank }: { 
       <Cell className="min-w-0 flex-1 flex-col gap-1">
         <span className="flex h-5 min-w-0 items-center gap-2">
           <span className="truncate text-amount font-semibold text-fg-1">{t.symbol}</span>
+          <LaunchpadMark launchpad={t.launchpad} size={14} />
           <Age ts={t.createdAt} className="shrink-0 text-data" />
         </span>
         <span className="flex h-5 min-w-0 items-center gap-2 text-data">

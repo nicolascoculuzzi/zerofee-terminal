@@ -14,9 +14,11 @@ import {
   pumpUserVolumeAccumulatorPda,
 } from "../src";
 import { expectCurveFill, expectFee, expectLatencyThroughLanded, expectTipsLanded, venueInstruction } from "./expect";
-import { connectFork, type Fork, newWallet, runTrade, targetOf, type Wallet } from "./harness";
+import { connectFork, type Fork, missingTarget, newWallet, runTrade, type Wallet, withSkipReason } from "./harness";
 
-describe.skipIf(!targetOf("mayhem"))("pump curve - mayhem-mode coin", () => {
+const noMayhem = missingTarget("mayhem");
+
+describe.skipIf(noMayhem !== null)(withSkipReason("pump curve - mayhem-mode coin", noMayhem), () => {
   let fork: Fork;
   let wallet: Wallet;
   let target: ForkTarget;
