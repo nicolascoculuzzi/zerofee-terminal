@@ -336,6 +336,8 @@ export async function startPreview(opts: PreviewOptions = {}): Promise<PreviewHa
     websocket: {
       data: {} as WsData,
       maxPayloadLength: 16 * 1024 * 1024,
+      // The edge passes the extension negotiation through end to end: mirror the gateway's WS_COMPRESSION here.
+      perMessageDeflate: process.env.WS_COMPRESSION === "true",
       open(ws) {
         sockets.add(ws);
         let upstream: WebSocket;
