@@ -724,7 +724,16 @@ export const DEFAULT_CU_LIMITS = {
   launchLabSell: 100_000,
   cpmmBuy: 85_000,
   cpmmSell: 70_000,
+  /**
+   * Jupiter routes vary with the route (one DBC hop vs. four AMMs), so callers should size the limit by
+   * simulation (jupiterCuLimitFromSimulation: x1.2, as Jupiter recommends); this is the starting limit
+   * for that simulation and the fallback when it is unavailable.
+   */
+  jupiter: 300_000,
 } as const;
+
+/** Margin over simulated CU for Jupiter routes (https://developers.jup.ag/docs/swap/advanced/compute-units). */
+export const JUPITER_CU_SIMULATION_MARGIN = 1.2;
 
 /** Default public RPC (dev only - rate limited). */
 export const DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com";
