@@ -165,9 +165,11 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
   const side = ui.side;
   const orderType = ui.orderType;
   const exec = preset[side];
-  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? 125;
+  // null until the venue's live fee is known (the live trade engine reads FeeConfig).
+  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? null;
   const venue = venueShort(token.venue);
-  const available = status ? Math.max(0, status.solBalance - status.reservedSol) : 0;
+  // null until the wallet feed reports a balance: "–", and no balance check (never a fake 0).
+  const available = status ? Math.max(0, status.solBalance - status.reservedSol) : null;
   const holding = position?.holdingTokens ?? 0;
   const firstBuy = holding <= 0;
   const feedOk = connection === "live" || connection === "degraded";
@@ -376,7 +378,8 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
             Bal <span className="zf-num text-fg-2">{fmtSol(available)}</span> SOL ·
             <button
               type="button"
-              onClick={() => ui.setBuySol(maxBuySol(available, exec, firstBuy))}
+              disabled={available === null}
+              onClick={() => available !== null && ui.setBuySol(maxBuySol(available, exec, firstBuy))}
               className="font-medium text-fg-1 hover:underline"
               title="Leaves the reserve for fees, tip and rent"
             >

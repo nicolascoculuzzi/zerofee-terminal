@@ -48,10 +48,12 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
   const [sellPct, setSellPct] = useState(50);
   const [costOpen, setCostOpen] = useState(true);
   const holding = position?.holdingTokens ?? 0;
-  const available = status ? Math.max(0, status.solBalance - status.reservedSol) : 0;
+  // null until the wallet feed reports a balance: "–", and no balance check (never a fake 0).
+  const available = status ? Math.max(0, status.solBalance - status.reservedSol) : null;
   const feedOk = connection === "live" || connection === "degraded";
   const exec = presets.buy;
-  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? 125;
+  // null until the venue's live fee is known (the live trade engine reads FeeConfig).
+  const feeBps = detail.pool?.feeBps ?? detail.curve?.feeBps ?? null;
 
   const buyQ = useMemo(() => quoteBuy(detail.curve, detail.pool, quickBuy), [detail.curve, detail.pool, quickBuy]);
   const sellQ = useMemo(

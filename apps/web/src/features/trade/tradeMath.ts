@@ -31,52 +31,59 @@ export function venueShort(venue: Venue): string {
 
 export interface CostLines {
   /** SOL in (buy, incl. the venue fee) or gross SOL out (sell). */
-  amountSol: number;
-  venueFeeSol: number;
-  /** Venue fee rate, % (pump.fun curve 1.25). */
-  venuePct: number;
+  /** Null while unknown (no quote yet: the live trade engine has not priced the venue). */
+  amountSol: number | null;
+  venueFeeSol: number | null;
+  /** Venue fee rate, % (pump.fun curve 1.25); null while the live fee is not known. */
+  venuePct: number | null;
   priorityFeeSol: number;
   tipSol: number;
   baseFeeSol: number;
   /** ATA rent on a first buy, else 0. */
   rentSol: number;
   /** Buy: tokens received (est.). Sell: tokens sold. */
-  tokens: number;
-  impactPct: number;
-  /** Buy: total SOL leaving the wallet. Sell: net SOL arriving. */
-  totalSol: number;
+  tokens: number | null;
+  impactPct: number | null;
+  /** Buy: total SOL leaving the wallet. Sell: net SOL arriving (null without a quote). */
+  totalSol: number | null;
 }
 
-export function buyCost(quote: Quote | null, sol: number, settings: ExecutionSettings, firstBuy: boolean, feeBps: number): CostLines {
+export function buyCost(
+  quote: Quote | null,
+  sol: number,
+  settings: ExecutionSettings,
+  firstBuy: boolean,
+  feeBps: number | null,
+): CostLines {
   const rentSol = firstBuy ? ATA_RENT_SOL : 0;
   return {
     amountSol: sol,
-    venueFeeSol: quote?.venueFeeSol ?? 0,
-    venuePct: feeBps / 100,
+    venueFeeSol: quote?.venueFeeSol ?? null,
+    venuePct: feeBps === null ? null : feeBps / 100,
     priorityFeeSol: settings.priorityFeeSol,
     tipSol: settings.tipSol,
     baseFeeSol: NETWORK_FEE_SOL,
     rentSol,
-    tokens: quote?.tokens ?? 0,
-    impactPct: quote?.impactPct ?? 0,
+    tokens: quote?.tokens ?? null,
+    impactPct: quote?.impactPct ?? null,
     totalSol: sol + settings.priorityFeeSol + settings.tipSol + NETWORK_FEE_SOL + rentSol,
   };
 }
 
-export function sellCost(quote: Quote | null, settings: ExecutionSettings, feeBps: number): CostLines {
-  const gross = quote ? quote.sol + quote.venueFeeSol : 0;
-  const net = quote ? quote.sol - settings.priorityFeeSol - settings.tipSol - NETWORK_FEE_SOL : 0;
+export function sellCost(quote: Quote | null, settings: ExecutionSettings, feeBps: number | null): CostLines {
+  const gross = quote ? quote.sol + quote.venueFeeSol : null;
+  const net = quote ? quote.sol - settings.priorityFeeSol - settings.tipSol - NETWORK_FEE_SOL : null;
   return {
     amountSol: gross,
-    venueFeeSol: quote?.venueFeeSol ?? 0,
-    venuePct: feeBps / 100,
+    venueFeeSol: quote?.venueFeeSol ?? null,
+    venuePct: feeBps === null ? null : feeBps / 100,
     priorityFeeSol: settings.priorityFeeSol,
     tipSol: settings.tipSol,
     baseFeeSol: NETWORK_FEE_SOL,
     rentSol: 0,
-    tokens: quote?.tokens ?? 0,
-    impactPct: quote?.impactPct ?? 0,
-    totalSol: Math.max(0, net),
+    tokens: quote?.tokens ?? null,
+    impactPct: quote?.impactPct ?? null,
+    totalSol: net === null ? null : Math.max(0, net),
   };
 }
 
@@ -102,7 +109,8 @@ export interface AmountIssue {
 /** Validation for a buy amount (DESIGN.md 4.7): balance, per-trade cap, daily cap, minimum. */
 export function buyIssue(args: {
   sol: number | null;
-  available: number;
+  /** Spendable SOL; null while the wallet's balance is unknown (no balance check then). */
+  available: number | null;
   settings: ExecutionSettings;
   firstBuy: boolean;
   perTradeCap: number;
@@ -118,7 +126,7 @@ export function buyIssue(args: {
     return { tone: "warn", text: `Above your ${fmtSol(args.dailyCap)} SOL daily cap`, cta: "Above daily cap", action: "caps" };
   }
   const need = sol + args.settings.priorityFeeSol + args.settings.tipSol + NETWORK_FEE_SOL + (args.firstBuy ? ATA_RENT_SOL : 0);
-  if (need > args.available + 1e-12) {
+  if (args.available !== null && need > args.available + 1e-12) {
     return { tone: "sell", text: `Exceeds balance by ${fmtSol(need - args.available)} SOL`, cta: "Exceeds balance", action: "fund" };
   }
   if (sol < MIN_BUY_SOL) return { tone: "warn", text: `Minimum ${MIN_BUY_SOL} SOL`, cta: `Minimum ${MIN_BUY_SOL} SOL` };

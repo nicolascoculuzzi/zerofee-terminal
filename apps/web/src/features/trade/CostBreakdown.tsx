@@ -30,17 +30,17 @@ export function ZeroMark({ className }: { className?: string }) {
   );
 }
 
-function Sol({ value, approx }: { value: number; approx?: boolean }) {
+function Sol({ value, approx }: { value: number | null; approx?: boolean }) {
   return (
     <span className="zf-num">
-      {approx ? "~" : ""}
+      {approx && value !== null ? "~" : ""}
       {fmtSol(value)}
       <span className="zf-unit">{" SOL"}</span>
     </span>
   );
 }
 
-function Fee({ value }: { value: number }) {
+function Fee({ value }: { value: number | null }) {
   return (
     <span className="zf-num" title={fmtLamports(value)}>
       {fmtFee(value)}
@@ -117,7 +117,8 @@ export function CostBreakdown({
               tip={`Estimated from the live curve or pool reserves. Up to ${slippagePct}% slippage is allowed.`}
             >
               <span className="zf-num text-fg-1">
-                ~{fmtTokens(cost.tokens)} {symbol}
+                {cost.tokens === null ? "" : "~"}
+                {fmtTokens(cost.tokens)} {symbol}
               </span>
             </Line>
           )}
@@ -127,13 +128,13 @@ export function CostBreakdown({
               tip={`SOL from the live reserves after the venue fee. Up to ${slippagePct}% slippage is allowed.`}
             >
               <span className="text-fg-1">
-                <Sol value={cost.amountSol - cost.venueFeeSol} approx />
+                <Sol value={cost.amountSol === null || cost.venueFeeSol === null ? null : cost.amountSol - cost.venueFeeSol} approx />
               </span>
             </Line>
           )}
           {(kind === "buy" || kind === "sell") && (
             <Line label="Price impact" tip="How far this trade moves the price against you at today's reserves.">
-              <span className={cn("zf-num", cost.impactPct >= 10 && "text-warn")}>{fmtPct(cost.impactPct)}</span>
+              <span className={cn("zf-num", cost.impactPct !== null && cost.impactPct >= 10 && "text-warn")}>{fmtPct(cost.impactPct)}</span>
             </Line>
           )}
           {kind !== "ladder" && kind !== "limitSell" && kind !== "limitBuy" && (
