@@ -184,7 +184,16 @@ function FactRow({ facts }: { facts: ReactNode[] }) {
   );
 }
 
-export function TokenInfo({ detail, header = true }: { detail: TokenDetail; header?: boolean }) {
+export function TokenInfo({
+  detail,
+  header = true,
+  risk: showRisk = true,
+}: {
+  detail: TokenDetail;
+  header?: boolean;
+  /** False leaves out the five holder-risk tiles (the phone page shows them in its own risk strip). */
+  risk?: boolean;
+}) {
   const thresholds = useSettings((s) => s.display.riskThresholds);
   const colors = useSettings((s) => s.display.metricColors);
   const devTracked = useTrackers((s) => s.wallets.some((w) => w.address === detail.summary.creator));
@@ -227,12 +236,17 @@ export function TokenInfo({ detail, header = true }: { detail: TokenDetail; head
     bands: "Neutral at 100% · Amber below 100% · Red at 0%",
   };
 
+  const riskTiles: TileModel[] = showRisk
+    ? [
+        risk("top10", "Top 10", r.top10Pct),
+        devTile,
+        risk("snipers", "Snipers", r.snipersPct),
+        risk("insiders", "Insiders", r.insidersPct),
+        risk("bundlers", "Bundlers", r.bundlersPct),
+      ]
+    : [];
   const tiles: TileModel[] = [
-    risk("top10", "Top 10", r.top10Pct),
-    devTile,
-    risk("snipers", "Snipers", r.snipersPct),
-    risk("insiders", "Insiders", r.insidersPct),
-    risk("bundlers", "Bundlers", r.bundlersPct),
+    ...riskTiles,
     lpTile,
     {
       metric: "holders",

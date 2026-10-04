@@ -372,7 +372,7 @@ export function MobileToken({ detail }: { detail: TokenDetail }) {
         <div role="tabpanel" className="min-h-[calc(100dvh-153px-env(safe-area-inset-top)-env(safe-area-inset-bottom))]">
           {tab === "trades" && <MobileTradesList supply={token.supply} />}
           {tab === "holders" && <MobileHoldersList holders={detail.holders} token={token} />}
-          {tab === "info" && <TokenInfo detail={detail} header={false} />}
+          {tab === "info" && <TokenInfo detail={detail} header={false} risk={false} />}
           {tab === "orders" && <MobileOrders token={token} />}
         </div>
       </div>

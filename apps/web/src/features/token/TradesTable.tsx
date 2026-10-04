@@ -539,10 +539,12 @@ export function MobileTradesList({ supply }: { supply: number }) {
               {buy ? "B" : "S"}
             </span>
             <Num kind="solTape" value={t.solAmount} unit="SOL" className={cn("relative min-w-[11ch]", buy ? "text-buy" : "text-sell")} />
-            <span className="zf-num relative text-fg-2">
-              {quote === "USD" ? fmtUsd(t.marketCapUsd) : fmtSol(t.priceSol === null ? null : t.priceSol * supply)}
-              <span className="zf-unit">{quote === "USD" ? " MC" : " SOL MC"}</span>
-            </span>
+            {(quote === "USD" ? t.marketCapUsd : t.priceSol) !== null && (
+              <span className="zf-num relative text-fg-2">
+                {quote === "USD" ? fmtUsd(t.marketCapUsd) : fmtSol(t.priceSol === null ? null : t.priceSol * supply)}
+                <span className="zf-unit">{quote === "USD" ? " MC" : " SOL MC"}</span>
+              </span>
+            )}
             <span className="relative ml-auto truncate font-mono text-label text-fg-3">
               {t.tags.includes("you") ? "YOU" : t.tags.includes("dev") ? "DEV" : shortAddr(t.maker)}
             </span>
