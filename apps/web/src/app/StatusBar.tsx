@@ -10,6 +10,7 @@ import { fmtCount, fmtInt, fmtMs, fmtUsdExact } from "../lib/format";
 import { compactLabel } from "../lib/hotkeys";
 import { useNow } from "../lib/useNow";
 import { getServices } from "../services";
+import { useBackend } from "../state/backend";
 import { useMarket } from "../state/market";
 import { isOpenOrder, useOrders } from "../state/orders";
 import { type QuoteCurrency, useSettings } from "../state/settings";
@@ -110,6 +111,7 @@ export function StatusBar() {
   const quoteKey = useSettings((s) => compactLabel(s.hotkeys["quote.toggle"]?.[0]));
   const densityKey = useSettings((s) => compactLabel(s.hotkeys["density.toggle"]?.[0]));
   const simulated = getServices().simulated;
+  const dryRun = useBackend((s) => s.dryRun === true);
 
   const live = connection === "live" && feed.state !== "degraded";
   const dot = live ? "bg-buy" : connection === "live" || connection === "connecting" ? "bg-warn" : "bg-sell";
@@ -174,6 +176,11 @@ export function StatusBar() {
         {simulated && (
           <Tooltip content="All market data, wallets and fills are simulated in your browser. No network calls, no real funds.">
             <span className="rounded-xs bg-warn-tint px-1 text-micro font-semibold text-warn">Simulated data</span>
+          </Tooltip>
+        )}
+        {dryRun && (
+          <Tooltip content="Live market data. The server simulates every transaction you submit and sends nothing on-chain (DRY_RUN).">
+            <span className="rounded-xs bg-warn-tint px-1 text-micro font-semibold text-warn">Dry run</span>
           </Tooltip>
         )}
         <button type="button" onClick={() => setHelp(true)} className="flex items-center gap-1 transition-colors hover:text-fg-1">
