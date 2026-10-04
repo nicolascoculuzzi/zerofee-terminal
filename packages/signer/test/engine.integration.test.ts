@@ -1,13 +1,15 @@
 /**
  * Engine <-> firewall integration. Every transaction here is built by @zerofee/core exactly as the
- * CLI and the web app build it: loadTokenState over core's mainnet snapshot, buildTrade (or the venue
- * builders for exact-out buys), planFees, assembleTransaction. Each must pass the policy the signer
+ * CLI and the web app build it: loadTokenState over core's mainnet snapshots, buildTrade (or the venue
+ * builders for exact-out trades), planFees, assembleTransaction. Each must pass the policy the signer
  * ships (createSignerPolicy: embedded allowlist and tip accounts, default caps) in every landing mode
  *   standard   Helius SWQoS tip + Jito tip
  *   turbo      Helius Sender Max tip (at least 0.001 SOL)
  *   protected  Jito bundle-only tip carrying the read-only jitodontfront marker
  * and each one, tampered with the way a compromised backend or app would, must be refused for the
  * right reason. A legitimate core transaction the firewall refuses is a bug in one of the two.
+ * Venues: pump.fun bonding curve, PumpSwap, Raydium LaunchLab (BONK.fun and StonkFun curves) and
+ * Raydium CPMM (their graduates).
  */
 import { describe, expect, test } from "bun:test";
 import { type AccountMeta, AccountRole, type Address, type Instruction, isSignerRole } from "@solana/kit";
@@ -16,13 +18,21 @@ import {
   ammPoolPda,
   applySlippageUp,
   buildAmmBuyInstructions,
+  buildCpmmSwapInstructions,
+  buildLaunchLabBuyInstructions,
+  buildLaunchLabSellInstructions,
   buildPumpBuyInstructions,
   buildTrade,
+  type CpmmState,
+  cpmmFeeRates,
+  cpmmVaultPda,
   curveFeeRates,
   DEFAULT_CU_LIMITS,
   DEFAULT_PUBKEY,
   type FeeCaps,
   type LandingMode,
+  type LaunchLabState,
+  launchLabTradeParams,
   minOutForTrade,
   PUMP_AMM_IX,
   type PumpSwapState,
@@ -30,6 +40,12 @@ import {
   quoteAmmBuyExactQuoteIn,
   quoteBuyExactQuoteIn,
   quoteBuyExactTokens,
+  quoteCpmmSwapBaseInput,
+  quoteCpmmSwapBaseOutput,
+  quoteLaunchLabBuyExactIn,
+  quoteLaunchLabBuyExactOut,
+  quoteLaunchLabSellExactIn,
+  quoteLaunchLabSellExactOut,
   type TipFloor,
 } from "@zerofee/core";
 import { readU32LE, startsWith } from "../src/bytes";
@@ -42,6 +58,8 @@ import {
   PACKET_DATA_SIZE,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
+  RAYDIUM_CPMM_PROGRAM,
+  RAYDIUM_LAUNCHLAB_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
@@ -49,19 +67,46 @@ import {
   WSOL_MINT,
 } from "../src/firewall/programs";
 import { findCanonicalPumpPool } from "../src/firewall/rules/pump";
+import {
+  CPMM_INSTRUCTION_NAMES,
+  CPMM_STATIC_POSITIONS,
+  CPMM_SWAP_LAYOUT,
+  LAUNCHLAB_INSTRUCTION_NAMES,
+  LAUNCHLAB_SHARE_FEE_RATE_OFFSET,
+  LAUNCHLAB_STATIC_POSITIONS,
+  LAUNCHLAB_SWAP_LAYOUT,
+} from "../src/firewall/rules/raydium-idl";
 import type { FirewallContext, TradeExpectation } from "../src/firewall/types";
-import { createSignerPolicy, HELIUS_SENDER_TIP_ACCOUNTS, JITO_TIP_ACCOUNTS, SIGNER_TIP_ACCOUNTS } from "../src/policy";
+import {
+  createSignerPolicy,
+  DEFAULT_FIREWALL_CAPS,
+  HELIUS_SENDER_TIP_ACCOUNTS,
+  JITO_TIP_ACCOUNTS,
+  SIGNER_TIP_ACCOUNTS,
+} from "../src/policy";
 import {
   ammContext,
   assemble,
   CLI_SLIPPAGE_BPS,
+  CPMM_BONK_MINT,
+  CPMM_OTHER_POOL,
+  CPMM_STONK_MINT,
+  CPMM_STONK_POOL,
   CURVE_MINT,
   compileLikeCore,
   coreInstructionList,
   curveContext,
+  LAUNCHLAB_BONK_MINT,
+  LAUNCHLAB_STONK_MINT,
+  LAUNCHLAB_TRIX_POOL,
+  LAUNCHLAB_XSTOCK_MINT,
+  LAUNCHLAB_XSTOCK_POOL,
+  loadCpmmState,
   loadCurveState,
+  loadLaunchLabState,
   loadPoolState,
   MAYHEM_MINT,
+  METAX_MINT,
   POOL,
   POOL_BASE_MINT,
   planFor,
@@ -88,6 +133,8 @@ const BALANCE = 3_000_000_000_000n;
 const BUDGET_IXS = 2;
 const CURVE = "pump.fun bonding curve";
 const AMM = "PumpSwap";
+const LAUNCHLAB = "Raydium LaunchLab";
+const CPMM = "Raydium CPMM";
 
 /** The context the shipped signer builds for a request (SignerService: policy + vault header). */
 function shippedContext(a: TestActors, extra: Partial<FirewallContext> = {}): FirewallContext {
@@ -119,19 +166,26 @@ interface Built {
   side: "buy" | "sell";
   baseMint: Address;
   quoteMint: Address;
+  /** Token programs owning the two mints (the user's ATAs derive from them). */
+  baseTokenProgram: Address;
+  quoteTokenProgram: Address;
   /** core's quote of the output (tokens for buys, quote after fees for sells), before slippage. */
   expectedOut: bigint;
+  /** The guaranteed-output argument when it is not minOutForTrade(expectedOut): an exact-out sell's exact quote out. */
+  guaranteedOut?: bigint;
   /** Buys: the capped amount argument in quote base units; sells: 0. */
   maxBuy: bigint;
   /** Position of the trade instruction in `instructions`. */
   tradeIndex: number;
 }
 
+const VENUE_PROGRAMS: readonly Address[] = [PUMP_PROGRAM, PUMP_AMM_PROGRAM, RAYDIUM_LAUNCHLAB_PROGRAM, RAYDIUM_CPMM_PROGRAM];
+
 const isExtend = (ix: Instruction) =>
   ix.programAddress === PUMP_AMM_PROGRAM && ix.data !== undefined && startsWith(ix.data, PUMP_AMM_IX.extendAccount);
 
 function tradeIndexOf(instructions: readonly Instruction[]): number {
-  const i = instructions.findIndex((ix) => (ix.programAddress === PUMP_PROGRAM || ix.programAddress === PUMP_AMM_PROGRAM) && !isExtend(ix));
+  const i = instructions.findIndex((ix) => VENUE_PROGRAMS.includes(ix.programAddress) && !isExtend(ix));
   if (i < 0) throw new Error("core built no trade instruction");
   return i;
 }
@@ -164,6 +218,8 @@ async function curveBuyExactQuoteIn(a: TestActors, o: BuildOptions, mint: Addres
     side: "buy",
     baseMint: mint,
     quoteMint,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
     expectedOut: trade.quote.expectedOut,
     maxBuy: spend,
     tradeIndex: tradeIndexOf(trade.instructions),
@@ -185,6 +241,8 @@ async function curveBuyExactTokens(a: TestActors, o: BuildOptions): Promise<Buil
     side: "buy",
     baseMint: CURVE_MINT,
     quoteMint: WSOL_MINT,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
     expectedOut: tokens,
     maxBuy: limit,
     tradeIndex: tradeIndexOf(instructions),
@@ -202,6 +260,8 @@ async function curveSell(a: TestActors, o: BuildOptions, fullExit: boolean, quot
     side: "sell",
     baseMint: CURVE_MINT,
     quoteMint,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
     expectedOut: trade.quote.expectedOut,
     maxBuy: 0n,
     tradeIndex: tradeIndexOf(trade.instructions),
@@ -230,6 +290,8 @@ async function ammBuyExactQuoteIn(a: TestActors, o: BuildOptions, pool: Partial<
     side: "buy",
     baseMint: POOL_BASE_MINT,
     quoteMint: WSOL_MINT,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
     expectedOut: trade.quote.expectedOut,
     maxBuy: spend,
     tradeIndex: tradeIndexOf(trade.instructions),
@@ -258,6 +320,8 @@ async function ammBuyExactBase(a: TestActors, o: BuildOptions): Promise<Built> {
     side: "buy",
     baseMint: POOL_BASE_MINT,
     quoteMint: WSOL_MINT,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
     expectedOut: base,
     maxBuy: limit,
     tradeIndex: tradeIndexOf(instructions),
@@ -275,15 +339,214 @@ async function ammSell(a: TestActors, o: BuildOptions, fullExit: boolean, pool: 
     side: "sell",
     baseMint: POOL_BASE_MINT,
     quoteMint: WSOL_MINT,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
     expectedOut: trade.quote.expectedOut,
     maxBuy: 0n,
     tradeIndex: tradeIndexOf(trade.instructions),
   };
 }
 
+// ---- Raydium LaunchLab: buildTrade for exact-in trades, the venue builders for exact-out ones ----
+
+/** The live fee rates and Token-2022 transfer fees core quotes LaunchLab trades with. */
+function launchLabQuoting(state: LaunchLabState) {
+  const params = launchLabTradeParams({ globalConfig: state.globalConfig, platformConfig: state.platformConfig });
+  const fees = {
+    base: state.mintInfo.extensions.transferFeeConfig,
+    quote: state.quoteMintInfo.extensions.transferFeeConfig,
+    epoch: state.clock.epoch,
+  };
+  const context = { poolAddress: state.poolAddress, pool: state.pool, user: state.user };
+  return { params, fees, context };
+}
+
+function launchLabBuilt(
+  state: LaunchLabState,
+  fields: Omit<Built, "venue" | "baseMint" | "quoteMint" | "baseTokenProgram" | "quoteTokenProgram">,
+) {
+  return {
+    venue: LAUNCHLAB,
+    baseMint: state.mint,
+    quoteMint: state.quoteMint,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
+    ...fields,
+  };
+}
+
+async function launchLabBuyExactIn(a: TestActors, o: BuildOptions, mint: Address, pool?: Address): Promise<Built> {
+  const state = await loadLaunchLabState({ user: o.user ?? a.signer }, mint, pool);
+  const trade = await buildTrade(state, { side: "buy", amount: o.spend ?? spendFor(state.quoteMint), slippageBps: slippage(o) });
+  return launchLabBuilt(state, {
+    instructions: trade.instructions,
+    cuLimit: trade.defaultCuLimit,
+    instructionName: "buy_exact_in",
+    side: "buy",
+    expectedOut: trade.quote.expectedOut,
+    // The instruction amount (what the user is debited): below the request only when the buy completes the curve.
+    maxBuy: trade.quote.amountIn,
+    tradeIndex: tradeIndexOf(trade.instructions),
+  });
+}
+
+async function launchLabBuyExactOut(a: TestActors, o: BuildOptions, mint: Address): Promise<Built> {
+  const state = await loadLaunchLabState({ user: o.user ?? a.signer }, mint);
+  const { params, fees, context } = launchLabQuoting(state);
+  const tokens = quoteLaunchLabBuyExactIn(state.pool, o.spend ?? spendFor(state.quoteMint), params, fees).baseReceived;
+  const amount = o.shrinkOut ? tokens / 2n : tokens;
+  const limit = applySlippageUp(quoteLaunchLabBuyExactOut(state.pool, amount, params, fees).quoteIn, o.slippageBps ?? CLI_SLIPPAGE_BPS);
+  const { instructions } = await buildLaunchLabBuyInstructions(context, { mode: "exactOut", amount, limit });
+  return launchLabBuilt(state, {
+    instructions,
+    cuLimit: DEFAULT_CU_LIMITS.launchLabBuy,
+    instructionName: "buy_exact_out",
+    side: "buy",
+    expectedOut: tokens,
+    maxBuy: limit,
+    tradeIndex: tradeIndexOf(instructions),
+  });
+}
+
+async function launchLabSell(a: TestActors, o: BuildOptions, mint: Address, fullExit: boolean, pool?: Address): Promise<Built> {
+  const state = await loadLaunchLabState({ user: o.user ?? a.signer, baseBalance: BALANCE }, mint, pool);
+  const trade = await buildTrade(state, { side: "sell", amount: fullExit ? BALANCE : BALANCE / 3n, slippageBps: slippage(o) });
+  return launchLabBuilt(state, {
+    instructions: trade.instructions,
+    cuLimit: trade.defaultCuLimit,
+    instructionName: "sell_exact_in",
+    side: "sell",
+    expectedOut: trade.quote.expectedOut,
+    maxBuy: 0n,
+    tradeIndex: tradeIndexOf(trade.instructions),
+  });
+}
+
+/** sell_exact_out: receive exactly what selling a third of the balance would, for at most that much base plus slippage. */
+async function launchLabSellExactOut(a: TestActors, o: BuildOptions, mint: Address): Promise<Built> {
+  const state = await loadLaunchLabState({ user: o.user ?? a.signer, baseBalance: BALANCE }, mint);
+  const { params, fees, context } = launchLabQuoting(state);
+  const quoteOut = quoteLaunchLabSellExactIn(state.pool, BALANCE / 3n, params, fees).quoteReceived;
+  const amount = o.shrinkOut ? quoteOut / 2n : quoteOut;
+  const limit = applySlippageUp(quoteLaunchLabSellExactOut(state.pool, amount, params, fees).baseIn, o.slippageBps ?? CLI_SLIPPAGE_BPS);
+  const { instructions } = await buildLaunchLabSellInstructions(context, { mode: "exactOut", amount, limit });
+  return launchLabBuilt(state, {
+    instructions,
+    cuLimit: DEFAULT_CU_LIMITS.launchLabSell,
+    instructionName: "sell_exact_out",
+    side: "sell",
+    expectedOut: quoteOut,
+    guaranteedOut: amount,
+    maxBuy: 0n,
+    tradeIndex: tradeIndexOf(instructions),
+  });
+}
+
+// ---- Raydium CPMM: buildTrade for swap_base_input, the swap builder for swap_base_output ----
+
+/** core's CPMM quote inputs for a swap spending `inputMint` (wSOL for buys, the coin for sells). */
+function cpmmQuoting(state: CpmmState, inputMint: Address) {
+  const isBuy = inputMint === state.quoteMint;
+  const baseFee = state.mintInfo.extensions.transferFeeConfig;
+  const quoteFee = state.quoteMintInfo.extensions.transferFeeConfig;
+  return {
+    pool: state.pool,
+    vault0Amount: state.vault0Amount,
+    vault1Amount: state.vault1Amount,
+    inputMint,
+    rates: cpmmFeeRates(state.ammConfig, state.pool),
+    transferFees: { input: isBuy ? quoteFee : baseFee, output: isBuy ? baseFee : quoteFee, epoch: state.clock.epoch },
+    unixTimestamp: state.clock.unixTimestamp,
+  };
+}
+
+function cpmmBuilt(state: CpmmState, fields: Omit<Built, "venue" | "baseMint" | "quoteMint" | "baseTokenProgram" | "quoteTokenProgram">) {
+  return {
+    venue: CPMM,
+    baseMint: state.mint,
+    quoteMint: state.quoteMint,
+    baseTokenProgram: state.mintInfo.tokenProgram,
+    quoteTokenProgram: state.quoteTokenProgram,
+    ...fields,
+  };
+}
+
+async function cpmmBuyExactIn(a: TestActors, o: BuildOptions, mint: Address, pool?: Address): Promise<Built> {
+  const state = await loadCpmmState({ user: o.user ?? a.signer }, mint, pool);
+  const spend = o.spend ?? spendFor(state.quoteMint);
+  const trade = await buildTrade(state, { side: "buy", amount: spend, slippageBps: slippage(o) });
+  return cpmmBuilt(state, {
+    instructions: trade.instructions,
+    cuLimit: trade.defaultCuLimit,
+    instructionName: "swap_base_input",
+    side: "buy",
+    expectedOut: trade.quote.expectedOut,
+    maxBuy: spend,
+    tradeIndex: tradeIndexOf(trade.instructions),
+  });
+}
+
+async function cpmmBuyExactOut(a: TestActors, o: BuildOptions, mint: Address, pool?: Address): Promise<Built> {
+  const state = await loadCpmmState({ user: o.user ?? a.signer }, mint, pool);
+  const quoting = cpmmQuoting(state, state.quoteMint);
+  const tokens = quoteCpmmSwapBaseInput({ ...quoting, amountIn: o.spend ?? spendFor(state.quoteMint) }).amountReceived;
+  const amount = o.shrinkOut ? tokens / 2n : tokens;
+  const limit = applySlippageUp(quoteCpmmSwapBaseOutput({ ...quoting, amountOut: amount }).amountIn, o.slippageBps ?? CLI_SLIPPAGE_BPS);
+  const { instructions } = await buildCpmmSwapInstructions(
+    { poolAddress: state.poolAddress, pool: state.pool, user: state.user, inputMint: state.quoteMint },
+    { mode: "baseOutput", amount, limit },
+  );
+  return cpmmBuilt(state, {
+    instructions,
+    cuLimit: DEFAULT_CU_LIMITS.cpmmBuy,
+    instructionName: "swap_base_output",
+    side: "buy",
+    expectedOut: tokens,
+    maxBuy: limit,
+    tradeIndex: tradeIndexOf(instructions),
+  });
+}
+
+async function cpmmSell(a: TestActors, o: BuildOptions, mint: Address, fullExit: boolean, pool?: Address): Promise<Built> {
+  const state = await loadCpmmState({ user: o.user ?? a.signer, baseBalance: BALANCE }, mint, pool);
+  const trade = await buildTrade(state, { side: "sell", amount: fullExit ? BALANCE : BALANCE / 3n, slippageBps: slippage(o) });
+  return cpmmBuilt(state, {
+    instructions: trade.instructions,
+    cuLimit: trade.defaultCuLimit,
+    instructionName: "swap_base_input",
+    side: "sell",
+    expectedOut: trade.quote.expectedOut,
+    maxBuy: 0n,
+    tradeIndex: tradeIndexOf(trade.instructions),
+  });
+}
+
+/** swap_base_output selling the coin: exactly what selling a third of the balance would give, for at most that much plus slippage. */
+async function cpmmSellExactOut(a: TestActors, o: BuildOptions, mint: Address, pool?: Address): Promise<Built> {
+  const state = await loadCpmmState({ user: o.user ?? a.signer, baseBalance: BALANCE }, mint, pool);
+  const quoting = cpmmQuoting(state, state.mint);
+  const quoteOut = quoteCpmmSwapBaseInput({ ...quoting, amountIn: BALANCE / 3n }).amountReceived;
+  const amount = o.shrinkOut ? quoteOut / 2n : quoteOut;
+  const limit = applySlippageUp(quoteCpmmSwapBaseOutput({ ...quoting, amountOut: amount }).amountIn, o.slippageBps ?? CLI_SLIPPAGE_BPS);
+  const { instructions } = await buildCpmmSwapInstructions(
+    { poolAddress: state.poolAddress, pool: state.pool, user: state.user, inputMint: state.mint },
+    { mode: "baseOutput", amount, limit },
+  );
+  return cpmmBuilt(state, {
+    instructions,
+    cuLimit: DEFAULT_CU_LIMITS.cpmmSell,
+    instructionName: "swap_base_output",
+    side: "sell",
+    expectedOut: quoteOut,
+    guaranteedOut: amount,
+    maxBuy: 0n,
+    tradeIndex: tradeIndexOf(instructions),
+  });
+}
+
 interface Case {
   name: string;
-  venue: "curve" | "pumpswap";
+  venue: "curve" | "pumpswap" | "launchlab" | "cpmm";
   side: "buy" | "sell";
   /** Default wSOL. */
   quoteMint?: Address;
@@ -420,7 +683,109 @@ const CASES: readonly Case[] = [
     shape: ["extend", "ata", "pumpswap", "close", "close"],
     build: (a, o = {}) => ammSell(a, o, true, { dataLength: 261 }),
   },
+  // Raydium LaunchLab: a BONK.fun coin (SPL Token) and a StonkFun coin (Token-2022, 3% transfer fee), SOL-quoted.
+  {
+    name: "LaunchLab buy_exact_in, BONK.fun coin (SPL Token), with wSOL wrap and unwrap",
+    venue: "launchlab",
+    side: "buy",
+    ownFunds: true,
+    shape: ["ata", "transfer", "sync", "ata", "launchlab", "close"],
+    build: (a, o = {}) => launchLabBuyExactIn(a, o, LAUNCHLAB_BONK_MINT),
+  },
+  {
+    name: "LaunchLab buy_exact_in, StonkFun coin (Token-2022, 3% transfer fee)",
+    venue: "launchlab",
+    side: "buy",
+    ownFunds: true,
+    shape: ["ata", "transfer", "sync", "ata", "launchlab", "close"],
+    build: (a, o = {}) => launchLabBuyExactIn(a, o, LAUNCHLAB_STONK_MINT),
+  },
+  {
+    name: "LaunchLab buy_exact_out (exact tokens), StonkFun coin",
+    venue: "launchlab",
+    side: "buy",
+    exactOut: true,
+    ownFunds: true,
+    shape: ["ata", "transfer", "sync", "ata", "launchlab", "close"],
+    build: (a, o = {}) => launchLabBuyExactOut(a, o, LAUNCHLAB_STONK_MINT),
+  },
+  {
+    name: "LaunchLab sell_exact_in, partial, BONK.fun coin, with unwrap",
+    venue: "launchlab",
+    side: "sell",
+    ownFunds: true,
+    shape: ["ata", "launchlab", "close"],
+    build: (a, o = {}) => launchLabSell(a, o, LAUNCHLAB_BONK_MINT, false),
+  },
+  {
+    name: "LaunchLab sell_exact_in, full exit + Token-2022 CloseAccount, StonkFun coin",
+    venue: "launchlab",
+    side: "sell",
+    ownFunds: true,
+    shape: ["ata", "launchlab", "close", "close"],
+    build: (a, o = {}) => launchLabSell(a, o, LAUNCHLAB_STONK_MINT, true),
+  },
+  {
+    name: "LaunchLab sell_exact_out (exact SOL out), BONK.fun coin",
+    venue: "launchlab",
+    side: "sell",
+    ownFunds: true,
+    shape: ["ata", "launchlab", "close"],
+    build: (a, o = {}) => launchLabSellExactOut(a, o, LAUNCHLAB_BONK_MINT),
+  },
+  // Raydium CPMM: the graduates of a BONK.fun coin (found through its LaunchLab pool) and of a StonkFun coin.
+  {
+    name: "CPMM swap_base_input buy, graduated BONK.fun coin (resolved through its LaunchLab pool)",
+    venue: "cpmm",
+    side: "buy",
+    ownFunds: true,
+    shape: ["ata", "transfer", "sync", "ata", "cpmm", "close"],
+    build: (a, o = {}) => cpmmBuyExactIn(a, o, CPMM_BONK_MINT),
+  },
+  {
+    name: "CPMM swap_base_input buy, graduated StonkFun coin (Token-2022, 3% transfer fee)",
+    venue: "cpmm",
+    side: "buy",
+    ownFunds: true,
+    shape: ["ata", "transfer", "sync", "ata", "cpmm", "close"],
+    build: (a, o = {}) => cpmmBuyExactIn(a, o, CPMM_STONK_MINT, CPMM_STONK_POOL),
+  },
+  {
+    name: "CPMM swap_base_output buy (exact tokens), graduated StonkFun coin",
+    venue: "cpmm",
+    side: "buy",
+    exactOut: true,
+    ownFunds: true,
+    shape: ["ata", "transfer", "sync", "ata", "cpmm", "close"],
+    build: (a, o = {}) => cpmmBuyExactOut(a, o, CPMM_STONK_MINT, CPMM_STONK_POOL),
+  },
+  {
+    name: "CPMM swap_base_input sell, partial, graduated BONK.fun coin, with unwrap",
+    venue: "cpmm",
+    side: "sell",
+    ownFunds: true,
+    shape: ["ata", "cpmm", "close"],
+    build: (a, o = {}) => cpmmSell(a, o, CPMM_BONK_MINT, false),
+  },
+  {
+    name: "CPMM swap_base_input sell, full exit + Token-2022 CloseAccount, graduated StonkFun coin",
+    venue: "cpmm",
+    side: "sell",
+    ownFunds: true,
+    shape: ["ata", "cpmm", "close", "close"],
+    build: (a, o = {}) => cpmmSell(a, o, CPMM_STONK_MINT, true, CPMM_STONK_POOL),
+  },
+  {
+    name: "CPMM swap_base_output sell (exact SOL out), graduated BONK.fun coin",
+    venue: "cpmm",
+    side: "sell",
+    ownFunds: true,
+    shape: ["ata", "cpmm", "close"],
+    build: (a, o = {}) => cpmmSellExactOut(a, o, CPMM_BONK_MINT),
+  },
 ];
+
+const isRaydium = (c: Case) => c.venue === "launchlab" || c.venue === "cpmm";
 
 // ---------------------------------------------------------------------------------------------
 // Instruction helpers for tampering with core's list
@@ -434,6 +799,8 @@ function shapeOf(ix: Instruction): string {
   if (isExtend(ix)) return "extend";
   if (ix.programAddress === PUMP_PROGRAM) return "pump";
   if (ix.programAddress === PUMP_AMM_PROGRAM) return "pumpswap";
+  if (ix.programAddress === RAYDIUM_LAUNCHLAB_PROGRAM) return "launchlab";
+  if (ix.programAddress === RAYDIUM_CPMM_PROGRAM) return "cpmm";
   if (isSystemTransfer(ix)) return "transfer";
   if (isCloseAccount(ix)) return "close";
   if ((ix.programAddress === TOKEN_PROGRAM || ix.programAddress === TOKEN_2022_PROGRAM) && ix.data?.[0] === 17) return "sync";
@@ -473,7 +840,7 @@ const keepCache = new Map<string, Promise<Set<string>>>();
 
 /** Accounts the firewall requires as static keys (or that must stay static to compile): never moved into a lookup table. */
 function fundRelevant(a: TestActors, built: Built): Promise<Set<string>> {
-  const key = `${a.signer}|${built.baseMint}|${built.quoteMint}`;
+  const key = `${a.signer}|${built.venue}|${built.baseMint}|${built.quoteMint}`;
   let keep = keepCache.get(key);
   if (!keep) {
     keep = deriveFundRelevant(a, built);
@@ -481,6 +848,12 @@ function fundRelevant(a: TestActors, built: Built): Promise<Set<string>> {
   }
   return keep;
 }
+
+/** Raydium positions the firewall checks by address or derivation (raydium-idl.ts): they stay static too. */
+const RAYDIUM_STATIC: Readonly<Record<string, readonly number[]>> = {
+  [LAUNCHLAB]: LAUNCHLAB_STATIC_POSITIONS,
+  [CPMM]: CPMM_STATIC_POSITIONS,
+};
 
 async function deriveFundRelevant(a: TestActors, built: Built): Promise<Set<string>> {
   const keep = new Set<string>([
@@ -492,8 +865,7 @@ async function deriveFundRelevant(a: TestActors, built: Built): Promise<Set<stri
     SYSTEM_PROGRAM,
     ASSOCIATED_TOKEN_PROGRAM,
     COMPUTE_BUDGET_PROGRAM,
-    PUMP_PROGRAM,
-    PUMP_AMM_PROGRAM,
+    ...VENUE_PROGRAMS,
     POOL,
     a.signer,
     a.connected,
@@ -505,6 +877,8 @@ async function deriveFundRelevant(a: TestActors, built: Built): Promise<Set<stri
       for (const program of [TOKEN_PROGRAM, TOKEN_2022_PROGRAM]) keep.add(await ata(owner, mint, program));
     }
   }
+  const trade = built.instructions[built.tradeIndex]?.accounts ?? [];
+  for (const i of RAYDIUM_STATIC[built.venue] ?? []) if (trade[i]) keep.add(trade[i].address);
   return keep;
 }
 
@@ -565,8 +939,8 @@ const MUTATIONS: readonly Mutation[] = [
     applies: () => true,
     async run({ mode, a, build }) {
       const { built, full } = await builtAndList(build, mode, a);
-      // Buys receive the coin; sells receive the quote (wSOL and USDC are both SPL Token mints).
-      const [mint, program] = built.side === "buy" ? [built.baseMint, tokenProgramOf(built.baseMint)] : [built.quoteMint, TOKEN_PROGRAM];
+      // Buys receive the coin; sells receive the quote.
+      const [mint, program] = built.side === "buy" ? [built.baseMint, built.baseTokenProgram] : [built.quoteMint, built.quoteTokenProgram];
       const t = BUDGET_IXS + built.tradeIndex;
       const [tampered, replaced] = swapAccount(
         full[t]!,
@@ -734,7 +1108,7 @@ const MUTATIONS: readonly Mutation[] = [
     applies: (c) => !c.exactOut,
     async run({ mode, a, build }) {
       const built = await build({});
-      const minOut = minOutForTrade(built.expectedOut, CLI_SLIPPAGE_BPS);
+      const minOut = built.guaranteedOut ?? minOutForTrade(built.expectedOut, CLI_SLIPPAGE_BPS);
       const instructions = built.instructions.map((ix, i) =>
         i === built.tradeIndex && ix.data ? { ...ix, data: zeroU64Arg(ix.data, minOut) } : ix,
       );
@@ -762,7 +1136,132 @@ const MUTATIONS: readonly Mutation[] = [
       );
     },
   },
+  // ---- Raydium only ----
+  {
+    name: "a referral share fee: share_fee_rate 1%, alone and with the share_fee_receiver core would add (the attacker's account)",
+    applies: (c) => c.venue === "launchlab",
+    async run({ mode, a, build }) {
+      const { built, full } = await builtAndList(build, mode, a);
+      const t = BUDGET_IXS + built.tradeIndex;
+      const label = `#${t} ${LAUNCHLAB} ${built.instructionName}`;
+      const swap = full[t]!;
+      const data = new Uint8Array(swap.data!);
+      new DataView(data.buffer).setBigUint64(LAUNCHLAB_SHARE_FEE_RATE_OFFSET, 10_000n, true);
+      // 18 accounts: refused on the argument alone.
+      full[t] = { ...swap, data };
+      const alone = await compileTampered(a, built, full);
+      const violations = await expectRefused(alone.tx, alone.ctx, new RegExp(`${label}: share_fee_rate must be 0, got 10000`));
+      expect(violations.filter((v) => v.startsWith(`${label}:`))).toHaveLength(1);
+      // What a share fee needs on chain: the receiver goes before system_program (19 accounts).
+      const accounts = [...(swap.accounts ?? [])];
+      accounts.splice(LAUNCHLAB_SWAP_LAYOUT.systemProgram, 0, writable(await ata(a.attacker, built.quoteMint, built.quoteTokenProgram)));
+      full[t] = { ...swap, data, accounts };
+      const withReceiver = await compileTampered(a, built, full);
+      await expectRefused(
+        withReceiver.tx,
+        withReceiver.ctx,
+        new RegExp(`${label}: share_fee_rate must be 0, got 10000[\\s\\S]*${label}: expected 18 accounts .*got 19`),
+      );
+    },
+  },
+  {
+    name: "a wrong fixed account (LaunchLab vault authority, event authority, System program; CPMM authority)",
+    applies: isRaydium,
+    async run({ c, mode, a, build }) {
+      const L = LAUNCHLAB_SWAP_LAYOUT;
+      const slots: [number, string][] =
+        c.venue === "launchlab"
+          ? [
+              [L.authority, "the vault authority"],
+              [L.eventAuthority, "the event authority"],
+              [L.systemProgram, "the System program"],
+            ]
+          : [[CPMM_SWAP_LAYOUT.authority, "the CPMM authority"]];
+      for (const [index, what] of slots) {
+        const { built, full } = await builtAndList(build, mode, a);
+        const t = BUDGET_IXS + built.tradeIndex;
+        full[t] = setAccount(full[t]!, index, { address: randomAddress(), role: AccountRole.READONLY });
+        const { tx, ctx } = await compileTampered(a, built, full);
+        await expectRefused(tx, ctx, new RegExp(`#${t} ${built.venue} ${built.instructionName}: position ${index} must be ${what}`));
+      }
+    },
+  },
+  {
+    name: "a pool or vault that is not its PDA (another pair's pool or vault, the attacker's account, a foreign observation)",
+    applies: isRaydium,
+    async run({ c, mode, a, build }) {
+      const { built } = await builtAndList(build, mode, a);
+      const t = BUDGET_IXS + built.tradeIndex;
+      const label = `#${t} ${built.venue} ${built.instructionName}`;
+      const swaps: [number, Address, string][] = [];
+      if (c.venue === "launchlab") {
+        const L = LAUNCHLAB_SWAP_LAYOUT;
+        const attackerQuote = await ata(a.attacker, built.quoteMint, built.quoteTokenProgram);
+        swaps.push(
+          [
+            L.pool,
+            LAUNCHLAB_TRIX_POOL,
+            `pool ${LAUNCHLAB_TRIX_POOL} at position 4 is not the LaunchLab pool for ${built.baseMint} / ${built.quoteMint}`,
+          ],
+          [L.platformFeeVault, attackerQuote, `platform fee vault ${attackerQuote} at position 16 is not the PDA [platform_config `],
+        );
+      } else {
+        const C = CPMM_SWAP_LAYOUT;
+        const [inputMint, outputMint, outputProgram] =
+          built.side === "buy"
+            ? [built.quoteMint, built.baseMint, built.baseTokenProgram]
+            : [built.baseMint, built.quoteMint, built.quoteTokenProgram];
+        const otherVault = await cpmmVaultPda(CPMM_OTHER_POOL, inputMint);
+        const attackerOut = await ata(a.attacker, outputMint, outputProgram);
+        const observation = randomAddress();
+        swaps.push(
+          [C.inputVault, otherVault, `input vault ${otherVault} at position 6 is not the PDA ["pool_vault", pool, ${inputMint}]`],
+          [C.outputVault, attackerOut, `output vault ${attackerOut} at position 7 is not the PDA ["pool_vault", pool, ${outputMint}]`],
+          [C.observation, observation, `observation ${observation} at position 12 is not the PDA ["observation", pool `],
+        );
+      }
+      for (const [index, address, message] of swaps) {
+        const { full } = await builtAndList(build, mode, a);
+        full[t] = setAccount(full[t]!, index, writable(address));
+        const { tx, ctx } = await compileTampered(a, built, full);
+        await expectRefused(tx, ctx, new RegExp(`${escapeRegExp(`${label}: ${message}`)}`));
+      }
+    },
+  },
+  {
+    name: "an instruction other than the swaps on core's accounts (LaunchLab claim_creator_fee, migrate_to_cpswap; CPMM withdraw, deposit)",
+    applies: isRaydium,
+    async run({ c, mode, a, build }) {
+      const [table, names, allowed] =
+        c.venue === "launchlab"
+          ? [
+              LAUNCHLAB_INSTRUCTION_NAMES,
+              ["claim_creator_fee", "migrate_to_cpswap"],
+              "buy_exact_in, buy_exact_out, sell_exact_in, sell_exact_out",
+            ]
+          : [CPMM_INSTRUCTION_NAMES, ["withdraw", "deposit"], "swap_base_input, swap_base_output"];
+      for (const name of names) {
+        const { built, full } = await builtAndList(build, mode, a);
+        const t = BUDGET_IXS + built.tradeIndex;
+        const hex = Object.entries(table).find(([, n]) => n === name)?.[0];
+        if (!hex) throw new Error(`no discriminator for ${name}`);
+        const data = new Uint8Array(full[t]!.data!);
+        data.set(Uint8Array.from(hex.match(/../g)!.map((h) => Number.parseInt(h, 16))), 0);
+        full[t] = { ...full[t]!, data };
+        const { tx, ctx } = await compileTampered(a, built, full);
+        await expectRefused(
+          tx,
+          ctx,
+          new RegExp(`#${t} ${escapeRegExp(built.venue)}: instruction "${name}" is not allowed \\(only ${allowed}\\)`),
+        );
+      }
+    },
+  },
 ];
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // ---------------------------------------------------------------------------------------------
 // The matrix
@@ -843,6 +1342,8 @@ for (const c of CASES) {
             }),
           ]);
           if (c.extendsPool) expect(summary.actions).toContainEqual({ kind: "extend_account", venue: AMM, account: POOL });
+          // LaunchLab may create a missing fee vault with the trading wallet's rent: the summary must say so.
+          expect(summary.text.includes("plus any fee-vault rent above")).toBe(c.venue === "launchlab");
 
           // The landing mode's tips, exactly as SPEC's presets describe them.
           const tips = summary.actions.flatMap((x) => (x.kind === "tip" ? [x] : []));
@@ -878,3 +1379,43 @@ for (const c of CASES) {
     }
   });
 }
+
+describe("engine <-> firewall: a LaunchLab pair quoted in a Token-2022 xStock (METAx)", () => {
+  // Shipped caps cover wSOL and USDC only; a user who wants xStock pairs configures a cap for each.
+  const capped = createSignerPolicy({ caps: { maxBuyQuote: { ...DEFAULT_FIREWALL_CAPS.maxBuyQuote, [METAX_MINT]: 10n ** 8n } } });
+  for (const mode of MODES) {
+    test(`${mode} mode: core's buy and sell are refused without a METAx cap, pass with one, and buys over it are refused`, async () => {
+      const a = makeActors();
+      const withCap = { ...shippedContext(a), ...capped };
+      const buy = await launchLabBuyExactIn(a, {}, LAUNCHLAB_XSTOCK_MINT, LAUNCHLAB_XSTOCK_POOL);
+      const sell = await launchLabSell(a, {}, LAUNCHLAB_XSTOCK_MINT, false, LAUNCHLAB_XSTOCK_POOL);
+      expect([buy.quoteMint, buy.quoteTokenProgram, buy.baseTokenProgram]).toEqual([METAX_MINT, TOKEN_2022_PROGRAM, TOKEN_2022_PROGRAM]);
+      expect(buy.instructions.map(shapeOf)).toEqual(["ata", "launchlab"]);
+      expect(sell.instructions.map(shapeOf)).toEqual(["ata", "launchlab"]);
+      for (const built of [buy, sell]) {
+        const tx = assemble(a.signer, built.instructions, planFor(mode, built.cuLimit, FEE_CAPS));
+        await expectRefused(
+          tx,
+          shippedContext(a),
+          new RegExp(
+            `#${BUDGET_IXS + built.tradeIndex} ${LAUNCHLAB} ${built.instructionName}: no per-trade cap is configured for quote mint ${METAX_MINT}`,
+          ),
+        );
+        const summary = await expectAllowed(tx, withCap);
+        expect(summary.maxBuyLamports).toBe(0n);
+        expect(summary.maxBuyQuote).toEqual(built.side === "buy" ? { [METAX_MINT]: built.maxBuy } : {});
+        const expectations: TradeExpectation[] = [
+          { instruction: BUDGET_IXS + built.tradeIndex, expectedOut: built.expectedOut, slippageBps: CLI_SLIPPAGE_BPS },
+        ];
+        await expectAllowed(tx, { ...withCap, expectations });
+      }
+      const over = await launchLabBuyExactIn(a, { spend: 10n ** 8n + 1n }, LAUNCHLAB_XSTOCK_MINT, LAUNCHLAB_XSTOCK_POOL);
+      expect(over.maxBuy).toBe(10n ** 8n + 1n);
+      await expectRefused(
+        assemble(a.signer, over.instructions, planFor(mode, over.cuLimit, FEE_CAPS)),
+        withCap,
+        /buy_exact_in: spends up to 100,000,001 base units of Xsa6…\w+, above the per-trade cap of 100,000,000 base units/,
+      );
+    });
+  }
+});

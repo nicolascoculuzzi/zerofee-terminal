@@ -59,7 +59,7 @@ export interface FirewallContext {
   readonly caps: FirewallCaps;
   /** Contents of every lookup table the transaction references. A missing table is a refusal. */
   readonly addressLookupTables?: AddressLookupTables;
-  /** Rules for venue programs (pump.fun, PumpSwap, ...). */
+  /** Rules for venue programs (pump.fun, PumpSwap, Raydium LaunchLab / CPMM, ...). */
   readonly venueRules?: readonly VenueRule[];
   /** The caller's own quote per trade instruction (see TradeExpectation). Optional; untrusted; only adds refusals. */
   readonly expectations?: readonly TradeExpectation[];
@@ -113,11 +113,17 @@ export interface TradeAction {
   readonly quoteMint: Address;
   /** Buys: the capped amount argument (max quote spent, fees included). */
   readonly maxQuoteIn?: bigint;
-  /** Buys: tokens out (exact or minimum). Sells: tokens in. */
+  /** Buys: tokens out (exact or minimum). Sells: tokens in (exact, or at most for exact-out sells). */
   readonly baseAmount: bigint;
-  readonly baseAmountIs: "exact_out" | "min_out" | "exact_in";
-  /** Sells: minimum quote received. */
+  readonly baseAmountIs: "exact_out" | "min_out" | "exact_in" | "max_in";
+  /** Sells: minimum quote received (the exact amount for exact-out sells). */
   readonly minQuoteOut?: bigint;
+  /**
+   * The venue may create its own accounts inside this trade with the trading wallet paying the rent
+   * (Raydium LaunchLab creates a missing platform or creator fee vault). Not refundable, and whether it
+   * happens is not knowable offline, so it is not part of maxSolOutLamports; the summary says so.
+   */
+  readonly mayPayVenueRent?: boolean;
 }
 
 /**
@@ -189,7 +195,11 @@ export interface TransactionSummary {
   readonly maxBuyLamports: bigint;
   /** Sum of buy caps per non-SOL quote mint. */
   readonly maxBuyQuote: Readonly<Record<string, bigint>>;
-  /** Upper bound on SOL paid to third parties: buys + tips + priority fee + base fee (excludes refundable rent and moves between own accounts). */
+  /**
+   * Upper bound on SOL paid to third parties: buys + tips + priority fee + base fee (excludes
+   * refundable rent, moves between own accounts, and the venue rent the summary lists separately:
+   * PumpSwap pool extension, LaunchLab fee vaults).
+   */
   readonly maxSolOutLamports: bigint;
   /**
    * Present when the first instruction advances an owned nonce account. If the lifetime token is

@@ -1,0 +1,620 @@
+{
+  "_source": {
+    "raydium_launchpad": {
+      "url": "https://raw.githubusercontent.com/raydium-io/raydium-idl/e7e0c96fe77bcf6a020b84a44c47a722aac8e359/raydium_launchpad/raydium_launchpad.json",
+      "sha256": "963189409945069409f32e345d4adf2892e0b3ca1be504372577fe34a23c6cdb",
+      "address": "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj",
+      "fetched": "2026-10-03"
+    },
+    "raydium_cp_swap": {
+      "url": "https://raw.githubusercontent.com/raydium-io/raydium-idl/e7e0c96fe77bcf6a020b84a44c47a722aac8e359/raydium_cpmm/raydium_cp_swap.json",
+      "sha256": "1202f6dc8e1c3216598f2ad5c620b9aa8c64ac584563fafed68125c27fb6df81",
+      "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+      "fetched": "2026-10-03"
+    }
+  },
+  "raydium_launchpad": [
+    {
+      "name": "buy_exact_in",
+      "discriminator": [
+        250,
+        234,
+        13,
+        123,
+        213,
+        156,
+        19,
+        236
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "share_fee_rate",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "global_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "platform_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_base_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_quote_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "quote_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "base_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_program",
+          "writable": false,
+          "signer": false,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "event_authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "program",
+          "writable": false,
+          "signer": false
+        }
+      ]
+    },
+    {
+      "name": "buy_exact_out",
+      "discriminator": [
+        24,
+        211,
+        116,
+        40,
+        105,
+        3,
+        153,
+        56
+      ],
+      "args": [
+        {
+          "name": "amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "maximum_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "share_fee_rate",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "global_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "platform_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_base_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_quote_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "quote_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "base_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_program",
+          "writable": false,
+          "signer": false,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "event_authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "program",
+          "writable": false,
+          "signer": false
+        }
+      ]
+    },
+    {
+      "name": "sell_exact_in",
+      "discriminator": [
+        149,
+        39,
+        222,
+        155,
+        211,
+        124,
+        152,
+        26
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "share_fee_rate",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "global_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "platform_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_base_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_quote_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "quote_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "base_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_program",
+          "writable": false,
+          "signer": false,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "event_authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "program",
+          "writable": false,
+          "signer": false
+        }
+      ]
+    },
+    {
+      "name": "sell_exact_out",
+      "discriminator": [
+        95,
+        200,
+        71,
+        34,
+        8,
+        9,
+        11,
+        166
+      ],
+      "args": [
+        {
+          "name": "amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "maximum_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "share_fee_rate",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "global_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "platform_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_base_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "user_quote_token",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "quote_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "base_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "base_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "quote_token_program",
+          "writable": false,
+          "signer": false,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "event_authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "program",
+          "writable": false,
+          "signer": false
+        }
+      ]
+    }
+  ],
+  "raydium_cp_swap": [
+    {
+      "name": "swap_base_input",
+      "discriminator": [
+        143,
+        190,
+        90,
+        218,
+        196,
+        30,
+        51,
+        222
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_amount_out",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": false,
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "amm_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "input_token_account",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "output_token_account",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "input_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "output_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "input_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "output_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "input_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "output_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "observation_state",
+          "writable": true,
+          "signer": false
+        }
+      ]
+    },
+    {
+      "name": "swap_base_output",
+      "discriminator": [
+        55,
+        217,
+        98,
+        86,
+        163,
+        74,
+        180,
+        173
+      ],
+      "args": [
+        {
+          "name": "max_amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "amount_out",
+          "type": "u64"
+        }
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": false,
+          "signer": true
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "amm_config",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "pool_state",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "input_token_account",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "output_token_account",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "input_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "output_vault",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "input_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "output_token_program",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "input_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "output_token_mint",
+          "writable": false,
+          "signer": false
+        },
+        {
+          "name": "observation_state",
+          "writable": true,
+          "signer": false
+        }
+      ]
+    }
+  ]
+}

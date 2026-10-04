@@ -14,6 +14,8 @@ export {
   JITO_DONT_FRONT_PREFIX,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
+  RAYDIUM_CPMM_PROGRAM,
+  RAYDIUM_LAUNCHLAB_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
@@ -37,6 +39,31 @@ export {
   type VenueInstruction,
   type VenueLayout,
 } from "./firewall/rules/pump-idl";
+export {
+  createRaydiumCpmmRule,
+  createRaydiumLaunchLabRule,
+  findCpmmAuthority,
+  findCpmmObservation,
+  findCpmmVault,
+  findLaunchLabAuthority,
+  findLaunchLabEventAuthority,
+  findLaunchLabPlatformFeeVault,
+  findLaunchLabPool,
+  type RaydiumRuleOptions,
+} from "./firewall/rules/raydium";
+export {
+  CPMM_DATA_LENGTH,
+  CPMM_STATIC_POSITIONS,
+  CPMM_SWAP_INSTRUCTIONS,
+  CPMM_SWAP_LAYOUT,
+  type CpmmSwapInstruction,
+  LAUNCHLAB_DATA_LENGTH,
+  LAUNCHLAB_SHARE_FEE_RATE_OFFSET,
+  LAUNCHLAB_STATIC_POSITIONS,
+  LAUNCHLAB_SWAP_INSTRUCTIONS,
+  LAUNCHLAB_SWAP_LAYOUT,
+  type LaunchLabSwapInstruction,
+} from "./firewall/rules/raydium-idl";
 export {
   computeTotals,
   type DailySpendCaps,

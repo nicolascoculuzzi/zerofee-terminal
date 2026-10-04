@@ -3,7 +3,15 @@
  * Every case must be refused, with a violation that names the reason.
  */
 import { describe, expect, test } from "bun:test";
-import { type AccountMeta, AccountRole, type Address, createAddressWithSeed, type Instruction } from "@solana/kit";
+import {
+  type AccountMeta,
+  AccountRole,
+  type Address,
+  createAddressWithSeed,
+  getAddressEncoder,
+  getProgramDerivedAddress,
+  type Instruction,
+} from "@solana/kit";
 import {
   getRequestUnitsInstruction,
   getSetComputeUnitLimitInstruction,
@@ -31,8 +39,19 @@ import {
   getTransferInstruction,
 } from "@solana-program/token";
 import { findAssociatedTokenAddress } from "../src/firewall/ata";
+import { decodeTransaction } from "../src/firewall/decode";
+import { checkTransaction } from "../src/firewall/firewall";
 import { SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, WSOL_MINT } from "../src/firewall/programs";
 import { createPumpSwapRule, findCanonicalPumpPool } from "../src/firewall/rules/pump";
+import {
+  CPMM_INSTRUCTION_NAMES,
+  CPMM_STATIC_POSITIONS,
+  CPMM_SWAP_INSTRUCTIONS,
+  LAUNCHLAB_INSTRUCTION_NAMES,
+  LAUNCHLAB_STATIC_POSITIONS,
+  LAUNCHLAB_SWAP_INSTRUCTIONS,
+  LAUNCHLAB_SWAP_LAYOUT,
+} from "../src/firewall/rules/raydium-idl";
 import {
   DEFAULT_CAPS,
   JITO_DONT_FRONT,
@@ -42,10 +61,23 @@ import {
   makeActors,
   makeContext,
   PROGRAMS,
+  RAYDIUM,
   randomAddress,
   type TestActors,
 } from "./helpers/fixtures";
 import { ammExtendInstruction, ammInstruction, curveInstruction } from "./helpers/pump";
+import {
+  CPMM_COIN,
+  cpmmInstruction,
+  cpmmParams,
+  cpmmPool,
+  LAUNCHLAB_COIN,
+  launchLabInstruction,
+  launchLabParams,
+  launchLabPool,
+  STONK_COIN,
+  stonkParams,
+} from "./helpers/raydium";
 import { AMM_COIN, ammParams, curveBuyV2, curveParams, expectAllowed, expectRefused } from "./helpers/scenarios";
 import { buildTransaction, computeBudget, createAtaIdempotent, noop, tipWithDontFront, transferSol, withExtraAccounts } from "./helpers/tx";
 
@@ -279,10 +311,10 @@ describe("firewall: signatures, programs and fees", () => {
     await expectRefused(buildTransaction({ feePayer: a.signer, instructions: [evil] }), makeContext(a), /is not allowlisted/);
   });
 
-  test("allowlisted program without a firewall rule (Raydium LaunchLab today)", async () => {
+  test("allowlisted program without a firewall rule (Jupiter today)", async () => {
     const a = makeActors();
     const ix: Instruction = {
-      programAddress: PROGRAMS.raydiumLaunchLab,
+      programAddress: PROGRAMS.jupiter,
       accounts: [{ address: a.signer, role: AccountRole.WRITABLE_SIGNER }],
       data: new Uint8Array(32),
     };
@@ -838,5 +870,500 @@ describe("firewall: PumpSwap extend_account (the trading wallet pays the rent)",
     const tables = { [alt]: [pool] };
     const viaAlt = buildTransaction({ feePayer: a.signer, instructions: [extend, trade], lookupTables: tables });
     await expectRefused(viaAlt, makeContext(a, { addressLookupTables: tables }), /extended account must be a static account key/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Raydium LaunchLab and CPMM
+// ---------------------------------------------------------------------------------------------
+
+const tx1 = (a: TestActors, ...instructions: Instruction[]) => buildTransaction({ feePayer: a.signer, instructions });
+const signerMeta = (a: TestActors): AccountMeta => ({ address: a.signer, role: AccountRole.WRITABLE_SIGNER });
+const attackerMeta = (a: TestActors): AccountMeta => ({ address: a.attacker, role: AccountRole.WRITABLE });
+/** A cap configured for the xStock quote, as a user would set one in their caps. */
+const withXStockCap = (a: TestActors, cap = 10n ** 9n) =>
+  makeContext(a, { caps: { ...DEFAULT_CAPS, maxBuyQuote: { ...DEFAULT_CAPS.maxBuyQuote, [RAYDIUM.xStock]: cap } } });
+const xStockQuote = { quoteMint: RAYDIUM.xStock, quoteTokenProgram: TOKEN_2022_PROGRAM, platformConfig: RAYDIUM.stonkPlatform };
+
+/**
+ * Moves the account at each position into an address lookup table (one at a time) and checks that the
+ * firewall refuses exactly the positions it documents as static.
+ */
+async function expectStaticPositions(a: TestActors, ix: Instruction, staticPositions: readonly number[], skip: readonly number[]) {
+  const accounts = ix.accounts ?? [];
+  const outcomes: { position: number; refused: boolean }[] = [];
+  for (let i = 1; i < accounts.length; i++) {
+    if (skip.includes(i)) continue;
+    const alt = randomAddress();
+    const tables = { [alt]: [accounts[i]!.address] };
+    const tx = buildTransaction({ feePayer: a.signer, instructions: [ix], lookupTables: tables });
+    const decoded = decodeTransaction(tx, tables);
+    if (!decoded.ok) throw new Error(decoded.violations.join("; "));
+    expect({ position: i, loaded: decoded.tx.accounts.find((x) => x.address === accounts[i]!.address)?.isStatic === false }).toEqual({
+      position: i,
+      loaded: true,
+    });
+    const result = await checkTransaction(tx, makeContext(a, { addressLookupTables: tables }));
+    outcomes.push({ position: i, refused: !result.ok });
+  }
+  expect(outcomes).toEqual(outcomes.map(({ position }) => ({ position, refused: staticPositions.includes(position) })));
+}
+
+describe("firewall: Raydium LaunchLab", () => {
+  const buy = (a: TestActors, extra: Partial<Parameters<typeof launchLabParams>[1]> = {}, args: Record<string, bigint> = {}) =>
+    launchLabInstruction("buy_exact_in", launchLabParams(a, extra), { amount_in: 10n ** 8n, minimum_amount_out: 1n, ...args });
+  const sell = (a: TestActors, extra: Partial<Parameters<typeof launchLabParams>[1]> = {}, args: Record<string, bigint> = {}) =>
+    launchLabInstruction("sell_exact_in", launchLabParams(a, extra), { amount_in: 10n ** 9n, minimum_amount_out: 1n, ...args });
+
+  test("every instruction but the four swaps is refused by name (claims, migrations, launches, admin)", async () => {
+    const a = makeActors();
+    const swaps = new Set(LAUNCHLAB_SWAP_INSTRUCTIONS.map((d) => d.name));
+    const others = Object.entries(LAUNCHLAB_INSTRUCTION_NAMES).filter(([, name]) => !swaps.has(name));
+    expect(others.map(([, name]) => name)).toContain("migrate_to_cpswap");
+    expect(others).toHaveLength(21);
+    for (const [hex, name] of [...others, ["0102030405060708", "unknown 0102030405060708"]] as const) {
+      const ix = rawInstruction(PROGRAMS.raydiumLaunchLab, hex, [signerMeta(a), attackerMeta(a)], new Uint8Array(24));
+      await expectRefused(
+        tx1(a, ix),
+        makeContext(a),
+        new RegExp(
+          `#0 Raydium LaunchLab: instruction "${name}" is not allowed \\(only buy_exact_in, buy_exact_out, sell_exact_in, sell_exact_out\\)`,
+        ),
+      );
+    }
+  });
+
+  test("a referral share fee: share_fee_rate > 0, with or without the share_fee_receiver it pays", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const attackerWsol = await findAssociatedTokenAddress(a.attacker, WSOL_MINT, TOKEN_PROGRAM);
+    // 18 accounts and a 1% share fee: refused on the argument alone.
+    const alone = await expectRefused(
+      tx1(a, await buy(a, {}, { share_fee_rate: 10_000n })),
+      ctx,
+      /#0 Raydium LaunchLab buy_exact_in: share_fee_rate must be 0, got 10000/,
+    );
+    expect(alone).toHaveLength(1);
+    // What a share fee really needs: the receiver goes before the remaining accounts (19 accounts).
+    const withReceiver = await expectRefused(
+      tx1(a, await sell(a, { shareFeeReceiver: attackerWsol }, { share_fee_rate: 10_000n })),
+      ctx,
+      /#0 Raydium LaunchLab sell_exact_in: share_fee_rate must be 0, got 10000/,
+    );
+    expect(withReceiver.join("\n")).toMatch(/expected 18 accounts \(plus optional trailing jitodontfront markers\), got 19/);
+    // A receiver with share_fee_rate 0 is still one account too many.
+    await expectRefused(tx1(a, await sell(a, { shareFeeReceiver: attackerWsol })), ctx, /sell_exact_in: expected 18 accounts .*got 19/);
+    for (const d of LAUNCHLAB_SWAP_INSTRUCTIONS) {
+      const ix = await launchLabInstruction(d.name as "buy_exact_in", launchLabParams(a), {
+        amount_in: 1n,
+        amount_out: 1n,
+        minimum_amount_out: 1n,
+        maximum_amount_in: 1n,
+        share_fee_rate: 1n,
+      });
+      await expectRefused(tx1(a, ix), ctx, new RegExp(`${d.name}: share_fee_rate must be 0, got 1 `));
+    }
+  });
+
+  test("a payer other than the trading wallet, or the trading wallet in another position", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    await expectRefused(
+      tx1(a, await buy(a, { user: a.connected })),
+      ctx,
+      /requires 2 signatures[\s\S]*buy_exact_in: user must be the trading wallet/,
+    );
+    const unsigned = await buy(a);
+    const asConnected: Instruction = {
+      ...unsigned,
+      accounts: (unsigned.accounts ?? []).map((m, i) => (i === 0 ? { address: a.connected, role: AccountRole.WRITABLE } : m)),
+    };
+    await expectRefused(tx1(a, asConnected), ctx, /user must be the trading wallet/);
+    await expectRefused(tx1(a, await buy(a, { remaining: { creatorFeeVault: a.signer } })), ctx, /unexpected position \(17\)/);
+    await expectRefused(tx1(a, await sell(a, { overrides: { global_config: a.signer } })), ctx, /unexpected position \(2\)/);
+  });
+
+  test("bought tokens or sale proceeds paid to anything but the trading wallet's own ATA", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const position5 = /buy_exact_in: token account at position 5 must be the trading wallet's associated token account for /;
+    const position6 = /sell_exact_in: token account at position 6 must be the trading wallet's associated token account for /;
+    const attackerCoin = await findAssociatedTokenAddress(a.attacker, LAUNCHLAB_COIN, TOKEN_PROGRAM);
+    await expectRefused(tx1(a, await buy(a, { overrides: { user_base_token: attackerCoin } })), ctx, position5);
+    for (const owner of [a.attacker, a.connected]) {
+      const proceeds = await findAssociatedTokenAddress(owner, WSOL_MINT, TOKEN_PROGRAM);
+      await expectRefused(tx1(a, await sell(a, { overrides: { user_quote_token: proceeds } })), ctx, position6);
+    }
+    // A wSOL account the trading wallet controls but that is not its ATA (as some bots use).
+    const temporary = await createAddressWithSeed({ baseAddress: a.signer, programAddress: TOKEN_PROGRAM, seed: "wsol" });
+    await expectRefused(tx1(a, await sell(a, { overrides: { user_quote_token: temporary } })), ctx, position6);
+    // The trading wallet's ATA under the wrong token program (SPL Token for a Token-2022 coin).
+    const wrongProgram = await launchLabInstruction("buy_exact_in", stonkParams(a, { overrides: { base_token_program: TOKEN_PROGRAM } }), {
+      amount_in: 1n,
+      minimum_amount_out: 1n,
+    });
+    await expectRefused(tx1(a, wrongProgram), ctx, position5);
+  });
+
+  test("token programs replaced by an arbitrary program (the venue CPIs into them with the payer's signature)", async () => {
+    const a = makeActors();
+    const fake = randomAddress();
+    await expectRefused(
+      tx1(a, await buy(a, { overrides: { base_token_program: fake } })),
+      makeContext(a),
+      /token program at position 11 must be SPL Token or Token-2022 \(static key\)/,
+    );
+    await expectRefused(
+      tx1(a, await sell(a, { overrides: { quote_token_program: fake } })),
+      makeContext(a),
+      /token program at position 12 must be SPL Token or Token-2022 \(static key\)/,
+    );
+  });
+
+  test("wrong fixed accounts: vault authority, event authority, System program", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const cases: [Partial<Parameters<typeof launchLabParams>[1]>, RegExp][] = [
+      [
+        { overrides: { authority: a.attacker } },
+        /position 1 must be the vault authority WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh, not /,
+      ],
+      [
+        { overrides: { event_authority: a.attacker } },
+        /position 13 must be the event authority 2DPAtwB8L12vrMRExbLuyGnC7n2J5LNoZQSejeQGpwkr, not /,
+      ],
+      [
+        { remaining: { systemProgram: randomAddress() } },
+        /position 15 must be the System program, not \w+ \(it is invoked with the trading wallet's signature\)/,
+      ],
+    ];
+    for (const [extra, pattern] of cases) {
+      const violations = await expectRefused(tx1(a, await buy(a, extra)), ctx, pattern);
+      expect(violations).toHaveLength(1);
+    }
+  });
+
+  test('a pool that is not PDA["pool", base, quote], and a platform fee vault that is not PDA[platform_config, quote]', async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const notPool = new RegExp(`pool \\w+ at position 4 is not the LaunchLab pool for ${LAUNCHLAB_COIN} / ${WSOL_MINT}`);
+    for (const pool of [await launchLabPool(STONK_COIN), await launchLabPool(LAUNCHLAB_COIN, MAINNET.usdc), randomAddress()]) {
+      await expectRefused(tx1(a, await sell(a, { overrides: { pool_state: pool } })), ctx, notPool);
+    }
+    const notVault = /platform fee vault \w+ at position 16 is not the PDA \[platform_config /;
+    const attackerWsol = await findAssociatedTokenAddress(a.attacker, WSOL_MINT, TOKEN_PROGRAM);
+    await expectRefused(tx1(a, await sell(a, { remaining: { platformFeeVault: attackerWsol } })), ctx, notVault);
+    // Another launchpad's fee vault, or the platform config swapped without its vault.
+    const stonkVault = (
+      await getProgramDerivedAddress({
+        programAddress: PROGRAMS.raydiumLaunchLab,
+        seeds: [getAddressEncoder().encode(RAYDIUM.stonkPlatform), getAddressEncoder().encode(WSOL_MINT)],
+      })
+    )[0];
+    await expectRefused(tx1(a, await buy(a, { remaining: { platformFeeVault: stonkVault } })), ctx, notVault);
+    await expectRefused(tx1(a, await buy(a, { overrides: { platform_config: RAYDIUM.stonkPlatform } })), ctx, notVault);
+  });
+
+  test("lookup tables: every checked account must be a static key; the venue-validated ones may be loaded", async () => {
+    const a = makeActors();
+    // A Token-2022 coin, so that both token programs are distinct accounts. Position 14 is the invoked program.
+    const ix = await launchLabInstruction("sell_exact_in", stonkParams(a), { amount_in: 1n, minimum_amount_out: 1n });
+    await expectStaticPositions(a, ix, LAUNCHLAB_STATIC_POSITIONS, [LAUNCHLAB_SWAP_LAYOUT.program]);
+  });
+
+  test("every buy above the per-trade cap (buy_exact_in amount_in, buy_exact_out maximum_amount_in), at the cap passes", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const usdc = { quoteMint: MAINNET.usdc };
+    const variants: [string, Instruction][] = [
+      ["buy_exact_in", await buy(a, {}, { amount_in: CAP + 1n })],
+      ["buy_exact_out", await launchLabInstruction("buy_exact_out", launchLabParams(a), { amount_out: 1n, maximum_amount_in: CAP + 1n })],
+      ["buy_exact_in (USDC)", await buy(a, usdc, { amount_in: USDC_CAP + 1n })],
+      [
+        "buy_exact_out (USDC)",
+        await launchLabInstruction("buy_exact_out", launchLabParams(a, usdc), { amount_out: 1n, maximum_amount_in: USDC_CAP + 1n }),
+      ],
+    ];
+    for (const [name, ix] of variants) {
+      const violations = await expectRefused(
+        tx1(a, ix),
+        ctx,
+        /#0 Raydium LaunchLab buy_exact_(in|out): spends up to .* above the per-trade cap/,
+      );
+      expect({ name, refused: violations.length > 0 }).toEqual({ name, refused: true });
+    }
+    await expectAllowed(tx1(a, await buy(a, {}, { amount_in: CAP })), ctx);
+    await expectAllowed(
+      tx1(a, await launchLabInstruction("buy_exact_out", launchLabParams(a, usdc), { amount_out: 1n, maximum_amount_in: USDC_CAP })),
+      ctx,
+    );
+  });
+
+  test("a quote mint without a configured cap (an xStock, a USD1-style stable) is refused for buys and sells until one is set", async () => {
+    const a = makeActors();
+    const usd1Style = { quoteMint: randomAddress() };
+    for (const quote of [xStockQuote, usd1Style]) {
+      const noCap = new RegExp(`no per-trade cap is configured for quote mint ${quote.quoteMint}`);
+      await expectRefused(tx1(a, await buy(a, quote, { amount_in: 1n })), makeContext(a), noCap);
+      await expectRefused(tx1(a, await sell(a, quote)), makeContext(a), noCap);
+    }
+    // With a cap for the xStock: both pass, and buys count against that cap.
+    const summary = await expectAllowed(tx1(a, await buy(a, xStockQuote, { amount_in: 5_000_000n })), withXStockCap(a));
+    expect(summary.maxBuyQuote).toEqual({ [RAYDIUM.xStock]: 5_000_000n });
+    expect(summary.maxBuyLamports).toBe(0n);
+    await expectAllowed(tx1(a, await sell(a, xStockQuote)), withXStockCap(a));
+    await expectRefused(
+      tx1(a, await buy(a, xStockQuote, { amount_in: 5_000_001n })),
+      withXStockCap(a, 5_000_000n),
+      /above the per-trade cap/,
+    );
+  });
+
+  test("the coin is itself a quote asset (a sell of wSOL would be an uncapped buy of the quote)", async () => {
+    const a = makeActors();
+    const ix = await sell(a, { baseMint: WSOL_MINT, quoteMint: MAINNET.usdc }, { amount_in: 50n * LAMPORTS_PER_SOL });
+    await expectRefused(tx1(a, ix), makeContext(a), new RegExp(`base mint ${WSOL_MINT} is a quote asset`));
+  });
+
+  test("zero minimum output on sell_exact_in, sell_exact_out (amount_out 0) and buy_exact_in; a minimum of 1 passes", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const variants: [string, (min: bigint) => Promise<Instruction>, RegExp][] = [
+      ["sell_exact_in", (min) => sell(a, {}, { minimum_amount_out: min }), /sells need a minimum above zero/],
+      [
+        "sell_exact_out",
+        (min) => launchLabInstruction("sell_exact_out", launchLabParams(a), { amount_out: min, maximum_amount_in: 10n ** 12n }),
+        /sells need a minimum above zero/,
+      ],
+      ["buy_exact_in", (min) => buy(a, {}, { minimum_amount_out: min }), /minimum tokens out is 0/],
+    ];
+    for (const [name, build, pattern] of variants) {
+      const violations = await expectRefused(tx1(a, await build(0n)), ctx, pattern);
+      expect({ name, violations }).toEqual({ name, violations: [expect.stringContaining(`#0 Raydium LaunchLab ${name}: `)] });
+      await expectAllowed(tx1(a, await build(1n)), ctx);
+    }
+  });
+
+  test("malformed: wrong data length, the 15 IDL accounts without the fee-vault accounts, an extra account", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const ix = await buy(a);
+    await expectRefused(tx1(a, { ...ix, data: Uint8Array.from([...(ix.data ?? []), 0]) }), ctx, /buy_exact_in: data must be 32 bytes/);
+    await expectRefused(tx1(a, { ...ix, data: (ix.data ?? new Uint8Array()).slice(0, 24) }), ctx, /data must be 32 bytes/);
+    await expectRefused(tx1(a, { ...ix, accounts: (ix.accounts ?? []).slice(0, 15) }), ctx, /expected 18 accounts .*got 15/);
+    const extra = await buy(a, {}, {});
+    await expectRefused(tx1(a, withExtraAccounts(extra, { address: randomAddress(), role: AccountRole.READONLY })), ctx, /got 19/);
+    // A trailing read-only jitodontfront marker is fine, as on every other instruction.
+    await expectAllowed(tx1(a, withExtraAccounts(extra, { address: JITO_DONT_FRONT, role: AccountRole.READONLY })), ctx);
+  });
+});
+
+describe("firewall: Raydium CPMM", () => {
+  const swap = (
+    a: TestActors,
+    side: "buy" | "sell",
+    extra: Partial<Parameters<typeof cpmmParams>[2]> = {},
+    args: Record<string, bigint> = {},
+  ) => cpmmInstruction("swap_base_input", cpmmParams(a, side, extra), { amount_in: 10n ** 8n, minimum_amount_out: 1n, ...args });
+
+  test("every instruction but the two swaps is refused by name (deposit, withdraw, initialize, fee collection, admin)", async () => {
+    const a = makeActors();
+    const swaps = new Set(CPMM_SWAP_INSTRUCTIONS.map((d) => d.name));
+    const others = Object.entries(CPMM_INSTRUCTION_NAMES).filter(([, name]) => !swaps.has(name));
+    expect(others.map(([, name]) => name)).toEqual(expect.arrayContaining(["deposit", "withdraw", "initialize"]));
+    expect(others).toHaveLength(12);
+    for (const [hex, name] of [...others, ["0102030405060708", "unknown 0102030405060708"]] as const) {
+      const ix = rawInstruction(PROGRAMS.raydiumCpmm, hex, [signerMeta(a), attackerMeta(a)]);
+      await expectRefused(
+        tx1(a, ix),
+        makeContext(a),
+        new RegExp(`#0 Raydium CPMM: instruction "${name}" is not allowed \\(only swap_base_input, swap_base_output\\)`),
+      );
+    }
+  });
+
+  test("a payer other than the trading wallet, or the trading wallet in another position", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    await expectRefused(
+      tx1(a, await swap(a, "buy", { user: a.connected })),
+      ctx,
+      /requires 2 signatures[\s\S]*user must be the trading wallet/,
+    );
+    await expectRefused(tx1(a, await swap(a, "sell", { overrides: { amm_config: a.signer } })), ctx, /unexpected position \(2\)/);
+  });
+
+  test("bought tokens or sale proceeds paid to anything but the trading wallet's own ATA", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const position = (i: number) =>
+      new RegExp(`swap_base_input: token account at position ${i} must be the trading wallet's associated token account`);
+    const attackerCoin = await findAssociatedTokenAddress(a.attacker, CPMM_COIN, TOKEN_PROGRAM);
+    await expectRefused(tx1(a, await swap(a, "buy", { overrides: { output_token_account: attackerCoin } })), ctx, position(5));
+    for (const owner of [a.attacker, a.connected]) {
+      const proceeds = await findAssociatedTokenAddress(owner, WSOL_MINT, TOKEN_PROGRAM);
+      await expectRefused(tx1(a, await swap(a, "sell", { overrides: { output_token_account: proceeds } })), ctx, position(5));
+    }
+    await expectRefused(tx1(a, await swap(a, "sell", { overrides: { input_token_account: attackerCoin } })), ctx, position(4));
+    // A Token-2022 coin's ATA derived under SPL Token.
+    const t22 = await cpmmInstruction(
+      "swap_base_input",
+      cpmmParams(a, "buy", { outputTokenProgram: TOKEN_2022_PROGRAM, overrides: { output_token_program: TOKEN_PROGRAM } }),
+      { amount_in: 1n, minimum_amount_out: 1n },
+    );
+    await expectRefused(tx1(a, t22), ctx, position(5));
+  });
+
+  test("token programs replaced by an arbitrary program", async () => {
+    const a = makeActors();
+    const fake = randomAddress();
+    for (const [account, index] of [
+      ["input_token_program", 8],
+      ["output_token_program", 9],
+    ] as const) {
+      await expectRefused(
+        tx1(a, await swap(a, "sell", { overrides: { [account]: fake } })),
+        makeContext(a),
+        new RegExp(`token program at position ${index} must be SPL Token or Token-2022 \\(static key\\)`),
+      );
+    }
+  });
+
+  test('a wrong authority, vaults that are not PDA["pool_vault", pool, mint], an observation that is not PDA["observation", pool]', async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const otherPool = await cpmmPool(randomAddress(), WSOL_MINT);
+    const otherVault = (
+      await getProgramDerivedAddress({
+        programAddress: PROGRAMS.raydiumCpmm,
+        seeds: [new TextEncoder().encode("pool_vault"), getAddressEncoder().encode(otherPool), getAddressEncoder().encode(WSOL_MINT)],
+      })
+    )[0];
+    const attackerWsol = await findAssociatedTokenAddress(a.attacker, WSOL_MINT, TOKEN_PROGRAM);
+    const cases: [Record<string, Address>, RegExp][] = [
+      [{ authority: a.attacker }, /position 1 must be the CPMM authority GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL, not /],
+      [
+        { input_vault: otherVault },
+        /input vault \w+ at position 6 is not the PDA \["pool_vault", pool, So11111111111111111111111111111111111111112\]/,
+      ],
+      [{ output_vault: attackerWsol }, /output vault \w+ at position 7 is not the PDA \["pool_vault", pool, /],
+      [{ observation_state: randomAddress() }, /observation \w+ at position 12 is not the PDA \["observation", pool /],
+    ];
+    for (const [overrides, pattern] of cases) {
+      const violations = await expectRefused(tx1(a, await swap(a, "buy", { overrides })), ctx, pattern);
+      expect(violations).toHaveLength(1);
+    }
+    // The vaults swapped with each other: both refused.
+    const ix = await swap(a, "sell");
+    const swapped = { ...ix, accounts: (ix.accounts ?? []).map((m, i, all) => (i === 6 ? all[7]! : i === 7 ? all[6]! : m)) };
+    const violations = await expectRefused(tx1(a, swapped), ctx, /input vault/);
+    expect(violations.join("\n")).toMatch(/output vault/);
+  });
+
+  test("lookup tables: every checked account must be a static key; only the AMM config may be loaded", async () => {
+    const a = makeActors();
+    const ix = await cpmmInstruction("swap_base_input", cpmmParams(a, "sell", { inputTokenProgram: TOKEN_2022_PROGRAM }), {
+      amount_in: 1n,
+      minimum_amount_out: 1n,
+    });
+    await expectStaticPositions(a, ix, CPMM_STATIC_POSITIONS, []);
+  });
+
+  test("buys above the per-trade cap: arg 1 of either swap when it spends wSOL or a capped quote mint; at the cap passes", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const usdcIn = { inputMint: MAINNET.usdc };
+    const variants: Instruction[] = [
+      await swap(a, "buy", {}, { amount_in: CAP + 1n }),
+      await cpmmInstruction("swap_base_output", cpmmParams(a, "buy"), { max_amount_in: CAP + 1n, amount_out: 1n }),
+      await swap(a, "buy", usdcIn, { amount_in: USDC_CAP + 1n }),
+      await cpmmInstruction("swap_base_output", cpmmParams(a, "buy", usdcIn), { max_amount_in: USDC_CAP + 1n, amount_out: 1n }),
+    ];
+    for (const ix of variants) {
+      await expectRefused(tx1(a, ix), ctx, /#0 Raydium CPMM swap_base_(input|output): spends up to .* above the per-trade cap/);
+    }
+    const summary = await expectAllowed(tx1(a, await swap(a, "buy", {}, { amount_in: CAP })), ctx);
+    expect(summary.maxBuyLamports).toBe(CAP);
+    const usdc = await expectAllowed(
+      tx1(a, await cpmmInstruction("swap_base_output", cpmmParams(a, "buy", usdcIn), { max_amount_in: USDC_CAP, amount_out: 1n })),
+      ctx,
+    );
+    expect(usdc.maxBuyQuote).toEqual({ [MAINNET.usdc]: USDC_CAP });
+  });
+
+  test("swaps with no quote asset, or between two quote assets, are refused; a configured cap makes an xStock pair tradable", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const pair = (inputMint: Address, outputMint: Address) =>
+      cpmmInstruction("swap_base_input", { user: a.signer, inputMint, outputMint }, { amount_in: 10n ** 6n, minimum_amount_out: 1n });
+    const noQuote = /no per-trade cap is configured for either mint/;
+    await expectRefused(tx1(a, await pair(CPMM_COIN, RAYDIUM.xStock)), ctx, noQuote);
+    await expectRefused(tx1(a, await pair(RAYDIUM.xStock, CPMM_COIN)), ctx, noQuote);
+    await expectRefused(tx1(a, await pair(CPMM_COIN, STONK_COIN)), ctx, noQuote);
+    const usdcIsQuote = new RegExp(`base mint ${MAINNET.usdc} is a quote asset`);
+    await expectRefused(tx1(a, await pair(WSOL_MINT, MAINNET.usdc)), ctx, usdcIsQuote);
+    await expectRefused(tx1(a, await pair(MAINNET.usdc, WSOL_MINT)), ctx, usdcIsQuote);
+    await expectRefused(tx1(a, await pair(WSOL_MINT, WSOL_MINT)), ctx, new RegExp(`base mint ${WSOL_MINT} is a quote asset`));
+
+    const capped = withXStockCap(a, 10n ** 6n);
+    const buySummary = await expectAllowed(tx1(a, await pair(RAYDIUM.xStock, CPMM_COIN)), capped);
+    expect(buySummary.actions.find((x) => x.kind === "trade")).toMatchObject({
+      side: "buy",
+      baseMint: CPMM_COIN,
+      quoteMint: RAYDIUM.xStock,
+    });
+    expect(buySummary.maxBuyQuote).toEqual({ [RAYDIUM.xStock]: 10n ** 6n });
+    const sellSummary = await expectAllowed(tx1(a, await pair(CPMM_COIN, RAYDIUM.xStock)), capped);
+    expect(sellSummary.actions.find((x) => x.kind === "trade")).toMatchObject({
+      side: "sell",
+      baseMint: CPMM_COIN,
+      quoteMint: RAYDIUM.xStock,
+    });
+    await expectRefused(tx1(a, await pair(RAYDIUM.xStock, CPMM_COIN)), withXStockCap(a, 10n ** 6n - 1n), /above the per-trade cap/);
+  });
+
+  test("zero minimum output on swap_base_input sells and buys and swap_base_output sells; a minimum of 1 passes", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const variants: [string, (min: bigint) => Promise<Instruction>, RegExp][] = [
+      ["swap_base_input", (min) => swap(a, "sell", {}, { minimum_amount_out: min }), /sells need a minimum above zero/],
+      ["swap_base_input", (min) => swap(a, "buy", {}, { minimum_amount_out: min }), /minimum tokens out is 0/],
+      [
+        "swap_base_output",
+        (min) => cpmmInstruction("swap_base_output", cpmmParams(a, "sell"), { max_amount_in: 10n ** 12n, amount_out: min }),
+        /sells need a minimum above zero/,
+      ],
+    ];
+    for (const [name, build, pattern] of variants) {
+      const violations = await expectRefused(tx1(a, await build(0n)), ctx, pattern);
+      expect({ name, violations }).toEqual({ name, violations: [expect.stringContaining(`#0 Raydium CPMM ${name}: `)] });
+      await expectAllowed(tx1(a, await build(1n)), ctx);
+    }
+    // An exact-out buy of 0 tokens moves nothing worth protecting: it pays at most its capped max_amount_in.
+    await expectAllowed(
+      tx1(a, await cpmmInstruction("swap_base_output", cpmmParams(a, "buy"), { max_amount_in: 1_000n, amount_out: 0n })),
+      ctx,
+    );
+  });
+
+  test("malformed: wrong data length, missing or extra accounts", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const ix = await swap(a, "sell");
+    await expectRefused(tx1(a, { ...ix, data: Uint8Array.from([...(ix.data ?? []), 1]) }), ctx, /swap_base_input: data must be 24 bytes/);
+    await expectRefused(tx1(a, { ...ix, accounts: (ix.accounts ?? []).slice(0, 12) }), ctx, /expected 13 accounts .*got 12/);
+    await expectRefused(tx1(a, withExtraAccounts(ix, { address: randomAddress(), role: AccountRole.WRITABLE })), ctx, /got 14/);
+  });
+});
+
+describe("firewall: Raydium buys share the per-trade cap with every other venue", () => {
+  test("a LaunchLab buy and a CPMM buy that each fit but together exceed the cap", async () => {
+    const a = makeActors();
+    const half = CAP / 2n + 1n;
+    const instructions = [
+      await launchLabInstruction("buy_exact_in", launchLabParams(a), { amount_in: half, minimum_amount_out: 1n }),
+      await cpmmInstruction("swap_base_output", cpmmParams(a, "buy"), { max_amount_in: half, amount_out: 1n }),
+    ];
+    await expectRefused(tx1(a, ...instructions), makeContext(a), /in total, above the per-trade cap/);
   });
 });

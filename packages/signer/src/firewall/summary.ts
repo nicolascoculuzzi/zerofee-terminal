@@ -10,13 +10,18 @@ function who(address: Address, signer: Address, connectedWallet: Address): strin
 
 export function describeAction(action: SummaryAction, signer: Address, connectedWallet: Address): string {
   switch (action.kind) {
-    case "trade":
+    case "trade": {
+      const rent = action.mayPayVenueRent
+        ? ` If its platform or creator fee vault does not exist yet, ${action.venue} creates it with the trading wallet paying the rent (not refundable).`
+        : "";
       if (action.side === "buy") {
         const amount =
           action.baseAmountIs === "min_out" ? `at least ${formatInteger(action.baseAmount)}` : formatInteger(action.baseAmount);
-        return `Buy on ${action.venue} (${action.instruction}): spend up to ${formatQuote(action.maxQuoteIn ?? 0n, action.quoteMint)} for ${amount} base units of token ${shortAddress(action.baseMint)}.`;
+        return `Buy on ${action.venue} (${action.instruction}): spend up to ${formatQuote(action.maxQuoteIn ?? 0n, action.quoteMint)} for ${amount} base units of token ${shortAddress(action.baseMint)}.${rent}`;
       }
-      return `Sell ${formatInteger(action.baseAmount)} base units of token ${shortAddress(action.baseMint)} on ${action.venue} (${action.instruction}) for at least ${formatQuote(action.minQuoteOut ?? 0n, action.quoteMint)}.`;
+      const sold = action.baseAmountIs === "max_in" ? `up to ${formatInteger(action.baseAmount)}` : formatInteger(action.baseAmount);
+      return `Sell ${sold} base units of token ${shortAddress(action.baseMint)} on ${action.venue} (${action.instruction}) for at least ${formatQuote(action.minQuoteOut ?? 0n, action.quoteMint)}.${rent}`;
+    }
     case "extend_account":
       return `Pay the one-time rent to grow ${action.venue} pool ${shortAddress(action.account)} to its current size (required before trading on an older pool; not refundable).`;
     case "tip":

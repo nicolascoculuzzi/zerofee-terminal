@@ -1,9 +1,10 @@
 /**
  * Builds transactions with @zerofee/core exactly as the CLI and the web app do:
  *   loadTokenState -> buildTrade (or the venue builders) -> planFees -> assembleTransaction -> wire bytes
- * from core's offline mainnet snapshot (packages/core/test/fixtures/mainnet-accounts.json), served
- * through a stub RPC. Only the trading wallet's own accounts (SOL balance, token balance), the wSOL
- * mint and, for re-quoted curves, the quote mint are synthesized.
+ * from core's offline mainnet snapshots (packages/core/test/fixtures/mainnet-accounts.json for pump
+ * and PumpSwap, raydium-mainnet.json for Raydium LaunchLab and CPMM), served through a stub RPC.
+ * Only the trading wallet's own accounts (SOL balance, token balance), the wSOL mint and, for
+ * re-quoted curves, the quote mint are synthesized.
  *
  * Test-only: @zerofee/core is a devDependency of the signer and must never be imported from src/
  * (test/constants-crosscheck.test.ts enforces that).
@@ -28,10 +29,12 @@ import {
   type AmmTradeContext,
   assembleTransaction,
   bondingCurvePda,
+  type CpmmState,
   decodePool,
   type FeeCaps,
   type FeePlan,
   type LandingMode,
+  type LaunchLabState,
   loadTokenState,
   type Pool,
   type PumpCurveState,
@@ -48,6 +51,7 @@ import {
   withBudgetAndTips,
 } from "@zerofee/core";
 import snapshot from "../../../core/test/fixtures/mainnet-accounts.json";
+import raydiumSnapshot from "../../../core/test/fixtures/raydium-mainnet.json";
 import { findAssociatedTokenAddress } from "../../src/firewall/ata";
 import { randomBlockhash } from "./tx";
 
@@ -147,13 +151,19 @@ export interface WalletFixture {
   baseBalance?: bigint;
 }
 
-async function walletAccounts(w: WalletFixture, mint: Address): Promise<Record<string, JsonAccount>> {
+async function walletAccounts(
+  w: WalletFixture,
+  mint: Address,
+  accounts: Readonly<Record<string, JsonAccount>> = SNAPSHOT,
+): Promise<Record<string, JsonAccount>> {
   const out: Record<string, JsonAccount> = {
     [w.user]: { owner: SYSTEM_PROGRAM_ID, lamports: (w.lamports ?? 10_000_000_000n).toString(), data: "" },
     [WSOL_MINT]: mintAccount(0n, 9),
   };
   if (w.baseBalance) {
-    const tokenProgram = address(snapshotAccount(mint).owner);
+    const owner = accounts[mint]?.owner;
+    if (!owner) throw new Error(`${mint} is missing from core's snapshot`);
+    const tokenProgram = address(owner);
     out[await findAssociatedTokenAddress(w.user, mint, tokenProgram)] = tokenAccount(mint, w.user, w.baseBalance, tokenProgram);
   }
   return out;
@@ -204,6 +214,50 @@ export async function loadPoolState(w: WalletFixture, options: { pool?: Partial<
 /** The token program that owns a snapshot mint (both snapshot coins are Token-2022). */
 export function tokenProgramOf(mint: Address): Address {
   return address(snapshotAccount(mint).owner);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Raydium LaunchLab and CPMM (core's raydium-mainnet.json snapshot, 2026-10-03)
+// ---------------------------------------------------------------------------------------------
+
+const RAYDIUM_SNAPSHOT = raydiumSnapshot.accounts as Readonly<Record<string, JsonAccount>>;
+
+/** BONK.fun coin (SPL Token) on its SOL-quoted LaunchLab curve (letsbonk.fun platform). */
+export const LAUNCHLAB_BONK_MINT: Address = address("5ojxCYwee4AgDRH4NxwCEXCGiMiKiYYB5r4Ycdo6bonk");
+/** StonkFun coin (Token-2022 with a 3% transfer fee) on its SOL-quoted LaunchLab curve. */
+export const LAUNCHLAB_STONK_MINT: Address = address("9RAPesjvcxKjGXn7QXvRaNPQ9HhhTZoqBqeZmqEuN1fK");
+/** StonkFun coin (Token-2022, 1% fee) quoted in METAx, and its LaunchLab pool. */
+export const LAUNCHLAB_XSTOCK_MINT: Address = address("GY5YxnQxPB6pPSryEEy9n6vUjJEow341edR5VVj8L2Pd");
+export const LAUNCHLAB_XSTOCK_POOL: Address = address("EkvuyEhr2JHmgMnoNQGzBYw8mAAqgB7W6BBQAkpVTnBS");
+/** METAx: a Token-2022 xStock (8 decimals), the quote of that pool. */
+export const METAX_MINT: Address = address("Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu");
+/** A TRiX LaunchLab pool: another pair's pool, for tampering. */
+export const LAUNCHLAB_TRIX_POOL: Address = address("G5WBxuD4cEjRSVvbxodNtJ7ruDatqwSQwNCMxdFdozZY");
+/** Graduated BONK.fun coin (SPL Token): core resolves it through its LaunchLab pool to the canonical CPMM pool. */
+export const CPMM_BONK_MINT: Address = address("7dmcQ9TyPDcfTTjfCfcZhuwK79FThVuKqmzVM9uKpRhK");
+/** Graduated StonkFun coin (Token-2022, 3% transfer fee) and its CPMM pool. */
+export const CPMM_STONK_MINT: Address = address("9RcvjFss6ePC2gtnmCZ84nCbWydTF7Dux2oJk5gCck8N");
+export const CPMM_STONK_POOL: Address = address("F5MuM3C8PanScX296quAoNcLYGjtt8pN7JkBM3qsiK6Z");
+/** Another CPMM pool (wSOL / an SPL coin), for tampering. */
+export const CPMM_OTHER_POOL: Address = address("9nxAnMD7K78a9RMd2L3w8kQT5u9i7gsvV5aHiZ78sCC2");
+
+async function loadRaydium(w: WalletFixture, mint: Address, poolAddress?: Address) {
+  const accounts = { ...RAYDIUM_SNAPSHOT, ...(await walletAccounts(w, mint, RAYDIUM_SNAPSHOT)) };
+  return loadTokenState(stubRpc(accounts), { mint, user: w.user, ...(poolAddress ? { poolAddress } : {}) });
+}
+
+/** Live-equivalent LaunchLab state for `mint` (core's loadTokenState over the Raydium snapshot). */
+export async function loadLaunchLabState(w: WalletFixture, mint: Address, poolAddress?: Address): Promise<LaunchLabState> {
+  const state = await loadRaydium(w, mint, poolAddress);
+  if (state.venue !== "launchlab") throw new Error(`${mint} is not on a LaunchLab curve in the snapshot (${state.venue})`);
+  return state;
+}
+
+/** Live-equivalent CPMM state for `mint`: through its LaunchLab pool when graduated, or an explicit pool. */
+export async function loadCpmmState(w: WalletFixture, mint: Address, poolAddress?: Address): Promise<CpmmState> {
+  const state = await loadRaydium(w, mint, poolAddress);
+  if (state.venue !== "cpmm") throw new Error(`${mint} did not resolve to a CPMM pool in the snapshot (${state.venue})`);
+  return state;
 }
 
 /** The context buildTrade passes to the curve builders. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createAddressWithSeed } from "@solana/kit";
+import { type AccountMeta, AccountRole, type Address, address, createAddressWithSeed, getBase64Encoder } from "@solana/kit";
 import {
   getAdvanceNonceAccountInstruction,
   getCreateAccountWithSeedInstruction,
@@ -7,11 +7,15 @@ import {
   getWithdrawNonceAccountInstruction,
 } from "@solana-program/system";
 import { getTransferCheckedInstruction } from "@solana-program/token";
+import raydiumSnapshot from "../../core/test/fixtures/raydium-mainnet.json";
+import { startsWith } from "../src/bytes";
 import { findAssociatedTokenAddress } from "../src/firewall/ata";
 import { decodeTransaction } from "../src/firewall/decode";
 import { SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, WSOL_MINT } from "../src/firewall/programs";
 import { createPumpSwapRule, findCanonicalPumpPool } from "../src/firewall/rules/pump";
+import { CPMM_SWAP_INSTRUCTIONS, LAUNCHLAB_SWAP_INSTRUCTIONS } from "../src/firewall/rules/raydium-idl";
 import {
+  DEFAULT_CAPS,
   HELIUS_TIP_ACCOUNTS,
   JITO_TIP_ACCOUNTS,
   LAMPORTS_PER_SOL,
@@ -19,10 +23,35 @@ import {
   makeActors,
   makeContext,
   PROGRAMS,
+  RAYDIUM,
   randomAddress,
 } from "./helpers/fixtures";
 import { ammExtendInstruction, ammInstruction, curveInstruction } from "./helpers/pump";
-import { AMM_COIN, ammBuy, ammParams, ammSell, curveBuyV2, curveParams, curveSellV2, expectAllowed } from "./helpers/scenarios";
+import {
+  CPMM_COIN,
+  cpmmBuy,
+  cpmmInstruction,
+  cpmmParams,
+  cpmmPool,
+  cpmmSell,
+  LAUNCHLAB_COIN,
+  launchLabBuy,
+  launchLabInstruction,
+  launchLabParams,
+  launchLabSellAll,
+  STONK_COIN,
+} from "./helpers/raydium";
+import {
+  AMM_COIN,
+  ammBuy,
+  ammParams,
+  ammSell,
+  curveBuyV2,
+  curveParams,
+  curveSellV2,
+  expectAllowed,
+  expectRefused,
+} from "./helpers/scenarios";
 import {
   buildTransaction,
   computeBudget,
@@ -303,5 +332,219 @@ describe("firewall: allowed transactions", () => {
       const summary = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions, version }), ctx);
       expect(summary.version).toBe(version);
     }
+  });
+});
+
+describe("firewall: allowed Raydium LaunchLab and CPMM transactions", () => {
+  const RENT_LINE =
+    "If its platform or creator fee vault does not exist yet, Raydium LaunchLab creates it with the trading wallet paying the rent (not refundable).";
+  const tradeOf = (summary: Awaited<ReturnType<typeof expectAllowed>>) => summary.actions.find((x) => x.kind === "trade");
+
+  test("LaunchLab buy_exact_in (v0): wrap, buy, unwrap, Jito tip + jitodontfront", async () => {
+    const a = makeActors();
+    const summary = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: await launchLabBuy(a) }), makeContext(a));
+    expect(summary.maxBuyLamports).toBe(200_000_000n);
+    expect(summary.maxBuyQuote).toEqual({});
+    expect(summary.text).toContain(
+      `Buy on Raydium LaunchLab (buy_exact_in): spend up to 0.2 SOL for at least 1,000,000,000 base units of token ${LAUNCHLAB_COIN.slice(0, 4)}…`,
+    );
+    expect(summary.text).toContain(RENT_LINE);
+    expect(summary.text).toContain("plus any fee-vault rent above.");
+    expect(tradeOf(summary)).toEqual({
+      kind: "trade",
+      venue: "Raydium LaunchLab",
+      instruction: "buy_exact_in",
+      side: "buy",
+      baseMint: LAUNCHLAB_COIN,
+      quoteMint: WSOL_MINT,
+      maxQuoteIn: 200_000_000n,
+      baseAmount: 1_000_000_000n,
+      baseAmountIs: "min_out",
+      mayPayVenueRent: true,
+    });
+  });
+
+  test("LaunchLab full exit of a Token-2022 coin (legacy message): sell_exact_in, unwrap, close the coin account", async () => {
+    const a = makeActors();
+    const summary = await expectAllowed(
+      buildTransaction({ feePayer: a.signer, instructions: await launchLabSellAll(a), version: "legacy" }),
+      makeContext(a),
+    );
+    expect(summary.maxBuyLamports).toBe(0n);
+    expect(summary.text).toContain(
+      `Sell 5,000,000,000,000 base units of token ${STONK_COIN.slice(0, 4)}…${STONK_COIN.slice(-4)} on Raydium LaunchLab (sell_exact_in) for at least 0.3 SOL.`,
+    );
+    expect(summary.actions.filter((x) => x.kind === "close_account")).toHaveLength(2);
+  });
+
+  test("LaunchLab buy_exact_out (exact tokens) and sell_exact_out (exact SOL out, base at most)", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const buy = await launchLabInstruction("buy_exact_out", launchLabParams(a), { amount_out: 123_456n, maximum_amount_in: 300_000_000n });
+    const bought = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [buy] }), ctx);
+    expect(bought.maxBuyLamports).toBe(300_000_000n);
+    expect(bought.text).toContain("spend up to 0.3 SOL for 123,456 base units of token");
+    expect(tradeOf(bought)).toMatchObject({ side: "buy", baseAmount: 123_456n, baseAmountIs: "exact_out", maxQuoteIn: 300_000_000n });
+    const sell = await launchLabInstruction("sell_exact_out", launchLabParams(a), {
+      amount_out: 250_000_000n,
+      maximum_amount_in: 2_000_000_000n,
+    });
+    const sold = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [sell] }), ctx);
+    expect(sold.maxBuyLamports).toBe(0n);
+    expect(sold.text).toContain("Sell up to 2,000,000,000 base units of token");
+    expect(sold.text).toContain("(sell_exact_out) for at least 0.25 SOL.");
+    expect(tradeOf(sold)).toMatchObject({ side: "sell", baseAmount: 2_000_000_000n, baseAmountIs: "max_in", minQuoteOut: 250_000_000n });
+  });
+
+  test("LaunchLab pair quoted in a Token-2022 xStock, once the user has configured a cap for it", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a, { caps: { ...DEFAULT_CAPS, maxBuyQuote: { ...DEFAULT_CAPS.maxBuyQuote, [RAYDIUM.xStock]: 10n ** 9n } } });
+    const quote = { quoteMint: RAYDIUM.xStock, quoteTokenProgram: TOKEN_2022_PROGRAM, platformConfig: RAYDIUM.stonkPlatform };
+    const buy = await launchLabInstruction("buy_exact_in", launchLabParams(a, { baseTokenProgram: TOKEN_2022_PROGRAM, ...quote }), {
+      amount_in: 25_000_000n,
+      minimum_amount_out: 10n ** 9n,
+    });
+    const summary = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [buy] }), ctx);
+    expect(summary.maxBuyLamports).toBe(0n);
+    expect(summary.maxBuyQuote).toEqual({ [RAYDIUM.xStock]: 25_000_000n });
+    expect(summary.text).toContain(`spend up to 25,000,000 base units of ${RAYDIUM.xStock.slice(0, 4)}…`);
+  });
+
+  test("CPMM buy of a Token-2022 graduate (swap_base_input, wSOL in) and sell (wSOL out)", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const bought = await expectAllowed(
+      buildTransaction({ feePayer: a.signer, instructions: await cpmmBuy(a, LAMPORTS_PER_SOL / 4n, TOKEN_2022_PROGRAM) }),
+      ctx,
+    );
+    expect(bought.maxBuyLamports).toBe(250_000_000n);
+    expect(bought.text).toContain("Buy on Raydium CPMM (swap_base_input): spend up to 0.25 SOL for at least 7 base units of token");
+    expect(bought.text).not.toContain("fee vault");
+    expect(tradeOf(bought)).toEqual({
+      kind: "trade",
+      venue: "Raydium CPMM",
+      instruction: "swap_base_input",
+      side: "buy",
+      baseMint: CPMM_COIN,
+      quoteMint: WSOL_MINT,
+      maxQuoteIn: 250_000_000n,
+      baseAmount: 7n,
+      baseAmountIs: "min_out",
+    });
+    const sold = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: await cpmmSell(a) }), ctx);
+    expect(sold.maxBuyLamports).toBe(0n);
+    expect(sold.text).toContain("Sell 1,000,000,000 base units of token");
+    expect(sold.text).toContain("on Raydium CPMM (swap_base_input) for at least 0.05 SOL.");
+  });
+
+  test("CPMM swap_base_output both ways: exact tokens out for at most X SOL, exact SOL out for at most Y tokens", async () => {
+    const a = makeActors();
+    const ctx = makeContext(a);
+    const buy = await cpmmInstruction("swap_base_output", cpmmParams(a, "buy"), { max_amount_in: 300_000_000n, amount_out: 10n ** 9n });
+    const bought = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [buy] }), ctx);
+    expect(bought.maxBuyLamports).toBe(300_000_000n);
+    expect(tradeOf(bought)).toMatchObject({ side: "buy", baseAmount: 10n ** 9n, baseAmountIs: "exact_out", maxQuoteIn: 300_000_000n });
+    const sell = await cpmmInstruction("swap_base_output", cpmmParams(a, "sell"), {
+      max_amount_in: 2_000_000_000n,
+      amount_out: 100_000_000n,
+    });
+    const sold = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [sell] }), ctx);
+    expect(sold.text).toContain("Sell up to 2,000,000,000 base units of token");
+    expect(tradeOf(sold)).toMatchObject({ side: "sell", baseAmount: 2_000_000_000n, baseAmountIs: "max_in", minQuoteOut: 100_000_000n });
+  });
+
+  test("residual risk: a CPMM pool on another AmmConfig passes (no canonical CPMM pool offline); its minimum output still binds", async () => {
+    const a = makeActors();
+    const ammConfig = randomAddress();
+    const sell = await cpmmInstruction("swap_base_input", cpmmParams(a, "sell", { ammConfig }), {
+      amount_in: 10n ** 9n,
+      minimum_amount_out: 10n ** 8n,
+    });
+    expect(sell.accounts?.[3]?.address).toBe(await cpmmPool(CPMM_COIN, WSOL_MINT, ammConfig));
+    const summary = await expectAllowed(buildTransaction({ feePayer: a.signer, instructions: [sell] }), makeContext(a));
+    expect(tradeOf(summary)).toMatchObject({ side: "sell", minQuoteOut: 10n ** 8n });
+  });
+
+  test("venue-validated Raydium accounts may come from an operator lookup table", async () => {
+    const a = makeActors();
+    const buy = await launchLabInstruction("buy_exact_in", launchLabParams(a), { amount_in: 10n ** 8n, minimum_amount_out: 1n });
+    const sell = await cpmmInstruction("swap_base_input", cpmmParams(a, "sell"), { amount_in: 10n ** 9n, minimum_amount_out: 1n });
+    const L = (i: number) => buy.accounts![i]!.address;
+    // LaunchLab global_config, base and quote vaults, creator fee vault; CPMM amm_config.
+    const shared = [L(2), L(7), L(8), L(17), sell.accounts![2]!.address];
+    const alt = randomAddress();
+    const tables = { [alt]: shared };
+    const tx = buildTransaction({ feePayer: a.signer, instructions: [buy, sell], lookupTables: tables });
+    const decoded = decodeTransaction(tx, tables);
+    if (!decoded.ok) throw new Error(decoded.violations.join("; "));
+    expect(
+      decoded.tx.accounts
+        .filter((acc) => !acc.isStatic)
+        .map((acc) => acc.address)
+        .sort(),
+    ).toEqual([...shared].sort());
+    await expectAllowed(tx, makeContext(a, { addressLookupTables: tables }));
+  });
+});
+
+describe("firewall: real mainnet Raydium swaps (core's snapshot, each signed top-level by its own fee payer)", () => {
+  type CapturedIx = { where: string; programId: string; accounts: string[]; data: string };
+  const txs = raydiumSnapshot.transactions as unknown as Record<string, { feePayer: string; instructions: CapturedIx[] }>;
+  const b64 = getBase64Encoder();
+  // Instruction roles: LaunchLab payer (s,w) and writable pool / user accounts / vaults / fee vaults; CPMM payer (s).
+  const LAUNCHLAB_WRITABLE = new Set([4, 5, 6, 7, 8, 16, 17]);
+  const CPMM_WRITABLE = new Set([3, 4, 5, 6, 7, 12]);
+
+  const SWAPS = [...LAUNCHLAB_SWAP_INSTRUCTIONS, ...CPMM_SWAP_INSTRUCTIONS].map((d) => Uint8Array.from(d.discriminator));
+
+  /** The capture's swap instruction (top-level or a bot's CPI) as the only instruction of a transaction its fee payer signs. */
+  async function replay(label: string) {
+    const t = txs[label]!;
+    const swaps = t.instructions.flatMap((i) => {
+      const data = new Uint8Array(b64.encode(i.data));
+      const venue = i.programId === PROGRAMS.raydiumLaunchLab || i.programId === PROGRAMS.raydiumCpmm;
+      return venue && SWAPS.some((d) => startsWith(data, d)) ? [{ ...i, bytes: data }] : [];
+    });
+    expect(swaps).toHaveLength(1);
+    const ix = swaps[0]!;
+    const writable = ix.programId === PROGRAMS.raydiumLaunchLab ? LAUNCHLAB_WRITABLE : CPMM_WRITABLE;
+    const accounts: AccountMeta[] = ix.accounts.map((acc, i) => ({
+      address: address(acc),
+      role: i === 0 ? AccountRole.WRITABLE_SIGNER : writable.has(i) ? AccountRole.WRITABLE : AccountRole.READONLY,
+    }));
+    const feePayer: Address = address(t.feePayer);
+    const tx = buildTransaction({ feePayer, instructions: [{ programAddress: address(ix.programId), accounts, data: ix.bytes }] });
+    return {
+      tx,
+      ctx: makeContext({ signer: feePayer, connected: randomAddress(), attacker: randomAddress(), nonceAccount: randomAddress() }),
+    };
+  }
+
+  test.each([
+    ["bonkBuy", "BONK.fun buy_exact_in from the launchpad UI (2KW4kPuc…)"],
+    ["cpmmStonkSell", "graduated StonkFun coin sold on CPMM (3aMQjR9u…)"],
+  ])("%s passes: %s", async (label) => {
+    const { tx, ctx } = await replay(label);
+    await expectAllowed(tx, ctx);
+  });
+
+  test.each([
+    ["bonkSell", /sell_exact_in: token account at position 6 must be the trading wallet's associated token account/],
+    ["bonkChainBuy", /buy_exact_in: token account at position 6 must be the trading wallet's associated token account/],
+    ["bonkChainSell", /sell_exact_in: token account at position 6 must be the trading wallet's associated token account/],
+    ["stonkFeeSell", /sell_exact_in: token account at position 6 must be the trading wallet's associated token account/],
+    ["stonkFeeBuy", /buy_exact_in: minimum tokens out is 0/],
+    ["trixBuy", /buy_exact_in: minimum tokens out is 0/],
+    ["trixSell", /sell_exact_in: minimum output is 0/],
+    ["trixSell2", /sell_exact_in: minimum output is 0/],
+    ["stonkXstockSell", /no per-trade cap is configured for quote mint Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu/],
+    ["create", /no per-trade cap is configured for quote mint Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump/],
+    ["cpmmBonkSell", /swap_base_input: minimum output is 0/],
+    ["cpmmBonkBuy", /swap_base_input: minimum tokens out is 0/],
+    ["cpmmStonkBuy", /swap_base_input: token account at position 4 must be the trading wallet's associated token account/],
+    ["cpmmBaseOutput", /swap_base_output: token account at position 5 must be the trading wallet's associated token account/],
+  ])("%s is refused (temporary non-ATA token accounts, zero minimums from bots, uncapped quote mints)", async (label, pattern) => {
+    const { tx, ctx } = await replay(label);
+    await expectRefused(tx, ctx, pattern);
   });
 });
