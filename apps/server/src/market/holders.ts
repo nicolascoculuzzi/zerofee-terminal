@@ -301,9 +301,10 @@ export class HolderBook {
   }
 
   /**
-   * Metrics as % of `supply` (base units). `circulating` bounds what holders can own in total (tokens outside the
-   * curve / pool, see market/token.ts circulatingBound): a book above it (sells or transfers out it never saw)
-   * has its shares scaled down to the bound, so no share exceeds what is in circulation (never above 100%).
+   * Metrics as % of `supply` (base units). `circulating` bounds what a trade-only book can own in total (tokens
+   * outside the curve / pool, see market/token.ts circulatingBound; a chain-reconciled book is bounded by `supply`):
+   * a book above it (sells or transfers out it never saw) has its shares scaled down to the bound, so no share
+   * exceeds what is in circulation and none is ever above 100%.
    * Cached until the next change.
    */
   metrics(supply: bigint, circulating: bigint | null = null): HolderMetrics {
@@ -311,7 +312,10 @@ export class HolderBook {
       return this.cached.metrics;
     let held = 0n;
     for (const [w, b] of this.balances) if (!this.excluded.has(w)) held += b;
-    const bound = circulating !== null && circulating < supply ? (circulating > 0n ? circulating : 0n) : supply;
+    // A book reconciled from a chain snapshot can be newer than our last trade (and our reserves): only the total
+    // supply bounds it then. A trade-only book is bounded by what our reserves say is in circulation.
+    const bound =
+      this.reconciledSource === null && circulating !== null && circulating < supply ? (circulating > 0n ? circulating : 0n) : supply;
     // 0.5% slack: rounding of fees and transfer fees between our amounts and the chain's
     const overcounted = held > 0n && held > bound + bound / 200n;
     const scale = (x: bigint) => (overcounted ? (x * bound) / held : x);
