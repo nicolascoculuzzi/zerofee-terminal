@@ -213,6 +213,8 @@ export interface TokenSummary {
   feesPaidSol: number | null;
   /** Net buy since creation: SOL bought minus SOL sold, in USD (Pulse "NB", signed). */
   netBuyUsd: number | null;
+  /** Live: the server's trade-history coverage ("backfilling" while it reads older trades from chain). */
+  historyState?: "complete" | "partial" | "backfilling" | "unknown";
   lastTradeAt: number;
   /** Price change over the last 5 minutes, %. */
   change5mPct: number | null;

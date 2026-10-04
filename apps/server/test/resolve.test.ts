@@ -56,7 +56,8 @@ const CFG: ResolveConfig = {
   jupiterProbe: false,
 };
 
-function fixtureRpc(o: { delayMs?: number } = {}) {
+function fixtureRpc(o: { delayMs?: number; accounts?: Record<string, Acc> } = {}) {
+  const all = { ...ACCOUNTS, ...o.accounts };
   const m = mockFetch((_url, body) => {
     if (body?.method !== "getMultipleAccounts") return [200, { jsonrpc: "2.0", id: 1, error: { code: -32601, message: "not mocked" } }];
     const addrs = (body.params?.[0] as string[]) ?? [];
@@ -68,7 +69,7 @@ function fixtureRpc(o: { delayMs?: number } = {}) {
         result: {
           context: { slot: 400_000_000 },
           value: addrs.map((a) => {
-            const f = ACCOUNTS[a];
+            const f = all[a];
             return f ? { owner: f.owner, lamports: Number(f.lamports), data: [f.data, "base64"] } : null;
           }),
         },
@@ -97,8 +98,10 @@ afterEach(() => {
   for (const r of resolvers.splice(0)) r.stop();
 });
 
-function world(o: Omit<Partial<MintResolverDeps>, "cfg"> & { cfg?: Partial<ResolveConfig>; delayMs?: number } = {}): World {
-  const { rpc, calls } = fixtureRpc({ delayMs: o.delayMs });
+function world(
+  o: Omit<Partial<MintResolverDeps>, "cfg"> & { cfg?: Partial<ResolveConfig>; delayMs?: number; accounts?: Record<string, Acc> } = {},
+): World {
+  const { rpc, calls } = fixtureRpc({ delayMs: o.delayMs, accounts: o.accounts });
   const db = openDb(":memory:");
   const writer = new StorageWriter(db, { flushMs: 1_000_000, retentionHours: 72 });
   const reader = new StorageReader(db);
@@ -233,6 +236,17 @@ describe("on-demand resolve per venue", () => {
     expect(out.token).toMatchObject({ launchpad: "other", symbol: "TALUN", priceSol: null });
     expect(out.tradeContext).toBeNull();
     expect(jup.requested).toHaveLength(0); // nothing to walk
+  });
+
+  test("a completed curve without a PumpSwap pool (graduated to Raydium AMM v4) is not priced from the curve", async () => {
+    const curvePda = "2kZ7tEj2ajkHZZGQAiy3jPHu5A7YbcuiEhXvtsZPwBAD";
+    const raw = Buffer.from((ACCOUNTS[curvePda] as Acc).data, "base64");
+    raw[48] = 1; // BondingCurve.complete
+    const accounts = { [curvePda]: { ...(ACCOUNTS[curvePda] as Acc), data: raw.toString("base64") } };
+    const none = world({ accounts, jupiterRoutes: async () => false });
+    expect(await none.r.resolve(CURVE_COIN, "client")).toMatchObject({ ok: false, reason: "no_venue" });
+    const jup = world({ accounts, jupiterRoutes: async () => true });
+    expect(ok(await jup.r.resolve(CURVE_COIN, "client")).token).toMatchObject({ launchpad: "other", priceSol: null });
   });
 
   test("a coin already priced in memory answers without any read", async () => {

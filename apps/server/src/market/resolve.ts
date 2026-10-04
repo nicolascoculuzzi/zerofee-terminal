@@ -343,7 +343,10 @@ export class MintResolver {
     const ll: { address: string; acc: RpcAccount; state: LaunchLabPool } | null =
       this.launchLab(llSolPda, llSolAcc ?? null, mint) ?? this.launchLab(llUsd1Pda, llUsd1Acc ?? null, mint);
 
-    if (curve || pool) await this.applyPump(mint, mintInfo, metaAcc ?? null, curve, curvePda, pool, poolAddr, r1.slot);
+    // A completed curve without a canonical PumpSwap pool graduated elsewhere (Raydium AMM v4, before PumpSwap
+    // existed): the curve's last price is not the market. Jupiter routes those.
+    const curveVenue = curve !== null && !(curve.complete && !pool);
+    if (curveVenue || pool) await this.applyPump(mint, mintInfo, metaAcc ?? null, curve, curvePda, pool, poolAddr, r1.slot);
     else if (ll) {
       await this.applyLaunchLab(mint, mintInfo, metaAcc ?? null, ll, r1.slot);
       // graduated: the CPMM pool and its vaults come through the registry's reads; wait for them

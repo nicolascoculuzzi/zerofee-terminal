@@ -159,6 +159,7 @@ export function adaptToken(t: WireToken, ctx: TokenAdaptContext): TokenSummary {
     netBuyUsd: null,
     lastTradeAt: num(t.lastTradeAt),
     change5mPct: null,
+    historyState: t.historyState ?? t.history?.state,
   };
 }
 

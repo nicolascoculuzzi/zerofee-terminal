@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
+import { EmptyState } from "../../components/ui/bits";
 import { type HotkeyAction, registerHotkey } from "../../lib/hotkeys";
 import { closeTopOverlay } from "../../lib/overlayStack";
 import { buy, sell, sellInitials } from "../../lib/tradeActions";
 import { BREAKPOINT, useMediaQuery } from "../../lib/useMediaQuery";
 import { useSettings } from "../../state/settings";
 import { useToken, useTokenFeed } from "../../state/token";
+import type { MissingReason } from "../../state/tokenResolve";
 import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
 import { TradePanel } from "../trade/TradePanel";
@@ -49,7 +51,7 @@ function Bar({ w, h = "h-2" }: { w: string; h?: string }) {
  * and stat cells, chart toolbar, right rail) with static bars where values will land, so nothing
  * jumps when the data comes in.
  */
-function TokenPageSkeleton() {
+function TokenPageSkeleton({ label = "Loading token…" }: { label?: string }) {
   return (
     <div className="flex h-full flex-col" aria-busy="true">
       <div className="flex h-12 shrink-0 items-center border-b border-hairline bg-surface-1 pl-3">
@@ -69,7 +71,9 @@ function TokenPageSkeleton() {
       <div className="flex min-h-0 flex-1 gap-px bg-hairline">
         <div className="flex min-w-0 flex-1 flex-col bg-surface-1">
           <div className="h-8 shrink-0 border-b border-hairline" />
-          <div className="p-2 text-data text-fg-3">Loading token…</div>
+          <div role="status" className="p-2 text-data text-fg-3">
+            {label}
+          </div>
         </div>
         <div className="hidden w-72 shrink-0 space-y-2 bg-surface-1 p-3 lg:block xl:w-75 2xl:w-80">
           <span aria-hidden="true" className="block h-7 rounded-sm bg-surface-2" />
@@ -82,6 +86,17 @@ function TokenPageSkeleton() {
     </div>
   );
 }
+
+/** What a definitive "no token here" means, in the user's words. */
+const MISSING_COPY: Record<MissingReason, { title: string; body: string }> = {
+  not_a_token: { title: "Not a token", body: "This address isn't an SPL token mint. Paste the token's contract address (CA)." },
+  no_venue: {
+    title: "No market for this token",
+    body: "It has no pump.fun, PumpSwap or Raydium pool, and Jupiter has no route for it right now.",
+  },
+  invalid: { title: "Not a contract address", body: "A Solana token address is 32 to 44 base58 characters." },
+  not_found: { title: "Token not in the live set", body: "An unknown mint, or one the feed has pruned." },
+};
 
 /** Token-page hotkeys (DESIGN.md 6.4). Trade keys need Space held; the shell's dispatcher enforces it. */
 function useTokenHotkeys(mint: string | undefined): void {
@@ -157,6 +172,9 @@ export default function TokenPage() {
   useMaximizeEscape();
   const detail = useToken((s) => s.detail);
   const status = useToken((s) => s.status);
+  const missingReason = useToken((s) => s.missingReason);
+  const redirect = useToken((s) => s.redirect);
+  const navigate = useNavigate();
   const desktop = useMediaQuery(BREAKPOINT.lg);
   const tablet = useMediaQuery(BREAKPOINT.md);
   const wideRail = useMediaQuery(BREAKPOINT.xl);
@@ -177,23 +195,34 @@ export default function TokenPage() {
     useTokenUi.getState().resetForToken();
   }, [mint, setFocusedMint, addRecent]);
 
+  // a pool / pair address (DexScreener, Axiom links): open the coin it trades
+  useEffect(() => {
+    if (redirect && redirect !== mint) navigate(`/t/${redirect}`, { replace: true });
+  }, [redirect, mint, navigate]);
+
   if (!mint || status === "missing") {
+    const copy = MISSING_COPY[missingReason ?? "not_found"];
     return (
-      <div className="flex h-full items-start justify-center bg-surface-1 px-4 pt-16">
-        <div className="flex max-w-80 flex-col items-center gap-1 text-center">
-          <span className="text-body font-medium text-fg-2">Token not in the live set</span>
-          <span className="text-data text-fg-3">An unknown mint, or one the feed has pruned.</span>
-          <Link
-            to="/pulse"
-            className="mt-2 inline-flex h-6 items-center rounded-sm border border-hairline-strong bg-surface-3 px-2 text-data font-medium text-fg-1 transition-colors hover:bg-surface-3-hover"
-          >
-            Back to Pulse
-          </Link>
-        </div>
+      <div className="flex h-full items-start justify-center bg-surface-1 px-4 pt-10">
+        <EmptyState
+          title={copy.title}
+          body={copy.body}
+          action={
+            <Link
+              to="/pulse"
+              className="inline-flex h-6 items-center rounded-sm border border-hairline-strong bg-surface-3 px-2 text-data font-medium text-fg-1 transition-colors hover:bg-surface-3-hover"
+            >
+              Back to Pulse
+            </Link>
+          }
+        />
       </div>
     );
   }
-  if (!ready) return tablet ? <TokenPageSkeleton /> : <MobileTokenSkeleton />;
+  if (!ready) {
+    const label = status === "resolving" ? "Loading from chain…" : undefined;
+    return tablet ? <TokenPageSkeleton label={label} /> : <MobileTokenSkeleton label={label} />;
+  }
 
   if (!tablet) return <MobileToken key={mint} detail={ready} />;
 

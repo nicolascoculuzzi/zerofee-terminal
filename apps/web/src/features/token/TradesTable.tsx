@@ -248,10 +248,13 @@ export function TapeFooter({
   state,
   onRetry,
   sentinelRef,
+  backfilling = false,
 }: {
   state: "idle" | "loading" | "end" | "error";
   onRetry?: () => void;
   sentinelRef?: Ref<HTMLDivElement>;
+  /** The server is still reading the coin's history from chain: the oldest row held is not the start. */
+  backfilling?: boolean;
 }) {
   return (
     <div
@@ -266,7 +269,7 @@ export function TapeFooter({
           Loading older trades
         </>
       )}
-      {state === "end" && <span className="text-fg-4">Start of trade history</span>}
+      {state === "end" && <span className="text-fg-4">{backfilling ? "Loading full history…" : "Start of trade history"}</span>}
       {state === "error" && (
         <>
           Couldn't load older trades
@@ -441,7 +444,9 @@ export function TradesTable({
     if (olderState !== "idle" || !el || !root) return;
     if (el.getBoundingClientRect().top - root.getBoundingClientRect().bottom < 400) loadMore();
   }, [olderState, loadMore]);
-  const tapeFooter = footer ?? (IS_LIVE ? <TapeFooter state={olderState} onRetry={loadMore} sentinelRef={sentinel} /> : null);
+  const backfilling = useToken((s) => s.detail?.summary.historyState === "backfilling");
+  const tapeFooter =
+    footer ?? (IS_LIVE ? <TapeFooter state={olderState} onRetry={loadMore} sentinelRef={sentinel} backfilling={backfilling} /> : null);
 
   // Insertion times: rows present at first render count as old; a row inserted later flashes
   // once (DESIGN.md 6.6), including a batch released after a pause, unless it is an old trade

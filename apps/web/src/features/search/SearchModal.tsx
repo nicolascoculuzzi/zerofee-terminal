@@ -1,5 +1,5 @@
-import { Check, Search, X } from "lucide-react";
-import { Fragment, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowRight, Check, Search, X } from "lucide-react";
+import { type ClipboardEvent, Fragment, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Hotkey, KeyCap } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
@@ -17,6 +17,7 @@ import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
 import { matchAction, type PaletteAction, paletteActions } from "./actions";
 import { type DevHit, findDevs } from "./devs";
+import { mintFromText } from "./mintFromText";
 import { PreviewPane } from "./PreviewPane";
 import { ActionRow, DevRow, ExactRow, GroupLabel, QueryRow, SkeletonRow, TokenRow, WalletRow } from "./rows";
 
@@ -35,7 +36,9 @@ type Item =
   | { kind: "wallet"; key: string; wallet: WalletSearchHit }
   | { kind: "dev"; key: string; dev: DevHit }
   | { kind: "action"; key: string; action: PaletteAction }
-  | { kind: "query"; key: string; query: string };
+  | { kind: "query"; key: string; query: string }
+  /** A pasted / typed contract address (or a link holding one) the search did not find: open it anyway. */
+  | { kind: "open"; key: string; mint: string };
 
 interface Group {
   id: string;
@@ -63,6 +66,7 @@ const LIMIT: Record<Scope, { tokens: number; wallets: number; devs: number; acti
 
 function copyTarget(item: Item | undefined): { text: string; what: string } | null {
   if (!item) return null;
+  if (item.kind === "open") return { text: item.mint, what: "CA" };
   if (item.kind === "token" || item.kind === "exact") return { text: item.token.mint, what: "CA" };
   if (item.kind === "wallet") return { text: item.wallet.address, what: "address" };
   if (item.kind === "dev") return { text: item.dev.address, what: "address" };
@@ -109,6 +113,9 @@ export function SearchModal() {
   const reqId = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const q = query.trim();
+  // a link (pump.fun, DexScreener, Axiom, GMGN ...) searches for the address it holds
+  const pastedMint = useMemo(() => mintFromText(q), [q]);
+  const searchQ = pastedMint ?? q;
 
   // Fresh state every time it opens; actions are built then, so their labels show current state.
   useEffect(() => {
@@ -134,7 +141,8 @@ export function SearchModal() {
     const skeletonTimer = setTimeout(() => setSkeleton(true), SKELETON_AFTER_MS);
     const searchTimer = setTimeout(() => {
       void getServices()
-        .data.search(q, 24)
+        .data.search(searchQ, 24)
+        .catch(() => EMPTY)
         .then((data) => {
           if (id !== reqId.current) return;
           setResults({ q, data });
@@ -147,7 +155,7 @@ export function SearchModal() {
       clearTimeout(searchTimer);
       clearTimeout(skeletonTimer);
     };
-  }, [q]);
+  }, [q, searchQ]);
 
   useEffect(() => {
     if (!copied) return;
@@ -185,7 +193,10 @@ export function SearchModal() {
     // While a newer search is in flight, the previous results stay up (no flicker).
     const data = results.data;
     const limit = LIMIT[scope];
-    const exact = data.tokens.find((t) => t.mint === q);
+    const exact = data.tokens.find((t) => t.mint === searchQ);
+    // not in the index (never seen, or pruned): the token page reads it from chain
+    if (pastedMint && !exact && !pending && limit.tokens > 0)
+      out.push({ id: "open", label: "Contract address", items: [{ kind: "open", key: `o-${pastedMint}`, mint: pastedMint }] });
     if (exact && limit.tokens > 0)
       out.push({ id: "exact", label: "Exact match", items: [{ kind: "exact", key: `x-${exact.mint}`, token: withLive(exact) }] });
     const tokens = data.tokens.filter((t) => t.mint !== exact?.mint).slice(0, limit.tokens);
@@ -206,7 +217,7 @@ export function SearchModal() {
     if (acts.length > 0)
       out.push({ id: "actions", label: "Actions", items: acts.map((action) => ({ kind: "action", key: `a-${action.id}`, action })) });
     return out;
-  }, [q, scope, results, live, recentTokens, recentQueries, actions]);
+  }, [q, scope, results, live, recentTokens, recentQueries, actions, pastedMint, searchQ, pending]);
 
   /** Per-scope counts for the scope row (only while searching). */
   const counts = useMemo(() => {
@@ -233,9 +244,28 @@ export function SearchModal() {
     if (q) useSettings.getState().addRecentSearch(q);
   };
 
+  const openMint = (mint: string) => {
+    remember();
+    useSettings.getState().addRecentToken(mint);
+    close();
+    navigate(`/t/${mint}`);
+  };
+
+  /** Pasting a contract address or a terminal link opens the token at once, indexed or not (like Axiom). */
+  const onPaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    const mint = mintFromText(text);
+    if (!mint || tracked.some((w) => w.address === mint)) return; // a tracked wallet: let the search show it
+    e.preventDefault();
+    openMint(mint);
+  };
+
   const openItem = (item: Item | undefined) => {
     if (!item) return;
     switch (item.kind) {
+      case "open":
+        openMint(item.mint);
+        return;
       case "exact":
       case "token":
         remember();
@@ -368,6 +398,22 @@ export function SearchModal() {
         );
       case "query":
         return <QueryRow key={item.key} {...base} query={item.query} />;
+      case "open":
+        return (
+          <ActionRow
+            key={item.key}
+            {...base}
+            binding={undefined}
+            action={{
+              id: "open",
+              label: `Open ${shortAddr(item.mint)}`,
+              keywords: "",
+              icon: <ArrowRight />,
+              hint: "Load from chain",
+              run: () => openMint(item.mint),
+            }}
+          />
+        );
     }
   };
 
@@ -393,6 +439,7 @@ export function SearchModal() {
             placeholder="Search token, CA, wallet or command"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={onKeyDown}
           />
           {scope !== "all" && (

@@ -355,9 +355,9 @@ export class Gateway {
       if (req.method === "GET" && url.pathname.startsWith("/api/tokens/"))
         return await this.getToken(safeDecode(url.pathname.slice("/api/tokens/".length)), ip);
       if (req.method === "GET" && url.pathname === "/api/search") return this.search(url);
-      if (req.method === "GET" && url.pathname === "/api/candles") return this.getCandles(url);
-      if (req.method === "GET" && url.pathname === "/api/trades") return this.getTrades(url);
-      if (req.method === "GET" && url.pathname === "/api/history") return this.getHistory(url);
+      if (req.method === "GET" && url.pathname === "/api/candles") return this.getCandles(url, ip);
+      if (req.method === "GET" && url.pathname === "/api/trades") return this.getTrades(url, ip);
+      if (req.method === "GET" && url.pathname === "/api/history") return this.getHistory(url, ip);
       if (req.method === "GET" && url.pathname === "/api/program-accounts") {
         const v = this.d.programAccounts?.get();
         return v ? json(v) : apiError(503, "unavailable", "program accounts not loaded yet");
@@ -427,7 +427,13 @@ export class Gateway {
       if (r.ok) return json({ token: r.token, tradeContext: r.tradeContext });
       const headers: Record<string, string> = r.retryAfterSec ? { "retry-after": String(r.retryAfterSec) } : {};
       return json(
-        { error: r.message, code: r.code, ...(r.reason ? { reason: r.reason } : {}), ...(r.redirect ? { redirect: r.redirect } : {}) },
+        {
+          error: r.message,
+          code: r.code,
+          ...(r.reason ? { reason: r.reason } : {}),
+          ...(r.redirect ? { redirect: r.redirect } : {}),
+          ...(r.retryAfterSec ? { retryAfterSec: r.retryAfterSec } : {}),
+        },
         r.status,
         headers,
       );
@@ -469,7 +475,7 @@ export class Gateway {
    * GET /api/candles?mint&tf&from&to&limit: without `from`, the whole stored history (newest `limit` buckets);
    * `next.to` pages older buckets. Asks for a backfill when the coin's history is incomplete.
    */
-  private getCandles(url: URL): Response {
+  private getCandles(url: URL, ip = "unknown"): Response {
     const mint = url.searchParams.get("mint") ?? "";
     const tf = url.searchParams.get("tf") ?? "1m";
     if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
@@ -488,7 +494,7 @@ export class Gateway {
     const more = page.length > limit;
     const candles = more ? page.slice(-limit) : page;
     const supply = this.d.market.summary(mint)?.supply ?? this.d.reader?.token(mint)?.summary.supply ?? 0;
-    const history = this.historyOf(mint, true);
+    const history = this.historyOf(mint, true, ip);
     const body: CandlesResponse = {
       mint,
       tf,
@@ -505,7 +511,7 @@ export class Gateway {
    * GET /api/trades?mint&before&limit: every stored trade of the coin (live and backfilled), newest first, by
    * (slot, tx index, id) keyset. `before` = the previous page's `next`, or a transaction signature.
    */
-  private getTrades(url: URL): Response {
+  private getTrades(url: URL, ip = "unknown"): Response {
     const mint = url.searchParams.get("mint") ?? "";
     if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
     const limit = Math.min(MAX_TRADES_PAGE, Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? 200)) || 200));
@@ -529,26 +535,27 @@ export class Gateway {
       const live = this.d.market.recentTrades(mint, limit).filter((t) => !ids.has(t.id));
       if (live.length) trades = mergeNewestFirst(live, trades).slice(0, limit);
     }
-    const history = this.historyOf(mint, true);
+    const history = this.historyOf(mint, true, ip);
     const body: TradesPageResponse = { mint, trades, next: page.next, history, ...(history ? { historyState: history.state } : {}) };
     return json(body);
   }
 
   /** GET /api/history?mint: coverage, and a backfill request when it is incomplete. */
-  private getHistory(url: URL): Response {
+  private getHistory(url: URL, ip = "unknown"): Response {
     const mint = url.searchParams.get("mint") ?? "";
     if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
-    const history = this.historyOf(mint, true);
+    const history = this.historyOf(mint, true, ip);
     return json({ mint, history, ...(history ? { historyState: history.state } : {}) });
   }
 
   /** A coin's coverage; `view` = a client is looking at it (a backfill is requested when incomplete). */
-  private historyOf(mint: string, view: boolean): TokenHistory | null {
+  private historyOf(mint: string, view: boolean, ip?: string): TokenHistory | null {
     const h = this.d.history;
     if (!h) return null;
     const s = h.state(mint);
     // a coin not in memory is the resolver's: it reads the venues first, then asks for the backfill itself
-    const resolving = this.d.resolve && !this.d.market.tokens.has(mint);
+    const resolving = !!this.d.resolve && !this.d.market.tokens.has(mint);
+    if (view && resolving && ip) void this.d.resolve?.resolve(mint, ip).catch(() => {});
     if (view && !resolving && (!s || s.state === "partial" || s.state === "unknown")) h.request(mint, 0, "view");
     return h.state(mint) ?? s;
   }

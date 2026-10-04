@@ -125,9 +125,9 @@ function ChartSkeleton() {
 }
 
 /** Phone token page before the detail snapshot lands: header, price block, chart and bar shapes. */
-export function MobileTokenSkeleton() {
+export function MobileTokenSkeleton({ label }: { label?: string } = {}) {
   return (
-    <section aria-busy="true" aria-label="Loading token" className="flex h-full flex-col bg-surface-1">
+    <section aria-busy="true" aria-label={label ?? "Loading token"} className="flex h-full flex-col bg-surface-1">
       <div className="flex h-[calc(44px+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-hairline pt-[env(safe-area-inset-top)] pl-11">
         <Skeleton shape="square" size={24} />
         <Skeleton width={72} />
@@ -139,7 +139,13 @@ export function MobileTokenSkeleton() {
       <div className="h-60 shrink-0 border-b border-hairline">
         <ChartSkeleton />
       </div>
-      <div className="min-h-0 flex-1" />
+      <div className="min-h-0 flex-1">
+        {label && (
+          <div role="status" className="p-3 text-data text-fg-3">
+            {label}
+          </div>
+        )}
+      </div>
       <div className="flex h-[calc(64px+env(safe-area-inset-bottom))] shrink-0 items-start gap-2 border-t border-hairline px-3 pt-2.5 pb-[env(safe-area-inset-bottom)]">
         <Skeleton width={72} className="h-11 rounded-sm" />
         <div className="min-w-0 flex-1">
