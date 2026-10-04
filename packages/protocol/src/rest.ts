@@ -4,6 +4,7 @@
  * Market (public):
  *   GET  /api/health                         HealthResponse
  *   GET  /api/perf                           PerfResponse             (latency breakdown, event-loop lag)
+ *   GET  /api/pulse                          PulseBootstrapResponse   (all three Pulse lists, for the first paint)
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
  *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
  *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
@@ -116,6 +117,15 @@ export interface PerfResponse {
   };
   stages: Record<string, PerfStat>;
   spans: Record<string, PerfStat & { totalMs: number; perSecMs: number }>;
+}
+
+/**
+ * GET /api/pulse: the three Pulse lists as the WebSocket snapshots would send them right now (display order).
+ * A bootstrap for the first paint; the `pulse:<column>` topics are the source of truth after that.
+ */
+export interface PulseBootstrapResponse {
+  at: number;
+  columns: { new: TokenSummary[]; final: TokenSummary[]; migrated: TokenSummary[] };
 }
 
 export interface TokenResponse {

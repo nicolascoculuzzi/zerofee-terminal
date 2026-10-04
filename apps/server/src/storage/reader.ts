@@ -80,12 +80,13 @@ export class StorageReader {
       .all(sinceMs, limit) as { mint: string; state: string }[];
   }
 
-  /** Trades of `mints` since `sinceMs`, in chain order (for replay). */
-  *tradesFor(mints: readonly string[], sinceMs: number): Generator<TradeRow> {
-    const q = this.db.query(
-      "SELECT * FROM trades WHERE mint = ? AND block_time >= ? ORDER BY slot, COALESCE(tx_index, 0), received_at, ev_index",
-    );
-    for (const m of mints) for (const r of q.iterate(m, sinceMs) as Iterable<TradeRow>) yield r;
+  /** One token's trades since `sinceMs` received before `receivedBefore`, in chain order (startup replay). */
+  tradesOf(mint: string, sinceMs: number, receivedBefore = Number.MAX_SAFE_INTEGER): TradeRow[] {
+    return this.db
+      .query(
+        "SELECT * FROM trades WHERE mint = ? AND block_time >= ? AND received_at < ? ORDER BY slot, COALESCE(tx_index, 0), received_at, ev_index",
+      )
+      .all(mint, sinceMs, receivedBefore) as TradeRow[];
   }
 
   recentTrades(mint: string, limit: number): Trade[] {

@@ -52,6 +52,7 @@ interface LogsNotification {
 
 export const PROGRAM_IDS = { pump: PUMP_PROGRAM_ID, pumpswap: PUMP_AMM_PROGRAM_ID } as const;
 
+const LOGS_NOTIFICATION_PREFIX = '{"jsonrpc":"2.0","method":"logsNotification"';
 const SLOT_SUB_ID = 1000;
 const SLOT_UPDATES_SUB_ID = 1001;
 
@@ -177,6 +178,13 @@ export class RpcLogsSource implements Source {
     this.stats.messages++;
     this.stats.bytes += raw.length;
     this.stats.lastMessageAt = now;
+    // ~40% of notifications are failed transactions we drop anyway: skip parsing them (`"err":null` only
+    // occurs unescaped as the value's own field; inside a log string the quotes would be escaped).
+    if (raw.startsWith(LOGS_NOTIFICATION_PREFIX) && !raw.includes('"err":null')) {
+      this.stats.notifications++;
+      this.stats.failedTxs++;
+      return;
+    }
     let m: { id?: number; result?: unknown; error?: { message: string }; method?: string; params?: unknown };
     try {
       m = JSON.parse(raw);

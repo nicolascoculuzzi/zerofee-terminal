@@ -1,8 +1,17 @@
 /**
- * Startup restore: reload recent token records and rebuild what lives only in memory (holder books,
- * rolling windows, the trade ring) by replaying stored trades. Holder tracking is restored only for
- * tokens created within `replayHours` (their full trade history is in the trades table); older tokens
- * come back with untracked (null) audit metrics and windows that refill from live trades.
+ * Startup restore, in two phases so the server serves data right away:
+ *
+ *  1. `restoreMarket` (synchronous, before the gateway listens): reload recent token records. Pulse lists,
+ *     token pages and search work from the first request.
+ *  2. `replayHolders` (asynchronous, after ingest started): rebuild what lives only in memory (holder books,
+ *     rolling windows, the trade ring) by replaying stored trades, one token at a time in time-boxed slices
+ *     that yield to the event loop, so live ingest never waits behind it. Only trades received before this
+ *     process started are replayed (live trades are already applied); replayed entries go in front of the
+ *     live ones in the ring.
+ *
+ * Holder tracking is restored only for tokens created within `replayHours` (their full trade history is in
+ * the trades table); older tokens come back with untracked (null) audit metrics and windows that refill
+ * from live trades. Until a token's replay ran, its holder metrics count live trades only.
  */
 import { logger } from "../log";
 import type { OrderKey } from "../market/candles";
@@ -22,13 +31,18 @@ export interface RestoreOptions {
   now: number;
 }
 
-export function restoreMarket(
-  market: MarketState,
-  reader: StorageReader,
-  o: RestoreOptions,
-): { tokens: number; replayed: number; trades: number } {
+export interface RestoreResult {
+  tokens: number;
+  /** Tokens whose holder books the replay rebuilds. */
+  replayed: number;
+  /** Records waiting for `replayHolders`. */
+  pending: TokenRecord[];
+}
+
+/** Phase 1: token records only (fast). */
+export function restoreMarket(market: MarketState, reader: StorageReader, o: RestoreOptions): RestoreResult {
   const t0 = performance.now();
-  const replay: TokenRecord[] = [];
+  const pending: TokenRecord[] = [];
   let tokens = 0;
   for (const row of reader.tokensSince(o.sinceMs)) {
     try {
@@ -39,7 +53,7 @@ export function restoreMarket(
         rec.holders.exclude(rec.pool);
         rec.holders.addDev(rec.creatorAtCreate);
         rec.holders.addDev(rec.creator);
-        replay.push(rec);
+        pending.push(rec);
       }
       market.restore(rec);
       tokens++;
@@ -47,32 +61,78 @@ export function restoreMarket(
       log.warn(`skipping ${row.mint}: ${e instanceof Error ? e.message : e}`);
     }
   }
-  let trades = 0;
-  let group: TradeRow[] = [];
-  const flushGroup = () => {
-    if (!group.length) return;
-    const rec = market.tokens.get((group[0] as TradeRow).mint);
-    const buyers = new Set(group.filter((r) => r.side === 0).map((r) => r.trader));
-    if (rec) for (const r of group) replayTrade(rec, r, buyers);
-    trades += group.length;
-    group = [];
-  };
-  for (const r of reader.tradesFor(
-    replay.map((x) => x.mint),
-    o.replaySinceMs,
-  )) {
-    if (group.length && (group[0] as TradeRow).signature !== r.signature) flushGroup();
-    group.push(r);
-  }
-  flushGroup();
-  perf.span("restore.sync", performance.now() - t0);
-  log.info(
-    `restored ${tokens} tokens, replayed ${trades} trades for ${replay.length} tracked tokens in ${Math.round(performance.now() - t0)} ms`,
-  );
-  return { tokens, replayed: replay.length, trades };
+  const ms = performance.now() - t0;
+  perf.span("restore.tokens", ms);
+  log.info(`restored ${tokens} tokens in ${Math.round(ms)} ms; replaying trades for ${pending.length} tracked tokens in the background`);
+  return { tokens, replayed: pending.length, pending };
 }
 
-function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): void {
+export interface ReplayOptions {
+  replaySinceMs: number;
+  /** Trades received at or after this time are live (already applied): not replayed. */
+  receivedBefore: number;
+  /** Work per slice before yielding to the event loop (ms). */
+  sliceMs?: number;
+  /** Yield between slices (tests pass a synchronous no-op). */
+  yieldFn?: () => Promise<void>;
+  /** Stop early (server shutdown). */
+  cancelled?: () => boolean;
+}
+
+const nextTick = () => new Promise<void>((r) => setImmediate(r));
+
+/** Phase 2: replays stored trades into the pending records' holder books, windows and trade rings. */
+export async function replayHolders(
+  market: MarketState,
+  reader: StorageReader,
+  pending: readonly TokenRecord[],
+  o: ReplayOptions,
+): Promise<{ tokens: number; trades: number; ms: number }> {
+  const started = performance.now();
+  const sliceMs = o.sliceMs ?? 8;
+  const yieldFn = o.yieldFn ?? nextTick;
+  let trades = 0;
+  let tokens = 0;
+  let sliceStart = performance.now();
+  for (const rec of pending) {
+    if (o.cancelled?.()) break;
+    // the token may have been evicted or replaced meanwhile
+    if (market.tokens.get(rec.mint) !== rec || !rec.holders) continue;
+    const t0 = performance.now();
+    const rows = reader.tradesOf(rec.mint, o.replaySinceMs, o.receivedBefore);
+    const entries: TradeEntry[] = [];
+    let group: TradeRow[] = [];
+    const flushGroup = () => {
+      if (!group.length) return;
+      const buyers = new Set(group.filter((r) => r.side === 0).map((r) => r.trader));
+      for (const r of group) entries.push(replayTrade(rec, r, buyers));
+      group = [];
+    };
+    for (const r of rows) {
+      if (group.length && (group[0] as TradeRow).signature !== r.signature) flushGroup();
+      group.push(r);
+    }
+    flushGroup();
+    if (entries.length) {
+      // replayed trades are older than anything live: they go first, the ring keeps its newest 200
+      const ring = entries.concat(rec.trades);
+      rec.trades = ring.length > 200 ? ring.slice(ring.length - 200) : ring;
+      market.touchToken(rec.mint);
+    }
+    trades += rows.length;
+    tokens++;
+    perf.span("restore.replayToken", performance.now() - t0);
+    if (performance.now() - sliceStart >= sliceMs) {
+      await yieldFn();
+      sliceStart = performance.now();
+    }
+  }
+  const ms = Math.round(performance.now() - started);
+  log.info(`replayed ${trades} trades for ${tokens} tracked tokens in ${ms} ms (in the background)`);
+  return { tokens, trades, ms };
+}
+
+function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): TradeEntry {
   const isBuy = r.side === 0;
   const amount = BigInt(r.token_amount);
   const delta = isBuy ? amount : -amount;
@@ -83,7 +143,7 @@ function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): void
   rec.windows.add(r.block_time, r.amount_sol ?? 0, isBuy);
   const trade = rowToTrade(r);
   trade.tags = rec.holders ? rec.holders.tagsOf(r.trader) : [];
-  const entry: TradeEntry = {
+  return {
     trade,
     key: [r.slot, r.tx_index ?? 0, r.ev_index] as OrderKey,
     tsMs: r.block_time,
@@ -95,6 +155,4 @@ function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): void
     priceSol: r.price_sol ?? 0,
     solUsd: null,
   };
-  rec.trades.push(entry);
-  if (rec.trades.length > 200) rec.trades.shift();
 }

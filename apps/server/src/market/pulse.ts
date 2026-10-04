@@ -74,6 +74,13 @@ export class PulseBoard {
   private readonly column = new Map<string, PulseColumn>();
   private readonly published: Record<PulseColumn, Map<string, TokenSummary>> = { new: new Map(), final: new Map(), migrated: new Map() };
   private readonly orderDirty: Record<PulseColumn, boolean> = { new: true, final: true, migrated: true };
+  /** Bumped whenever a column's published list changes (snapshot caches key on it). */
+  readonly version: Record<PulseColumn, number> = { new: 0, final: 0, migrated: 0 };
+  private readonly snapshotCache: Record<PulseColumn, { version: number; json: string } | null> = {
+    new: null,
+    final: null,
+    migrated: null,
+  };
 
   constructor(private readonly cfg: PulseConfig) {}
 
@@ -153,6 +160,7 @@ export class PulseBoard {
         }
         pub.set(mint, s);
       }
+      if (delta.upsert.length || delta.remove.length) this.version[col]++;
       out[col] = delta;
     }
     return out;
@@ -175,6 +183,18 @@ export class PulseBoard {
       if (best.length > n) best.pop();
     }
     return best.map(([mint]) => mint);
+  }
+
+  /**
+   * The column's published list as JSON (`snapshot(col)` serialized), cached until the list changes: every
+   * client connecting between two flushes shares one serialization.
+   */
+  snapshotJson(col: PulseColumn): string {
+    const c = this.snapshotCache[col];
+    if (c && c.version === this.version[col]) return c.json;
+    const json = JSON.stringify(this.snapshot(col));
+    this.snapshotCache[col] = { version: this.version[col], json };
+    return json;
   }
 
   /** Current published list in display order (full summaries as last published). */

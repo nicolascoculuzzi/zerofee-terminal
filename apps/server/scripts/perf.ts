@@ -15,7 +15,8 @@
  *   bun run perf --clients 5 --json out.json --profile
  *
  * Flags: --minutes N (3), --clients N (1), --db PATH (copied, never modified), --save-db PATH, --port N,
- * --json PATH, --profile (Bun --cpu-prof-md into the run's temp dir), --quiet (no server log tail).
+ * --json PATH, --profile (Bun --cpu-prof-md into the run's temp dir), --quiet (no server log tail),
+ * --fresh-pglite (initialise a new PGlite user database instead of reusing $TMPDIR/zf-perf-pglite).
  * Extra server settings pass through the environment (e.g. ENRICH_ENABLED=false bun run perf).
  */
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -32,10 +33,11 @@ interface Args {
   json: string | null;
   profile: boolean;
   quiet: boolean;
+  freshPglite: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { minutes: 3, clients: 1, db: null, saveDb: null, port: 0, json: null, profile: false, quiet: false };
+  const a: Args = { minutes: 3, clients: 1, db: null, saveDb: null, port: 0, json: null, profile: false, quiet: false, freshPglite: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = () => {
@@ -51,6 +53,7 @@ function parseArgs(argv: string[]): Args {
     else if (k === "--json") a.json = resolve(v());
     else if (k === "--profile") a.profile = true;
     else if (k === "--quiet") a.quiet = true;
+    else if (k === "--fresh-pglite") a.freshPglite = true;
     else throw new Error(`unknown flag ${k}`);
   }
   if (!(a.minutes > 0)) throw new Error("--minutes must be > 0");
@@ -222,7 +225,8 @@ async function main(): Promise<void> {
     SERVER_HOST: "127.0.0.1",
     SERVER_PORT: String(port),
     DB_PATH: dbPath,
-    PGLITE_DIR: join(dir, "pglite"),
+    // a persistent PGlite dir (as in development): a fresh one adds ~4 s of initdb to every start
+    PGLITE_DIR: args.freshPglite ? join(dir, "pglite") : join(tmpdir(), "zf-perf-pglite"),
     LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
     PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${port}`,
   };
@@ -297,6 +301,7 @@ async function main(): Promise<void> {
   console.log(row("detect.launch", s["detect.launch"], "block time -> socket receive (1 s floor)"));
   console.log(row("detect.trade", s["detect.trade"], "block time -> socket receive (1 s floor)"));
   console.log(row("rpc.afterSlot", s["rpc.afterSlot"], "slotNotification -> logs notification"));
+  console.log(row("rpc.streamBehindSlots", s["rpc.streamBehindSlots"], "SLOTS: HTTP confirmed - streamed tip (>0 = stream backlog)"));
   console.log(row("ingest.queue", s["ingest.queue"], "receive -> decode start", 1));
   console.log(row("ingest.decode", s["ingest.decode"], "per tx", 3));
   console.log(row("gateway.pulseWait", s["gateway.pulseWait"], "state change -> Pulse publish"));

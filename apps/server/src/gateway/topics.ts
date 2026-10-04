@@ -56,6 +56,11 @@ export class TopicHub {
     return JSON.stringify({ type: "snapshot", topic: wireTopic, seq: this.seq(topic), data });
   }
 
+  /** Snapshot message whose `data` is already serialized JSON (cached snapshots). */
+  snapshotRaw(topic: string, dataJson: string): string {
+    return `{"type":"snapshot","topic":${JSON.stringify(topic)},"seq":${this.seq(topic)},"data":${dataJson}}`;
+  }
+
   /** Publishes a delta / correction to subscribers; returns false (and does not advance) when nobody listens. */
   publish(topic: string, type: "delta" | "correction", data: unknown, reason?: CorrectionReason, wireTopic: string = topic): boolean {
     if (!this.hasSubscribers(topic)) return false;

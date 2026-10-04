@@ -148,6 +148,7 @@ export class Gateway {
   private readonly lastToken = new Map<string, TokenSummary>();
   private readonly recentFeed: FeedItem[] = [];
   private pendingChain: ChainDelta | null = null;
+  private bootstrapCache: { key: string; body: string; gzip: Uint8Array | null } | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   private connections = 0;
   readonly stats = { connections: 0, messagesIn: 0, rejected: 0, backpressureCloses: 0 };
@@ -323,6 +324,7 @@ export class Gateway {
     try {
       if (req.method === "GET" && url.pathname === "/api/health") return json(perf.time("api.health", () => this.d.health()));
       if (req.method === "GET" && url.pathname === "/api/perf") return json(perf.report());
+      if (req.method === "GET" && url.pathname === "/api/pulse") return this.pulseBootstrap(req);
       if (req.method === "GET" && url.pathname === "/metrics") {
         const r = this.d.metrics?.handle(req, server.requestIP(req)?.address ?? null);
         if (r) return r;
@@ -365,6 +367,32 @@ export class Gateway {
       log.error(`${req.method} ${url.pathname} failed: ${e instanceof Error ? e.message : e}`);
       return apiError(500, "internal", "internal error");
     }
+  }
+
+  /**
+   * GET /api/pulse: all three Pulse lists in one response (PulseBootstrapResponse), from the same cached
+   * snapshots the WebSocket sends. The page fetches it in parallel with its JavaScript (index.html preload),
+   * so rows can render before the socket is up; the socket's snapshots then take over. gzip when accepted.
+   */
+  private pulseBootstrap(req: Request): Response {
+    const t0 = performance.now();
+    const p = this.d.pulse;
+    const key = `${p.version.new}|${p.version.final}|${p.version.migrated}`;
+    let c = this.bootstrapCache;
+    if (!c || c.key !== key) {
+      const body = `{"at":${Date.now()},"columns":{"new":${p.snapshotJson("new")},"final":${p.snapshotJson("final")},"migrated":${p.snapshotJson("migrated")}}}`;
+      c = { key, body, gzip: null };
+      this.bootstrapCache = c;
+    }
+    const headers: Record<string, string> = { "content-type": "application/json", "cache-control": "no-store", vary: "accept-encoding" };
+    let out: string | Uint8Array = c.body;
+    if (/\bgzip\b/.test(req.headers.get("accept-encoding") ?? "") && c.body.length > 1024) {
+      c.gzip ??= Bun.gzipSync(new TextEncoder().encode(c.body), { level: 4 });
+      out = c.gzip;
+      headers["content-encoding"] = "gzip";
+    }
+    perf.span("api.pulse", performance.now() - t0);
+    return new Response(out as BodyInit, { headers });
   }
 
   private getToken(mint: string): Response {
@@ -492,10 +520,15 @@ export class Gateway {
     }
     // Snapshot and subscribe in one synchronous step: no publish can interleave.
     const t0 = performance.now();
-    const data = parsed
-      ? this.snapshotData(topic as Topic, parsed)
-      : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
-    ws.send(this.hub.snapshot(topic, data));
+    if (parsed?.kind === "pulse") {
+      // precomputed: one serialization per list change, shared by every connecting client
+      ws.send(this.hub.snapshotRaw(topic, `{"tokens":${this.d.pulse.snapshotJson(parsed.column)}}`));
+    } else {
+      const data = parsed
+        ? this.snapshotData(topic as Topic, parsed)
+        : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
+      ws.send(this.hub.snapshot(topic, data));
+    }
     perf.span(`gateway.snapshot.${parsed?.kind ?? "debug"}`, performance.now() - t0);
     if (!ws.data.subs.has(topic)) {
       ws.data.subs.set(topic, topic);
