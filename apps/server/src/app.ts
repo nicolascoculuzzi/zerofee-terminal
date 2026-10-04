@@ -24,6 +24,7 @@ import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
 import { Metrics } from "./metrics";
+import { createOrderService, type OrderService, type OrderServiceOverrides } from "./orders";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
@@ -51,6 +52,8 @@ export interface AppOverrides {
    * Without it the gateway is anonymous-only. The app starts it and stops it with itself.
    */
   user?: UserLayer | null;
+  /** Armed-orders engine seams (tests: recording lanes, fake chain reads, pinned lookup tables). */
+  orders?: OrderServiceOverrides;
 }
 
 export interface App {
@@ -68,6 +71,8 @@ export interface App {
   reconciler: Reconciler | null;
   enricher: Enricher | null;
   user: UserLayer | null;
+  /** Armed-orders engine (with the accounts layer and ORDERS_ENABLED); `ready` settles once it loaded. */
+  orders: (OrderService & { ready: Promise<void> }) | null;
   metrics: Metrics;
   health(): HealthResponse;
   stop(): Promise<void>;
@@ -166,10 +171,12 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
   if (reconciler) reconciler.onMismatch = (mm) => log.info(`pumpportal mismatch ${JSON.stringify(mm)}`);
 
+  let orders: (OrderService & { ready: Promise<void> }) | null = null;
   const sink: IngestSink = {
     tx: (tx) => {
       m.applyTx(tx);
       o.user?.trackers.onTx(tx);
+      orders?.engine.onIngestTx(tx);
       if (reconciler) {
         for (const ev of tx.events) {
           if (ev.kind !== "pumpCreate" && ev.kind !== "pumpMigrate") continue;
@@ -332,6 +339,23 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       : undefined,
     metrics,
   });
+  if (user && cfg.orders.enabled) {
+    const svc = createOrderService({
+      cfg,
+      user,
+      market: m,
+      pools: resolver.pools,
+      programAccounts,
+      chain,
+      rpc,
+      publish: (userId, delta) => gateway?.publishOrders(userId, delta),
+      fetchFn: o.fetchFn,
+      overrides: o.orders,
+    });
+    user.api.add(svc.routes);
+    user.attachCopyExits(svc.engine);
+    orders = { ...svc, ready: Promise.resolve() };
+  }
 
   // start
   writer.start();
@@ -340,6 +364,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   metrics.start();
   user?.trackers.attachHub(gateway.hub);
   user?.start();
+  if (orders) {
+    orders.ready = orders.start().catch((e) => log.error(`armed-orders engine failed to start: ${e instanceof Error ? e.message : e}`));
+  }
   solUsd?.start();
   if (o.pollers !== false) {
     chain.start();
@@ -363,7 +390,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         pulse.columnOf(mint) !== null ||
         (gateway?.isWatched(mint) ?? false) ||
         (user?.alerts.watches(mint) ?? false) ||
-        (user?.trackers.watchesMint(mint) ?? false),
+        (user?.trackers.watchesMint(mint) ?? false) ||
+        (orders?.engine.watches(mint) ?? false),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);
@@ -383,6 +411,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     reconciler,
     enricher,
     user,
+    orders,
     metrics,
     health,
     async stop() {
@@ -390,6 +419,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
       metrics.stop();
+      await orders?.engine.stop();
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();

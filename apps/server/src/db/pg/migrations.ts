@@ -307,6 +307,79 @@ export const MIGRATIONS: readonly Migration[] = [
         WHERE status IN ('pending', 'executed', 'failed', 'declined', 'expired');
     `,
   },
+  {
+    version: 3,
+    name: "armed orders engine",
+    up: `
+      -- The v1 placeholders were never written: replace them with the engine's schema.
+      DROP TABLE armed_orders;
+      DROP TABLE nonce_slots;
+
+      -- One row per armed order. data is the whole @zerofee/core ArmedOrder (bigints tagged
+      -- {"$bigint": "..."}): the validated metadata plus the pre-signed variants and cancels. The other
+      -- columns index it. open = a nonce of the order is unconsumed (the engine keeps watching it and its
+      -- reservation is held), which can outlive a terminal status while fired cancels land.
+      CREATE TABLE armed_orders (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        wallet TEXT NOT NULL,
+        mint TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('limit-buy', 'limit-sell', 'take-profit', 'stop-loss', 'trailing-stop',
+                                           'dca-tranche', 'migration-snipe', 'dev-sell-exit')),
+        side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+        status TEXT NOT NULL CHECK (status IN ('armed', 'submitted', 'filled', 'failed-consumed', 'stale', 'cancelled')),
+        open BOOLEAN NOT NULL,
+        oco_group TEXT,
+        -- Durable-nonce accounts of every attempt (JSON array of base58 strings).
+        nonce_accounts JSONB NOT NULL,
+        data JSONB NOT NULL,
+        -- The protocol Order view (no signed bytes), rewritten with every change: lists and snapshots read only this.
+        view JSONB NOT NULL,
+        -- Trigger engine state: trailing high-water mark, migration seen, dev sold (bigints tagged as in data).
+        trigger_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+        -- Signature of the variant that filled.
+        signature TEXT,
+        status_reason TEXT,
+        -- The engine only simulated its submission (DRY_RUN).
+        dry_run BOOLEAN NOT NULL DEFAULT false,
+        version INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX armed_orders_user_created ON armed_orders (user_id, created_at DESC);
+      CREATE INDEX armed_orders_open_mint ON armed_orders (mint) WHERE open;
+      CREATE INDEX armed_orders_open_wallet ON armed_orders (wallet) WHERE open;
+      CREATE INDEX armed_orders_nonce_accounts ON armed_orders USING GIN (nonce_accounts jsonb_path_ops);
+
+      -- Durable-nonce accounts the engine has seen, one row per account. A slot belongs to the first account
+      -- (user) that armed it: its authority is that user's trading wallet. status: in-use (an open order is
+      -- bound to it), free, missing (closed on chain). nonce_value is the last value seen.
+      CREATE TABLE nonce_slots (
+        nonce_account TEXT PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        wallet TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('in-use', 'free', 'missing')),
+        nonce_value TEXT,
+        order_id UUID REFERENCES armed_orders(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
+      CREATE INDEX nonce_slots_user ON nonce_slots (user_id);
+
+      -- What happened to each order: arming, submissions and lane acks, simulations, which transaction
+      -- consumed each nonce, cancels fired, staleness findings.
+      CREATE TABLE armed_order_events (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        order_id UUID NOT NULL REFERENCES armed_orders(id) ON DELETE CASCADE,
+        at TIMESTAMPTZ NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        message TEXT NOT NULL DEFAULT '',
+        detail JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX armed_order_events_order ON armed_order_events (order_id, id);
+    `,
+  },
 ];
 
 export interface MigrateResult {

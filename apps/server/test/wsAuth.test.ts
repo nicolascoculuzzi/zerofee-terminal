@@ -4,7 +4,7 @@
  * when the session is revoked or expires.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { WalletSnapshot } from "@zerofee/protocol";
+import type { Order, WalletSnapshot } from "@zerofee/protocol";
 import { WS_CLOSE_SESSION_ENDED } from "../src/gateway/server";
 import { addr } from "./helpers";
 import { Browser, startUserApp, type UserTestEnv, WsClient } from "./userHelpers";
@@ -69,19 +69,31 @@ describe("signed-in sockets", () => {
     expect(snapA.data).toEqual({ orders: [] });
 
     const aliceId = (await env.user.store.users.byWallet(aliceMe.wallet))?.id as string;
-    const order = {
+    const order: Order = {
       id: "o1",
-      kind: "stop_loss" as const,
-      status: "armed" as const,
+      wallet: addr("tw"),
+      kind: "stop-loss",
+      side: "sell",
       mint: addr("m"),
-      side: "sell" as const,
       amount: "1",
-      trigger: { metric: "mc_sol" as const, op: "lte" as const, value: 10 },
-      nonceAccount: null,
+      fullExit: true,
+      trigger: { type: "quote-at-most", threshold: "10" },
+      ocoGroup: null,
+      status: "armed",
+      statusReason: null,
+      flags: [],
+      attempts: [],
+      venues: ["pump"],
+      armingQuoteOut: "20",
+      armedAt: 1,
+      reservation: { lamports: "0", tokens: "1" },
+      capCost: { buyLamports: "0", feeLamports: "0" },
       signature: null,
+      highWater: null,
+      open: true,
+      dryRun: false,
       createdAt: 1,
       updatedAt: 1,
-      error: null,
     };
     expect(env.app.gateway.publishOrders(aliceId, { upsert: [order], remove: [] })).toBe(true);
     const delta = await a.next((m) => m.topic === "orders" && m.type === "delta");

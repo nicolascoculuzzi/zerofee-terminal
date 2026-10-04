@@ -1,6 +1,6 @@
-/** Users, sessions, trading wallets and (read-only for now) armed orders. */
-import type { Order, OrderKind, OrderStatus, OrderTrigger, TradingWallet } from "@zerofee/protocol";
-import { iso, type PgDriver, type Row, toInt, toJson, toMs, toStrOrNull } from "./driver";
+/** Users, sessions and trading wallets. Armed orders live in orders/repo.ts. */
+import type { TradingWallet } from "@zerofee/protocol";
+import { iso, type PgDriver, type Row, toInt, toMs } from "./driver";
 import { assertWithinLimit, lockUser } from "./limits";
 
 export interface UserRecord {
@@ -207,36 +207,6 @@ export class UsersRepo {
       [userId, address],
     );
     return rows.length > 0;
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // armed orders: read-only until the Phase 5 engine writes them
-  // -------------------------------------------------------------------------------------------
-
-  async listOrders(userId: string, limit = 500): Promise<Order[]> {
-    const rows = await this.db.query(
-      `SELECT o.id, o.kind, o.status, o.mint, o.side, o.amount, o.trigger, o.signature, o.error, o.created_at, o.updated_at,
-              n.nonce_account
-       FROM armed_orders o LEFT JOIN nonce_slots n ON n.id = o.nonce_slot_id
-       WHERE o.user_id = $1::uuid
-       ORDER BY o.created_at DESC
-       LIMIT $2`,
-      [userId, limit],
-    );
-    return rows.map((r) => ({
-      id: String(r.id),
-      kind: String(r.kind) as OrderKind,
-      status: String(r.status) as OrderStatus,
-      mint: String(r.mint),
-      side: String(r.side) as "buy" | "sell",
-      amount: String(r.amount),
-      trigger: toJson<OrderTrigger>(r.trigger),
-      nonceAccount: toStrOrNull(r.nonce_account),
-      signature: toStrOrNull(r.signature),
-      createdAt: toMs(r.created_at),
-      updatedAt: toMs(r.updated_at),
-      error: toStrOrNull(r.error),
-    }));
   }
 }
 

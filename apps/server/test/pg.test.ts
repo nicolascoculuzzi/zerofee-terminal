@@ -41,6 +41,7 @@ describe("migrations through Bun.sql (production path)", () => {
         "admin_audit_log",
         "alert_deliveries",
         "alerts",
+        "armed_order_events",
         "armed_orders",
         "blacklists",
         "copy_signals",
@@ -195,19 +196,6 @@ describe.each(DRIVERS)("$name", ({ open }) => {
       expect(await store.users.ownsWallet(u.id, addr("someone-else"))).toBe(false);
       expect(await store.users.deleteTradingWallet(u.id, k1)).toBe(true);
       expect(await store.users.ownsWallet(u.id, k1)).toBe(false);
-    });
-
-    test("armed orders (placeholder table) feed the orders snapshot", async () => {
-      const u = await store.users.upsertOnLogin(addr("pg-user-orders"), T0);
-      expect(await store.users.listOrders(u.id)).toEqual([]);
-      await t.db.query(
-        `INSERT INTO armed_orders (id, user_id, kind, status, mint, side, amount, trigger, created_at, updated_at)
-         VALUES ($1::uuid, $2::uuid, 'take_profit', 'armed', $3, 'sell', '1000', $4::text::jsonb, $5::timestamptz, $5::timestamptz)`,
-        [crypto.randomUUID(), u.id, addr("mint"), JSON.stringify({ metric: "mc_sol", op: "gte", value: 500 }), iso(T0)],
-      );
-      const [o] = await store.users.listOrders(u.id);
-      expect(o).toMatchObject({ kind: "take_profit", status: "armed", side: "sell", amount: "1000", nonceAccount: null });
-      expect(o?.trigger).toEqual({ metric: "mc_sol", op: "gte", value: 500 });
     });
   });
 
