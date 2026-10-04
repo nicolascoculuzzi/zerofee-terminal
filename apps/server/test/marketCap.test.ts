@@ -163,3 +163,46 @@ describe("mayhem coins: market caps use the 2B mint supply, not the curve's 1e15
     }
   });
 });
+
+describe("a token's quote follows the pool that prices it", () => {
+  const GMK6 = "GMk6j2defJhS7F194toqmJNFNhAkbDXhYJo5oR3Rpump";
+  const PUMP = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
+  const WSOL = "So11111111111111111111111111111111111111112";
+  const TOKENKEG = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  // the arbitrage's sell leaves the canonical pool at (vault - quote out, base + base in)
+  const canonicalPrice = (248_588_143_374 - 5_831_866) / 1e9 / ((241_755_705_265_302 + 5_683_077_877) / 1e6);
+
+  async function pools() {
+    const base = mintResolved("gmk6-mint");
+    const thirdParty = await poolResolved("gmk6-pump-pool", base, mintResolved("pump-mint"));
+    const canonical = await poolResolved("gmk6-canonical-pool", base, { decimals: 9, tokenProgram: TOKENKEG });
+    return { thirdParty, canonical };
+  }
+
+  for (const order of ["third-party pool first", "canonical pool first"] as const) {
+    test(`GMk6/PUMP arbitrage against the canonical GMk6/wSOL pool (${order})`, async () => {
+      const { thirdParty, canonical } = await pools();
+      expect(thirdParty).toMatchObject({ quoteMint: PUMP, quoteDecimals: 6, isCanonical: false });
+      expect(canonical).toMatchObject({ quoteMint: WSOL, quoteDecimals: 9, isCanonical: true });
+      const { m, resolver } = market();
+      const tx = mcLogs("arb-third-party-pool"); // event 0: buy in the PUMP pool, event 1: sell in the canonical pool
+      m.applyTx(tx);
+      expect(m.pendingPoolEvents).toBe(2);
+      for (const p of order === "third-party pool first" ? [thirdParty, canonical] : [canonical, thirdParty]) {
+        resolver.learnPool(p);
+        m.onPoolReady(p);
+      }
+      const s = m.summary(GMK6);
+      expect(s).toMatchObject({ quoteMint: WSOL, launchpad: "pump", migrated: true, pool: canonical.pool });
+      expect(s?.priceSol).toBeCloseTo(canonicalPrice, 15);
+      expect(s?.mcSol).toBeCloseTo(canonicalPrice * 988_481_743.497611, 6);
+      expect(s?.mcUsd).toBeCloseTo((s?.mcSol ?? 0) * SOL_USD, 4);
+      expect(m.tokens.get(GMK6)).toMatchObject({ quoteDecimals: 9, quoteTokenProgram: TOKENKEG });
+      // each trade is valued in its own pool's quote: wSOL is SOL, PUMP has no SOL value
+      const trade = (i: number) => m.recentTrades(GMK6).find((t) => t.id === `${tx.signature}:${i}`);
+      expect(trade(1)?.priceSol).toBeCloseTo(canonicalPrice, 15);
+      expect(trade(1)?.amountSol).toBeCloseTo(5_843_554 / 1e9, 12);
+      expect(trade(0)?.priceSol).toBe(0);
+    });
+  }
+});
