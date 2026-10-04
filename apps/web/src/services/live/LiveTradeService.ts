@@ -43,8 +43,20 @@ import type {
 } from "@zerofee/protocol";
 import type { TradeExpectation } from "@zerofee/signer";
 import type { LandingPreset, LatencyBreakdown, Order, TradeRoute } from "../../protocol";
-import type { BuyRequest, SellRequest, TradeProgress, TradeReceipt, TradeService, TradeStage } from "../tradeService";
+import { useSettings } from "../../state/settings";
+import type {
+  BuyRequest,
+  LimitOrderRequest,
+  MigrationOrderRequest,
+  SellRequest,
+  TpSlRequest,
+  TradeProgress,
+  TradeReceipt,
+  TradeService,
+  TradeStage,
+} from "../tradeService";
 import { ApiError, api } from "./api";
+import { type ArmedDeps, ArmingRefused, LiveArmedOrders } from "./armed";
 import { firstSignature } from "./bytes";
 import type { LiveDataSource } from "./LiveDataSource";
 import { walletErrorMessage } from "./LiveWalletService";
@@ -73,6 +85,8 @@ export interface LiveTradeDeps {
   lookupTables?: (addresses: string[]) => Promise<LookupTablesResponse>;
   /** Jupiter `/build` client options (fetch, optional API key). */
   jupiter?: JupiterTradeOptions;
+  /** REST transport for the armed-order endpoints (tests stub it). */
+  rest?: ArmedDeps["rest"];
   now?: () => number;
   landTimeoutMs?: number;
 }
@@ -82,6 +96,7 @@ type LiveSignerCall = (
   params: {
     walletId: string;
     transaction: Uint8Array;
+    ownedNonceAccounts?: readonly string[];
     addressLookupTables?: Readonly<Record<string, readonly string[]>>;
     expectations?: readonly TradeExpectation[];
   },
@@ -194,12 +209,22 @@ interface Built {
 export class LiveTradeService implements TradeService {
   readonly programs: ProgramAccounts;
   readonly contexts: TradeContexts;
+  readonly armed: LiveArmedOrders;
   private readonly now: () => number;
 
   constructor(private readonly d: LiveTradeDeps) {
     this.programs = d.programs ?? new ProgramAccounts();
     this.contexts = d.contexts ?? new TradeContexts(d.data);
     this.now = d.now ?? Date.now;
+    this.armed = new LiveArmedOrders({
+      data: d.data,
+      signer: d.signer,
+      programs: this.programs,
+      contexts: this.contexts,
+      submit: d.submit,
+      rest: d.rest,
+      touch: () => d.wallet.touch(),
+    });
     // The venue fee the token page shows comes from the same program accounts the builds use.
     this.programs.onChange((p) => d.data.setFeeEngine((ctx) => venueFeeBps(ctx, p)));
     void this.programs.get().catch(() => undefined);
@@ -213,24 +238,34 @@ export class LiveTradeService implements TradeService {
     return this.run(request, "sell", onProgress);
   }
 
-  // Armed orders (step 4) are wired separately.
-  placeLimit(): Promise<Order> {
-    return Promise.reject(new Error("Armed orders are not available in this build yet"));
+  // Armed orders: pre-signed in the worker on durable-nonce slots, held and fired by the server (armed.ts).
+  placeLimit(request: LimitOrderRequest): Promise<Order> {
+    return this.armedCall(() => this.armed.placeLimit(request));
   }
-  armTpSl(): Promise<Order[]> {
-    return Promise.reject(new Error("Armed orders are not available in this build yet"));
+  armTpSl(request: TpSlRequest): Promise<Order[]> {
+    return this.armedCall(() => this.armed.armTpSl(request));
   }
-  armMigration(): Promise<Order> {
-    return Promise.reject(new Error("Armed orders are not available in this build yet"));
+  armMigration(request: MigrationOrderRequest): Promise<Order> {
+    return this.armedCall(() => this.armed.armMigration(request));
   }
-  cancel(): Promise<void> {
-    return Promise.reject(new Error("Armed orders are not available in this build yet"));
+  cancel(orderId: string): Promise<void> {
+    return this.armedCall(() => this.armed.cancel(orderId));
   }
-  rearm(): Promise<Order> {
-    return Promise.reject(new Error("Armed orders are not available in this build yet"));
+  rearm(orderId: string): Promise<Order> {
+    const s = useSettings.getState();
+    return this.armedCall(() => this.armed.rearm(orderId, s.presets[s.activePreset].sell));
   }
   panic(): Promise<{ cancelled: number }> {
-    return Promise.reject(new Error("Armed orders are not available in this build yet"));
+    return this.armedCall(() => this.armed.panic());
+  }
+
+  /** Errors in plain words (signer refusals, server rejections, unreachable venues). */
+  private async armedCall<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      throw new Error(e instanceof ArmingRefused ? e.message : tradeErrorMessage(e));
+    }
   }
 
   close(): void {
