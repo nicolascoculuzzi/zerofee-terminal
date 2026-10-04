@@ -8,6 +8,7 @@ import { logger } from "../log";
 import type { OrderKey } from "../market/candles";
 import type { MarketState } from "../market/state";
 import type { TokenRecord, TradeEntry } from "../market/token";
+import { perf } from "../perf";
 import { deserializeRecord } from "./codec";
 import { rowToTrade, type StorageReader, type TradeRow } from "./reader";
 
@@ -64,6 +65,7 @@ export function restoreMarket(
     group.push(r);
   }
   flushGroup();
+  perf.span("restore.sync", performance.now() - t0);
   log.info(
     `restored ${tokens} tokens, replayed ${trades} trades for ${replay.length} tracked tokens in ${Math.round(performance.now() - t0)} ms`,
   );

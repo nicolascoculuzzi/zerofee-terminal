@@ -13,7 +13,8 @@
     "tracker-bench": "bun scripts/tracker-bench.ts",
     "tracker-live": "bun scripts/tracker-live.ts",
     "media-live": "bun scripts/media-live.ts",
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p . --noEmit",
+    "perf": "bun scripts/perf.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.8",

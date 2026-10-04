@@ -27,6 +27,7 @@ import { MarketState } from "./market/state";
 import { ImageProxy } from "./media";
 import { Metrics } from "./metrics";
 import { createOrderService, type OrderService, type OrderServiceOverrides } from "./orders";
+import { perf, ringStat } from "./perf";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
@@ -110,10 +111,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   // wallet:<address> feed (built once the gateway exists; it needs the topic hub).
   let walletFeed: WalletFeed | null = null;
   const resolver = new AccountResolver(rpc, {
-    pool: (p) => market?.onPoolReady(p),
-    mint: (m) => market?.onMintResolved(m),
-    curve: (c) => market?.onCurveResolved(c),
-    metaplex: (mint, md) => market?.onMetaplexResolved(mint, md),
+    pool: (p) => perf.time("market.onPoolReady", () => market?.onPoolReady(p)),
+    mint: (m) => perf.time("market.onMintResolved", () => market?.onMintResolved(m)),
+    curve: (c) => perf.time("market.onCurveResolved", () => market?.onCurveResolved(c)),
+    metaplex: (mint, md) => perf.time("market.onMetaplexResolved", () => market?.onMetaplexResolved(mint, md)),
     persistPool: (p) => writer.pool(p),
   });
   resolver.loadPools(reader.pools());
@@ -159,6 +160,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
   const now = Date.now();
+  perf.start();
+  perf.externalStage("detect.trade", () => ringStat(m.latency));
+  perf.externalStage("detect.launch", () => ringStat(m.launchLatency));
   restoreMarket(m, reader, {
     sinceMs: now - Math.max(cfg.pulse.migratedWindowMs, cfg.pulse.newMaxAgeMs),
     replaySinceMs: now - cfg.replayHours * 3_600_000,
@@ -194,6 +198,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   }
   const programAccounts = new ProgramAccountsCache(rpc);
   const source = o.source === undefined ? createSource(cfg) : o.source;
+  if (source instanceof RpcLogsSource) {
+    const delay = source.slotDelay;
+    perf.externalStage("rpc.afterSlot", () => ringStat(delay));
+  }
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
@@ -202,9 +210,13 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   let orders: (OrderService & { ready: Promise<void> }) | null = null;
   const sink: IngestSink = {
     tx: (tx) => {
+      const t0 = performance.now();
       m.applyTx(tx);
+      const t1 = performance.now();
+      perf.span("market.applyTx", t1 - t0);
       o.user?.trackers.onTx(tx);
       orders?.engine.onIngestTx(tx);
+      perf.span("sink.trackersOrders", performance.now() - t1);
       if (reconciler) {
         for (const ev of tx.events) {
           if (ev.kind !== "pumpCreate" && ev.kind !== "pumpMigrate") continue;

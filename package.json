@@ -17,7 +17,8 @@
     "fork:stop": "bun run packages/core/scripts/fork/stop.ts",
     "fork:accounts": "bun run packages/core/scripts/fork/accounts.ts",
     "e2e": "bun run packages/core/e2e/run.ts",
-    "e2e:orders": "bun test --timeout 300000 ./apps/server/e2e/armed.e2e.ts"
+    "e2e:orders": "bun test --timeout 300000 ./apps/server/e2e/armed.e2e.ts",
+    "perf": "bun apps/server/scripts/perf.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

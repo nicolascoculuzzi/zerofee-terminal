@@ -10,6 +10,7 @@ import type { PoolInfo } from "../accounts/resolver";
 import { logger } from "../log";
 import type { StorageSink } from "../market/state";
 import type { TokenRecord } from "../market/token";
+import { perf } from "../perf";
 import { serializeRecord } from "./codec";
 
 const log = logger("storage");
@@ -202,6 +203,7 @@ export class StorageWriter implements StorageSink {
       this.stats.flushes++;
       this.stats.rows += trades.length + deletes.length + candles.length + tokens.length + pools.length + meta.length + funders.length;
       const ms = performance.now() - t0;
+      perf.span("storage.flush", ms);
       this.stats.lastFlushMs = Math.round(ms * 100) / 100;
       if (ms > this.stats.maxFlushMs) this.stats.maxFlushMs = Math.round(ms);
     } catch (e) {
@@ -211,6 +213,7 @@ export class StorageWriter implements StorageSink {
   }
 
   prune(now = Date.now()): void {
+    const t0 = performance.now();
     try {
       const cutoff = now - this.opts.retentionHours * 3_600_000;
       const r = this.db.run("DELETE FROM trades WHERE rowid IN (SELECT rowid FROM trades WHERE block_time < ? LIMIT ?)", [
@@ -224,5 +227,6 @@ export class StorageWriter implements StorageSink {
     } catch (e) {
       log.warn(`prune failed: ${e instanceof Error ? e.message : e}`);
     }
+    perf.span("storage.prune", performance.now() - t0);
   }
 }

@@ -15,6 +15,7 @@ import type { Address } from "@solana/kit";
 import { decodeLogEvents, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@zerofee/core";
 import type { SourceHealth } from "@zerofee/protocol";
 import { logger } from "../log";
+import { perf } from "../perf";
 import { Backoff } from "../util/backoff";
 import { BoundedSet } from "../util/lru";
 import { SampleRing } from "../util/stats";
@@ -138,7 +139,11 @@ export class RpcLogsSource implements Source {
         ws.send(JSON.stringify({ jsonrpc: "2.0", id: SLOT_UPDATES_SUB_ID, method: "slotsUpdatesSubscribe" }));
       }
     };
-    ws.onmessage = (ev) => this.onMessage(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer));
+    ws.onmessage = (ev) => {
+      const t0 = performance.now();
+      this.onMessage(typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data as ArrayBuffer));
+      perf.span("ingest.onMessage", performance.now() - t0);
+    };
     ws.onerror = (ev) => {
       this.stats.lastError = (ev as ErrorEvent).message ?? "websocket error";
     };
@@ -256,12 +261,16 @@ export class RpcLogsSource implements Source {
       this.process(item);
       if (performance.now() - t0 > budget) break;
     }
+    perf.span("ingest.drain", performance.now() - t0);
     if (this.queue.size > 0) setImmediate(() => this.drain());
     else this.draining = false;
   }
 
   private process(p: Pending): void {
+    perf.stage("ingest.queue", Date.now() - p.receivedAt);
+    const t0 = performance.now();
     const r = decodeLogEvents(p.logs);
+    perf.stage("ingest.decode", performance.now() - t0);
     if (r.truncated) this.stats.truncatedLogs++;
     if (r.failures) {
       this.stats.decodeFailures += r.failures;

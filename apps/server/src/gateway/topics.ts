@@ -62,7 +62,8 @@ export class TopicHub {
     const seq = this.seq(topic) + 1;
     this.seqs.set(topic, seq);
     const t = wireTopic;
-    const payload = JSON.stringify(type === "correction" ? { type, topic: t, seq, data, reason } : { type, topic: t, seq, data });
+    const ts = Date.now();
+    const payload = JSON.stringify(type === "correction" ? { type, topic: t, seq, data, reason, ts } : { type, topic: t, seq, data, ts });
     this.stats.published++;
     this.stats.bytes += payload.length;
     this.publishRaw(topic, payload);
