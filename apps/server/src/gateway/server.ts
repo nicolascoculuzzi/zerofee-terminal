@@ -524,7 +524,7 @@ export class Gateway {
     const stillWanted = ws.data.pending.delete(topic) && ws.readyState === 1;
     if (!stillWanted || data === null) {
       this.hub.removeSubscriber(internal);
-      if (stillWanted) this.sendError(ws, "unavailable", "wallet balances are not published yet", topic);
+      if (stillWanted) this.sendError(ws, "unavailable", "no snapshot for this topic right now", topic);
       return;
     }
     ws.send(this.hub.snapshot(internal, data, topic));

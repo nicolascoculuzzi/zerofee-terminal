@@ -48,9 +48,15 @@ export class Clock {
 }
 
 /** JSON-RPC mock: simulateTransaction succeeds, account reads return nothing. */
-export const rpcMock = () =>
+/** `route` answers a JSON-RPC method first (its result, or undefined to fall through to the defaults). */
+export const rpcMock = (route?: (method: string, params: unknown[]) => unknown) =>
   mockFetch((url, body) => {
     if (url !== RPC_URL) return [404, {}];
+    const custom = route?.(body?.method ?? "", body?.params ?? []);
+    if (custom !== undefined) return [200, { jsonrpc: "2.0", id: 1, result: custom }];
+    if (body?.method === "getTokenAccountsByOwner") {
+      return [200, { jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: [] } }];
+    }
     if (body?.method === "simulateTransaction") {
       return [200, { jsonrpc: "2.0", id: 1, result: { context: { slot: 7 }, value: { err: null, logs: [], unitsConsumed: 1 } } }];
     }
@@ -79,6 +85,8 @@ export interface StartOptions extends Omit<UserLayerOverrides, "db" | "now"> {
   source?: Source | null;
   /** Armed-orders engine seams (fake chain, recording lanes, pinned lookup tables, no timers). */
   orders?: OrderServiceOverrides;
+  /** Custom JSON-RPC answers for the app's RPC client (see rpcMock). */
+  rpcRoute?: (method: string, params: unknown[]) => unknown;
 }
 
 /** A fake ingest source: tests push transactions into the market with emit(). */
@@ -162,7 +170,7 @@ export async function startUserApp(o: StartOptions = {}): Promise<UserTestEnv> {
     RATE_LIMIT_USER_BURST: "1000",
     ...o.env,
   });
-  const rpc = rpcMock();
+  const rpc = rpcMock(o.rpcRoute);
   const user = await createUserLayer(cfg, {
     ...o,
     db: db.db,

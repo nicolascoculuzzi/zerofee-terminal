@@ -130,6 +130,10 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX trades_mint_time ON trades(mint, block_time);
   CREATE INDEX trades_time ON trades(block_time);
   `,
+  // v4: a wallet's own fills for the wallet:<address> topic snapshot.
+  `
+  CREATE INDEX trades_trader_time ON trades(trader, block_time);
+  `,
 ];
 
 export function migrate(db: Database): number {

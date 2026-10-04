@@ -99,6 +99,8 @@ export class UserLayer {
   readonly trackers: TrackerService;
   /** Tab-closed copy exits: the armed-orders engine once the app attached it. */
   private copyExits: CopyExitHook | null = null;
+  /** wallet:<address> snapshots once the app attached the wallet feed (src/wallets/feed.ts). */
+  private walletFeed: ((address: string) => Promise<WalletSnapshot | null>) | null = null;
   /** `tracked`, `tracked:<mint>` and `copy` user topics for the gateway. */
   readonly userTopics: Partial<Record<string, UserTopicHandler>>;
   private timers: ReturnType<typeof setInterval>[] = [];
@@ -229,7 +231,7 @@ export class UserLayer {
     const store = this.store;
     this.topics = {
       canWatchWallet: (userId, address) => store.users.ownsWallet(userId, address),
-      walletSnapshot: o.walletSnapshot ?? (async () => null),
+      walletSnapshot: (address) => (o.walletSnapshot ?? this.walletFeed ?? (async () => null))(address),
       ordersSnapshot: async (userId) => ({
         orders: await this.armedOrders.listViews(userId, {
           scope: "open",
@@ -251,6 +253,11 @@ export class UserLayer {
       `alert channels: push ${this.push ? "on" : "off (VAPID keys)"}, telegram ${this.telegram ? (n.telegramWebhookSecret ? "on (webhook)" : "on (polling)") : "off (TELEGRAM_BOT_TOKEN)"}, ` +
         `discord ${this.box ? "on" : "off (CHANNEL_ENCRYPTION_KEY)"}`,
     );
+  }
+
+  /** The wallet:<address> feed (createApp builds it with the RPC client and the gateway). A test override wins. */
+  attachWalletFeed(snapshot: (address: string) => Promise<WalletSnapshot | null>): void {
+    this.walletFeed = snapshot;
   }
 
   /** The armed-orders engine fires tab-closed copy exits (createApp, when the engine runs). */
