@@ -319,10 +319,43 @@ function tapeOrder(a: WireTrade, b: WireTrade): number {
   return b.slot - a.slot || (b.txIndex ?? 0) - (a.txIndex ?? 0) || b.blockTime - a.blockTime || (a.id < b.id ? 1 : -1);
 }
 
+/** A tracked wallet's trade on the token as a tape row (launches are not trades). */
+function trackedAsTrade(r: TrackedTradeRow): WireTrade | null {
+  if (r.kind === "create") return null;
+  return {
+    id: `tracked:${r.id}`,
+    signature: r.signature,
+    slot: r.slot,
+    txIndex: null,
+    mint: r.mint,
+    venue: r.venue,
+    side: r.kind,
+    trader: r.trader,
+    quoteAmount: "0",
+    tokenAmount: r.tokenAmount,
+    amountSol: r.amountSol,
+    amountUsd: r.amountUsd,
+    priceSol: r.priceSol,
+    mcSol: r.mcSol,
+    blockTime: r.blockTime,
+    receivedAt: r.receivedAt,
+    tags: [...r.marketTags],
+  };
+}
+
+const TRACKED_TAPE_MAX = 200;
+
+/**
+ * `trades:<mint>`: the last TAPE_MAX trades, plus (signed in) the user's tracked wallets' older trades on the
+ * token from `tracked:<mint>`, so the tape's Tracked filter and the chart's tracked markers reach further back
+ * than the tape window. A trade both topics carry shows once.
+ */
 export class TradesView extends View<`trades:${string}`> {
   private list: WireTrade[] = [];
+  private tracked: WireTrade[] = [];
   private ready = false;
   private off: (() => void) | null = null;
+  private offTracked: (() => void) | null = null;
 
   constructor(
     private readonly mint: string,
@@ -333,26 +366,52 @@ export class TradesView extends View<`trades:${string}`> {
 
   protected start(): void {
     this.off = this.host.socket.subscribe(this.topic, { onMessage: (m) => this.onWire(m) });
+    // Signed out (or not offered) the topic answers an error: the tape alone then.
+    this.offTracked = this.host.socket.subscribe(`tracked:${this.mint}`, { onMessage: (m) => this.onTracked(m), onError: () => {} });
   }
 
   protected stop(): void {
     this.off?.();
     this.off = null;
+    this.offTracked?.();
+    this.offTracked = null;
   }
 
   private adapt(t: WireTrade): Trade {
     return adaptTrade(t, { decimals: this.host.decimalsOf(this.mint), solUsd: this.host.solUsd(), own: this.host.ownWallets() });
   }
 
+  /** The tape plus tracked trades it does not already hold, newest first. */
+  private merged(): WireTrade[] {
+    if (this.tracked.length === 0) return this.list;
+    const seen = new Set(this.list.map((t) => `${t.signature}:${t.trader}`));
+    const extra = this.tracked.filter((t) => !seen.has(`${t.signature}:${t.trader}`));
+    return extra.length === 0 ? this.list : [...this.list, ...extra].sort(tapeOrder);
+  }
+
   protected current() {
-    return this.ready ? { trades: this.list.map((t) => this.adapt(t)) } : null;
+    return this.ready ? { trades: this.merged().map((t) => this.adapt(t)) } : null;
+  }
+
+  private onTracked(m: WireMessage): void {
+    if (m.type === "snapshot") {
+      const rows = (m.data as { rows: TrackedTradeRow[] }).rows;
+      this.tracked = rows.flatMap((r) => trackedAsTrade(r) ?? []).slice(0, TRACKED_TAPE_MAX);
+    } else if (m.type === "delta") {
+      const fresh = [...(m.data as { rows: TrackedTradeRow[] }).rows].reverse().flatMap((r) => trackedAsTrade(r) ?? []);
+      this.tracked = [...fresh, ...this.tracked].slice(0, TRACKED_TAPE_MAX);
+    } else {
+      const drop = new Set((m.data as { remove: string[] }).remove.map((id) => `tracked:${id}`));
+      this.tracked = this.tracked.filter((t) => !drop.has(t.id));
+    }
+    if (this.ready) this.emitSnapshot({ trades: this.merged().map((t) => this.adapt(t)) });
   }
 
   private onWire(m: WireMessage): void {
     if (m.type === "snapshot") {
       this.list = [...(m.data as { trades: WireTrade[] }).trades].sort(tapeOrder).slice(0, TAPE_MAX);
       this.ready = true;
-      this.emitSnapshot({ trades: this.list.map((t) => this.adapt(t)) });
+      this.emitSnapshot({ trades: this.merged().map((t) => this.adapt(t)) });
       return;
     }
     if (m.type === "delta") {
@@ -368,7 +427,7 @@ export class TradesView extends View<`trades:${string}`> {
     const corr = m.data as { remove: string[]; upsert: WireTrade[] };
     const drop = new Set([...corr.remove, ...corr.upsert.map((t) => t.id)]);
     this.list = [...this.list.filter((t) => !drop.has(t.id)), ...corr.upsert].sort(tapeOrder).slice(0, TAPE_MAX);
-    this.emitSnapshot({ trades: this.list.map((t) => this.adapt(t)) });
+    this.emitSnapshot({ trades: this.merged().map((t) => this.adapt(t)) });
   }
 }
 

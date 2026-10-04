@@ -6,6 +6,7 @@ import { LiveTradeService } from "./LiveTradeService";
 import { LiveWalletService } from "./LiveWalletService";
 import { SignerHost } from "./signerHost";
 import { createSignerWorker } from "./signerWorker";
+import { TrackerSync } from "./trackerSync";
 
 const LIVE_FEATURES: Services["features"] = {
   passkey: false,
@@ -36,6 +37,12 @@ export async function createLiveServices(): Promise<Services> {
   // REST call); the wallet extension reconnects silently in the background.
   await wallet.init();
   const trade = new LiveTradeService({ data, signer, wallet, jupiter: jupiterOptions() });
+  // Tracked wallets live on the server while signed in (the tracked topics are matched there).
+  new TrackerSync({
+    session: () => wallet.getState().session,
+    onSessionChange: (listener) => wallet.subscribe(() => listener()),
+    onError: (message) => console.warn(`tracked wallets: ${message}`),
+  }).start();
   return {
     data,
     trade,
