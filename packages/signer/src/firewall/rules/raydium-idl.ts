@@ -64,7 +64,10 @@ export const LAUNCHLAB_SWAP_LAYOUT = {
 
 /** All four swaps: discriminator + amount (u64) + limit (u64) + share_fee_rate (u64). */
 export const LAUNCHLAB_DATA_LENGTH = 32;
-/** share_fee_rate, the third u64: a referral fee (up to GlobalConfig.max_share_fee_rate, 1% on mainnet) paid to share_fee_receiver. */
+/**
+ * share_fee_rate, the third u64: a referral fee paid to a share_fee_receiver account, up to
+ * GlobalConfig.max_share_fee_rate (10,000 ppm = 1% on the SOL GlobalConfig in core's snapshot).
+ */
 export const LAUNCHLAB_SHARE_FEE_RATE_OFFSET = 24;
 
 export interface LaunchLabSwapInstruction {
