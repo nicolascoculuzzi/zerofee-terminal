@@ -117,6 +117,15 @@ export interface ServerConfig {
     alertSweepMs: number;
     deliveryRetentionDays: number;
   };
+  /** GET /metrics access and alarm thresholds (src/metrics.ts). */
+  monitoring: {
+    /** Bearer token every /metrics caller must send; null = loopback, unproxied requests only. */
+    metricsToken: string | null;
+    /** zerofee_feed_stalled turns 1 after this long without an ingested transaction. */
+    feedStallMs: number;
+    /** Directory holding the edge kill-switch flag files (HALT_TX, MAINTENANCE); null = not reported. */
+    killSwitchDir: string | null;
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -323,12 +332,19 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       alertSweepMs: int(env, "ALERT_SWEEP_MS", 10_000, 1_000, 3_600_000),
       deliveryRetentionDays: int(env, "ALERT_DELIVERY_RETENTION_DAYS", 30, 1, 3_650),
     },
+    monitoring: {
+      metricsToken: optional(env, "METRICS_TOKEN"),
+      feedStallMs: int(env, "METRICS_FEED_STALL_SEC", 30, 5, 3_600) * 1_000,
+      killSwitchDir: optional(env, "KILL_SWITCH_DIR"),
+    },
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
   if (cfg.userDb.databaseUrl && !/^postgres(ql)?:\/\//.test(cfg.userDb.databaseUrl))
     throw new Error("DATABASE_URL must be a postgres:// URL");
   if (cfg.adminToken) parseAdminTokens(cfg.adminToken);
   validateNotifications(env, cfg);
+  if (cfg.monitoring.metricsToken !== null && cfg.monitoring.metricsToken.length < 16)
+    throw new Error("METRICS_TOKEN must be at least 16 characters (openssl rand -hex 32)");
   return cfg;
 }
 

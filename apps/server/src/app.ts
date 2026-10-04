@@ -22,6 +22,7 @@ import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
+import { Metrics } from "./metrics";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
@@ -63,6 +64,7 @@ export interface App {
   sink: IngestSink;
   reconciler: Reconciler | null;
   user: UserLayer | null;
+  metrics: Metrics;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -253,6 +255,24 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const user = o.user ?? null;
   // Price / market-cap alerts read live summaries and re-evaluate the mints each Pulse flush changed.
   user?.attachMarket((mint) => m.summary(mint));
+
+  const metrics = new Metrics(cfg.monitoring, {
+    version: VERSION,
+    startedAt,
+    dryRun: cfg.dryRun,
+    market: m,
+    pulse,
+    chain,
+    writer,
+    tx,
+    rpc,
+    solUsd,
+    sources,
+    gateway: () => gateway,
+    // The admin kill switch (POST /api/admin/halt) shows up as zerofee_halted{scope="tx"} too.
+    halted: user ? () => user.halt.isHalted() : undefined,
+  });
+
   gateway = new Gateway({
     cfg,
     market: m,
@@ -266,12 +286,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     debugStats,
     user,
     onTokensChanged: user ? (mints) => user.alerts.onTokensChanged(mints) : undefined,
+    metrics,
   });
 
   // start
   writer.start();
   resolver.start();
   gateway.start();
+  metrics.start();
   user?.start();
   solUsd?.start();
   if (o.pollers !== false) {
@@ -306,9 +328,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     sink,
     reconciler,
     user,
+    metrics,
     health,
     async stop() {
       clearInterval(evictTimer);
+      metrics.stop();
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();
