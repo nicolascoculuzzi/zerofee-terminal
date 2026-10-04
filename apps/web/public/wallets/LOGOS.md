@@ -1,7 +1,7 @@
 # Wallet logos
 
 The icons the official Solana wallet adapters embed for each wallet, decoded from their base64 data URIs
-unchanged. They identify the wallet in the connect step and wherever the connected wallet is named; an
+unchanged apart from an added SVG `<title>`. They identify the wallet in the connect step and wherever the connected wallet is named; an
 installed wallet's own Wallet Standard icon takes precedence. The names and logos are trademarks of their
 owners; zerofee is not affiliated with or endorsed by any of them.
 
