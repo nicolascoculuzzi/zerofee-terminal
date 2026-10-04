@@ -62,7 +62,8 @@ const PUMP_SENTINEL = "11111111111111111111111111111111";
  */
 const ACCEPT = "image/webp,image/png,image/jpeg,image/gif;q=0.9";
 const LARGEST = IMAGE_PROXY_SIZES[IMAGE_PROXY_SIZES.length - 1] as ImageProxySize;
-const WARM_SIZE: ImageProxySize = 96;
+/** Pulse cards ask for 2x the tile: s=96 (compact) and s=128 (comfortable). Both are rendered ahead from the master. */
+const WARM_SIZES: readonly ImageProxySize[] = [96, 128];
 const PERMANENT_TTL = 6 * 3_600_000;
 const GAVE_UP_TTL = 30 * 60_000;
 const RETRY_CAP_MS = 300_000;
@@ -374,7 +375,13 @@ export class ImageProxy {
       return;
     }
     this.stats.prefetched++;
-    void this.output(mint, ref, WARM_SIZE, () => true, p).catch(() => {});
+    // the first size fetches and normalizes the image; the next ones are cheap renders from its 256 px master
+    void (async () => {
+      for (const size of WARM_SIZES) {
+        if (size !== WARM_SIZES[0] && this.pool.saturated) return;
+        await this.output(mint, ref, size, () => true, p);
+      }
+    })().catch(() => {});
   }
 
   private priorityFor(mint: string, base: Priority): Priority {

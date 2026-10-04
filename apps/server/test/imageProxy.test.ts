@@ -337,6 +337,9 @@ describe("image proxy: caches and limits", () => {
     await Bun.sleep(100);
     const r = await t.get(path(MINT, "https://cdn.example.com/a.png", 96));
     expect(r.headers.get("x-zf-cache")).toBe("hit");
+    // the comfortable Pulse card size (s=128) is warmed too, from the same fetch
+    expect((await t.get(path(MINT, "https://cdn.example.com/a.png", 128))).headers.get("x-zf-cache")).toBe("hit");
+    expect(t.calls).toHaveLength(1);
     expect(t.proxy.stats.prefetched).toBe(1);
   });
 
