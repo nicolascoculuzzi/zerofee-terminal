@@ -22,7 +22,8 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Charts | ✅ | Adaptive axis, sane zoom, volume band, migration line, history paging; mini and PnL charts fixed |
 | Speed | ✅ | SQLite off the event loop (lag p99 34 → 4 ms), complete first Pulse snapshot, first screen 243 → 169 KB gzip, 60 fps; public RPC stream backlog is the remaining limit |
 | Strict CSP with no inline styles | ✅ | Chart attribution style allowed by hash only; build guard + test |
-| Every trade on every coin (capture-rate fixes + full history backfill) | 🔨 | Paginated trades/candles, history state for charts |
+| Every trade on every coin (capture-rate fixes + full history backfill) | ✅ | Capture 62.7% → 100% on public RPC; gap-fill after socket stalls; full backfill from chain (FLOP 428/429 txs); paginated trades/candles; history state on charts and the Trades tab |
+| Open any coin by address (on-demand resolve) | ✅ | Unknown or pruned mints load in ~0.1–2 s from chain; pasted pump.fun/DexScreener/Axiom/GMGN/Solscan links; Jupiter fallback; abuse limits. Full history speed needs a paid `HISTORY_RPC_URL` |
 | First real 0.001 SOL trade | 🙋 | Needs a throwaway dev wallet key in your local `.env` |
 
 ## Part 2: match Axiom, then beat it
