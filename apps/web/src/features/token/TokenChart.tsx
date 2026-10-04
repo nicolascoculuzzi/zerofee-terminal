@@ -1,4 +1,4 @@
-import type { MouseEventParams, Time } from "lightweight-charts";
+import type { LogicalRange, MouseEventParams, Time } from "lightweight-charts";
 import { X } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -16,25 +16,27 @@ import { useShallow } from "zustand/react/shallow";
 import { Hotkey } from "../../components/ui/controls";
 import { PlatformMark } from "../../components/ui/Logo";
 import { type PlatformLogo, VENUE_LOGO } from "../../components/ui/logos";
-import { Num } from "../../components/ui/Num";
 import { MenuItem, Popover } from "../../components/ui/Popover";
 import { chartColors, useChartThemeKey, withAlpha } from "../../lib/chartTheme";
 import { cn } from "../../lib/cn";
-import { fmtClock, fmtCompact, fmtPct, fmtPriceText, fmtSol, fmtSolShort } from "../../lib/format";
-import { type Candle, TIMEFRAME_SECONDS, type TokenDetail, type Venue } from "../../protocol";
+import { fmtClock, fmtPct, fmtSol, fmtSolShort, fmtUsd } from "../../lib/format";
+import { type Candle, TIMEFRAME_SECONDS, type Timeframe, type TokenDetail, type Venue } from "../../protocol";
 import { isOpenOrder, useOrders } from "../../state/orders";
 import { useSettings } from "../../state/settings";
-import { subscribeSequenced } from "../../state/subscribe";
 import { useToken } from "../../state/token";
 import { useTrackedMap } from "../../state/trackers";
 import { useActivePosition } from "../../state/wallet";
 import { armLimitDraft } from "../trade/orderDraft";
 import { distancePct, migrationPriceSol, nudgePrice, snapPrice } from "../trade/tradeMath";
 import { useCancelDialog } from "./CancelOrderDialog";
+import { AxisFormat, type LegendParts } from "./chart/axisFormat";
+import { bucketStart, defaultTimeframe, lowerBound } from "./chart/bars";
+import { ChartStateOverlay } from "./chart/ChartStateOverlay";
 import { ChartToolbar } from "./chart/ChartToolbar";
 import { ChartController, type PlotBar } from "./chart/controller";
 import { crosshair } from "./chart/crosshair";
-import type { LineSpec, MarkerGroup, MarkerSpec } from "./chart/overlay";
+import { type BarChange, ChartFeed, type FeedStatus, type HistoryInfo, historyStateOf } from "./chart/dataSource";
+import type { LineSpec, MarkerGroup, MarkerSpec, TimeLineSpec } from "./chart/overlay";
 import { useQuote } from "./money";
 import { KIND_SHORT, sizeText, triggerPriceSol } from "./orderText";
 import { useTokenUi } from "./tokenUi";
@@ -95,10 +97,19 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
-function axisFormatter(mode: "mc" | "price", quote: "USD" | "SOL", supply: number): (v: number) => string {
-  const $ = quote === "USD" ? "$" : "";
-  if (mode === "mc") return (v) => `${$}${fmtCompact(v)}`;
-  return (v) => `${$}${fmtPriceText(v / supply, true)}`;
+/** Legend value: plain text, or subscript-zero parts as spans (DESIGN.md 3.3: no Unicode subscripts in the DOM). */
+function LegendValue({ v }: { v: LegendParts }) {
+  const p = v.parts;
+  if (p.kind === "plain") return <span className="zf-num">{`${v.prefix}${p.text}`}</span>;
+  return (
+    <span className="zf-num">
+      {v.prefix}0.0
+      <span className="zf-zc" aria-hidden="true">
+        {p.zeros}
+      </span>
+      {p.digits}
+    </span>
+  );
 }
 
 function Legend({
@@ -108,9 +119,8 @@ function Legend({
   venue,
   venueLogo,
   tf,
-  mode,
+  format,
   quote,
-  supply,
 }: {
   register: (set: (d: LegendData | null) => void) => void;
   symbol: string;
@@ -118,19 +128,13 @@ function Legend({
   venue: string;
   venueLogo: PlatformLogo | null;
   tf: string;
-  mode: "mc" | "price";
+  format: AxisFormat;
   quote: "USD" | "SOL";
-  supply: number;
 }) {
   const [d, setD] = useState<LegendData | null>(null);
   useEffect(() => register(setD), [register]);
   const usd = quote === "USD";
-  const value = (v: number): ReactNode =>
-    mode === "price" ? (
-      <Num kind="price" usd={usd} value={v / supply} />
-    ) : (
-      <span className="zf-num">{`${usd ? "$" : ""}${fmtCompact(v)}`}</span>
-    );
+  const value = (v: number): ReactNode => <LegendValue v={format.legend(v)} />;
   return (
     <div className="pointer-events-none absolute top-2 left-2 z-chart-ui flex max-w-[calc(100%-96px)] flex-wrap items-center gap-x-2 gap-y-0.5 text-label">
       <span className="inline-flex items-center gap-1 text-fg-3">
@@ -147,13 +151,19 @@ function Legend({
             {fmtPct(d.changePct, { signed: true })}
           </span>
           <span className="text-fg-3">
-            V <span className="zf-num text-fg-2">{usd ? `$${fmtCompact(d.volume)}` : `${fmtSol(d.volume)} SOL`}</span>
+            V <span className="zf-num text-fg-2">{usd ? fmtUsd(d.volume) : `${fmtSol(d.volume)} SOL`}</span>
           </span>
         </>
       )}
     </div>
   );
 }
+
+/** The interval each token was last viewed at this session (a manual pick sticks to its token). */
+const tfByMint = new Map<string, Timeframe>();
+
+/** Bars from the left edge at which the next older page is requested. */
+const OLDER_PAGE_EDGE = 40;
 
 export default function TokenChart({ detail, variant = "full" }: { detail: TokenDetail; variant?: "full" | "compact" }) {
   const token = detail.summary;
@@ -190,7 +200,7 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
 
   const containerRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<ChartController | null>(null);
-  const rawRef = useRef<Candle[]>([]);
+  const feedRef = useRef<ChartFeed | null>(null);
   const legendSet = useRef<((d: LegendData | null) => void) | null>(null);
   const hoveringRef = useRef(false);
   const chipEls = useRef(new Map<string, HTMLDivElement>());
@@ -198,7 +208,10 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
   const dragRef = useRef<{ id: string; startPriceSol: number; startY: number; moved: boolean } | null>(null);
   const justDragged = useRef(0);
   const [dragging, setDragging] = useState<string | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "empty" | "error">("loading");
+  const [status, setStatus] = useState<FeedStatus>("loading");
+  const [history, setHistory] = useState<HistoryInfo>({ loading: false, hasMore: false, state: "unknown" });
+  /** Bumped when bars are replaced or a bucket is added (markers and the migration line follow). */
+  const [barsVersion, setBarsVersion] = useState(0);
   const [retry, setRetry] = useState(0);
   const [hover, setHover] = useState<{ x: number; y: number; entries: string[] } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; priceSol: number } | null>(null);
@@ -208,7 +221,21 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
   const fx = quote === "USD" ? solUsd : 1;
   const plot = useCallback((priceSol: number) => priceSol * supply * fx, [supply, fx]);
   const fromPlot = useCallback((v: number) => v / (supply * fx), [supply, fx]);
-  const format = useMemo(() => axisFormatter(ui.mode, quote, supply), [ui.mode, quote, supply]);
+  const axis = useMemo(() => new AxisFormat(ui.mode, quote, supply), [ui.mode, quote, supply]);
+  const format = axis.format;
+  const historyState = historyStateOf(detail.summary);
+
+  // Interval by coin age when a token opens (Axiom): seconds for fresh launches, minutes for older
+  // coins. A manual pick sticks to its token for the session. Runs before the first subscription.
+  useLayoutEffect(() => {
+    const s = useTokenUi.getState();
+    const next = tfByMint.get(mint) ?? defaultTimeframe(token.createdAt, Date.now(), s.tf);
+    tfByMint.set(mint, next);
+    if (next !== s.tf) s.setTf(next);
+    return useTokenUi.subscribe((st, prev) => {
+      if (st.tf !== prev.tf) tfByMint.set(mint, st.tf);
+    });
+  }, [mint, token.createdAt]);
 
   const toPlot = useCallback(
     (c: Candle): PlotBar => {
@@ -280,7 +307,7 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
     const ctrl = new ChartController(
       el,
       useTokenUi.getState().chartType,
-      axisFormatter(useTokenUi.getState().mode, useSettings.getState().display.quote, supply),
+      new AxisFormat(useTokenUi.getState().mode, useSettings.getState().display.quote, supply),
       {
         onCrosshair: (param) => {
           pending = param;
@@ -316,6 +343,10 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
           else ui0.setCandle({ from: t, to: t + TIMEFRAME_SECONDS[live.current.tf] });
         },
         onSync: () => syncChips(),
+        onRange: (range: LogicalRange | null) => {
+          // Near the oldest loaded bar: fetch the page before it (a no-op while one is in flight).
+          if (range && range.from < OLDER_PAGE_EDGE) feedRef.current?.requestOlder();
+        },
       },
     );
     ctrlRef.current = ctrl;
@@ -328,80 +359,100 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
     // The chart is created once per token; later option changes are applied by the effects below.
   }, [supply, lastLegend, pushLegend, syncChips]);
 
-  // ---- candles: snapshot then live deltas, applied once per animation frame ----
+  // ---- candles: snapshot, live deltas (batched per frame), older pages (chart/dataSource.ts) ----
+  const historyRef = useRef(historyState);
+  historyRef.current = historyState;
   // biome-ignore lint/correctness/useExhaustiveDependencies: retry is a trigger for resubscribing
   useEffect(() => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
-    setStatus("loading");
-    rawRef.current = [];
-    ctrl.setBars([]);
-    pushLegend(null);
+    // The age-based interval is being applied: wait for the render that carries it.
+    if (useTokenUi.getState().tf !== ui.tf) return;
     ctrl.setSecondsVisible(ui.tf === "1s" || ui.tf === "15s");
-    const pending = new Map<number, Candle>();
-    let raf = 0;
-    let got = false;
-    const timeout = setTimeout(() => {
-      if (!got) setStatus("error");
-    }, 8000);
-    const flush = () => {
-      raf = 0;
-      const list = [...pending.values()].sort((a, b) => a.time - b.time);
-      pending.clear();
-      const raw = rawRef.current;
-      const had = raw.length > 0;
-      for (const c of list) {
-        const last = raw[raw.length - 1];
-        if (last && c.time < last.time) {
-          const i = raw.findIndex((x) => x.time === c.time);
-          if (i >= 0) raw[i] = c;
-        } else if (last && last.time === c.time) raw[raw.length - 1] = c;
-        else raw.push(c);
-        ctrlRef.current?.upsert(live.current.toPlot(c));
-      }
-      if (!had && raw.length > 0) setStatus("ready");
-      if (!hoveringRef.current) lastLegend();
-    };
-    const off = subscribeSequenced(
-      `candles:${mint}:${ui.tf}`,
-      (snap) => {
-        got = true;
-        clearTimeout(timeout);
-        const byTime = new Map<number, Candle>();
-        for (const c of snap.candles) byTime.set(c.time, c);
-        const sorted = [...byTime.values()].sort((a, b) => a.time - b.time);
-        rawRef.current = sorted;
-        ctrlRef.current?.setBars(sorted.map((c) => live.current.toPlot(c)));
-        ctrlRef.current?.showRecent();
-        setStatus(sorted.length > 0 ? "ready" : "empty");
-        lastLegend();
+    ctrl.setBars([], "reset");
+    pushLegend(null);
+    let lastLength = 0;
+    const feed = new ChartFeed(mint, ui.tf, {
+      onBars: (bars: readonly Candle[], change: BarChange) => {
+        const c = ctrlRef.current;
+        if (!c) return;
+        const toPlot = live.current.toPlot;
+        if (change.kind === "live") {
+          // Same indices as before (no insertions): convert only what changed.
+          const next = c.barList.slice();
+          for (const i of change.touched) {
+            const b = bars[i];
+            if (b) next[i] = toPlot(b);
+          }
+          c.applyLive(next, change.touched);
+        } else {
+          c.setBars(bars.map(toPlot), change.kind);
+        }
+        if (!hoveringRef.current) lastLegend();
+        if (change.kind !== "live" || bars.length !== lastLength) {
+          lastLength = bars.length;
+          setBarsVersion((v) => v + 1);
+        }
       },
-      (delta) => {
-        for (const c of delta.candles) pending.set(c.time, c);
-        if (!raf) raf = requestAnimationFrame(flush);
-      },
-    );
+      onStatus: setStatus,
+      onHistory: setHistory,
+    });
+    feedRef.current = feed;
+    feed.setHistoryState(historyRef.current);
+    feed.start();
     return () => {
-      off();
-      clearTimeout(timeout);
-      cancelAnimationFrame(raf);
+      feed.stop();
+      if (feedRef.current === feed) feedRef.current = null;
     };
   }, [mint, ui.tf, retry, pushLegend, lastLegend]);
 
-  // ---- units, formatter, theme, type, indicators ----
+  useEffect(() => {
+    feedRef.current?.setHistoryState(historyState);
+  }, [historyState]);
+
+  // With the whole history loaded, bars[0] is the launch candle (its open can be a 10x outlier).
+  useEffect(() => {
+    ctrlRef.current?.setGenesis(!history.hasMore && !history.loading && history.state !== "backfilling");
+  }, [history]);
+
+  // ---- units: MC/Price only changes the axis text; USD/SOL re-plots the same bars in place ----
+  useEffect(() => {
+    ctrlRef.current?.setFormat(axis);
+  }, [axis]);
+  useEffect(() => {
+    const ctrl = ctrlRef.current;
+    const feed = feedRef.current;
+    if (!ctrl || !feed || feed.list.length === 0) return;
+    ctrl.setBars(feed.list.map(toPlot), "keep");
+    lastLegend();
+  }, [toPlot, lastLegend]);
+
+  // Theme or palette changed: re-read the tokens a frame later (App writes data-theme in its own effect).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: themeKey is a trigger; colours are re-read from the CSS variables
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const tf = useTokenUi.getState().tf;
+      ctrlRef.current?.applyTheme(tf === "1s" || tf === "15s");
+      setColors(chartColors());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [themeKey]);
+
+  // ---- migration: a dotted vertical line on the first pool bar ----
+  // biome-ignore lint/correctness/useExhaustiveDependencies: barsVersion signals new bars
   useEffect(() => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
-    ctrl.setFormatter(format);
-    ctrl.setBars(rawRef.current.map(toPlot));
-    lastLegend();
-  }, [format, toPlot, lastLegend]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: themeKey is a trigger; colours are re-read from the CSS variables
-  useEffect(() => {
-    ctrlRef.current?.applyTheme(ui.tf === "1s" || ui.tf === "15s");
-    setColors(chartColors());
-  }, [themeKey]);
+    const at = token.migratedAt;
+    const bars = ctrl.barList;
+    let lines: TimeLineSpec[] = [];
+    if (ui.markers.migration && at !== null && bars.length > 1) {
+      const i = lowerBound(bars, bucketStart(at, ui.tf));
+      const bar = bars[i];
+      if (bar && i > 0) lines = [{ id: "migrated", time: bar.time, label: "Migrated", color: colors.dim, textColor: colors.dim }];
+    }
+    ctrl.setTimeLines(lines);
+  }, [token.migratedAt, ui.markers.migration, ui.tf, colors, barsVersion]);
 
   useEffect(() => ctrlRef.current?.setType(ui.chartType), [ui.chartType]);
   useEffect(() => ctrlRef.current?.setVolume(ui.volume), [ui.volume]);
@@ -472,10 +523,12 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
       }
       ctrl.setMarkers(out);
     }, 250);
-  }, [trades, tracked, ui.markers, ui.tf, colors, status]);
+  }, [trades, tracked, ui.markers, ui.tf, colors, status, barsVersion]);
   useEffect(
     () => () => {
+      // Reset too: StrictMode runs this cleanup and remounts, and a stale id would block every later pass.
       if (markerTimer.current) clearTimeout(markerTimer.current);
+      markerTimer.current = null;
     },
     [],
   );
@@ -746,6 +799,7 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
     }
   };
 
+  const retryFeed = useCallback(() => setRetry((n) => n + 1), []);
   const chips = full ? models.filter((m) => m.chip) : [];
   const menuValue = menu ? format(plot(menu.priceSol)) : "";
 
@@ -762,24 +816,9 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
           venue={VENUE_LEGEND[token.venue]}
           venueLogo={VENUE_LOGO[token.venue]}
           tf={ui.tf}
-          mode={ui.mode}
+          format={axis}
           quote={quote}
-          supply={supply}
         />
-        {status !== "ready" && (
-          <div className="pointer-events-none absolute top-8 left-2 z-chart-ui text-data text-fg-3">
-            {status === "loading" && `Loading ${ui.tf} candles…`}
-            {status === "empty" && "No trades in this timeframe yet"}
-            {status === "error" && (
-              <span className="pointer-events-auto">
-                Couldn't load candles ·{" "}
-                <button type="button" className="text-fg-1 hover:underline" onClick={() => setRetry((n) => n + 1)}>
-                  Retry
-                </button>
-              </span>
-            )}
-          </div>
-        )}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer capture for dragging order lines; their keyboard equivalents live on the handle chips */}
         <div
           ref={containerRef}
@@ -790,6 +829,7 @@ export default function TokenChart({ detail, variant = "full" }: { detail: Token
           onPointerCancelCapture={() => endDrag(true)}
           onContextMenu={onContextMenu}
         />
+        <ChartStateOverlay status={status} tf={ui.tf} history={history} onRetry={retryFeed} />
         {chips.length > 0 && (
           <div className="pointer-events-none absolute inset-0 z-chart-ui overflow-hidden">
             {chips.map((m) => {
