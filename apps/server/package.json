@@ -12,6 +12,7 @@
     "signin-e2e": "bun scripts/signin-e2e.ts",
     "tracker-bench": "bun scripts/tracker-bench.ts",
     "tracker-live": "bun scripts/tracker-live.ts",
+    "media-live": "bun scripts/media-live.ts",
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {
