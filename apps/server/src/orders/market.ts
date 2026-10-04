@@ -3,6 +3,11 @@
  * carries, so the server's quote matches the one the order was armed with), coin facts for staleness,
  * fee-recipient lists, the Jito tip floor and the current slot.
  *
+ * Raydium: a LaunchLab coin quotes on its curve until it graduates, then on its CPMM pool, with the fee
+ * rates of the pool's configs and the Token-2022 transfer fees of both mints (the same accounts its trade
+ * context carries). Coin facts carry the LaunchLab pool's creator / status and the CPMM pool the coin
+ * graduates into from the live PlatformConfig (staleness "graduation-pool-changed").
+ *
  * A market whose fee inputs are not all known yet (per-coin creator fee override, canonical-pool flag)
  * is reported as not quotable: a quote on a wrong fee tier could pick a variant that lands and fails,
  * which burns the nonce.
@@ -11,6 +16,7 @@ import type { Address } from "@solana/kit";
 import {
   type AmmGlobalConfig,
   type ArmedVenue,
+  cpmmFeeRates,
   DEFAULT_PUBKEY,
   decodeAmmGlobalConfig,
   decodeFeeConfig,
@@ -19,6 +25,8 @@ import {
   globalFeeRecipients,
   globalMayhemFeeRecipients,
   type LiveMarketState,
+  launchLabTradeParams,
+  MAINNET_SLOTS_PER_EPOCH,
   PUMP_AMM_FEE_CONFIG,
   PUMP_AMM_GLOBAL_CONFIG,
   PUMP_FEE_CONFIG,
@@ -29,6 +37,10 @@ import {
 import type { ChainState, ProgramAccountsResponse } from "@zerofee/protocol";
 import type { PoolInfo } from "../accounts/resolver";
 import type { MarketState } from "../market/state";
+import { launchLabCurve, launchLabStatus, type TokenRecord } from "../market/token";
+
+/** Coin facts the staleness check reads (pump curve / pool, LaunchLab pool and graduation pool). */
+export type CoinFacts = Pick<StalenessObservation, "curve" | "pool" | "launchLabPool" | "launchLabGraduationPool">;
 
 export interface MarketQuote {
   /** Where the mint trades right now. */
@@ -44,11 +56,13 @@ export interface OrderMarket {
   /** Null when the server does not know the mint. */
   quote(mint: string): MarketQuote | null;
   /** Live coin facts for detectStaleness; fields are omitted when unknown. */
-  coinFacts(mint: string): Pick<StalenessObservation, "curve" | "pool">;
+  coinFacts(mint: string): CoinFacts;
   recipients(): RecipientLists;
   symbol(mint: string): string | null;
   /** The coin migrated to its canonical pool (a migration snipe's trigger may already hold). */
   migrated(mint: string): boolean;
+  /** The pool a migrated coin trades in (PumpSwap canonical pool / Raydium CPMM graduation pool). */
+  migratedPool?(mint: string): string | null;
   /** Live Jito landed-tip p50 (lamports), when known. */
   jitoTipFloorLamports(): bigint | null;
   /** Latest slot the ingest source reported. */
@@ -114,6 +128,7 @@ export class MarketStateView implements OrderMarket {
   quote(mint: string): MarketQuote | null {
     const rec = this.d.market.tokens.get(mint);
     if (!rec) return null;
+    if (rec.launchpad === "launchlab") return this.raydiumQuote(rec);
     const p = this.d.programs.get();
     // Same venue rule as the trade context the browser builds from (market/token.ts buildTradeContext).
     if (rec.migrated || !rec.curve) {
@@ -169,8 +184,86 @@ export class MarketStateView implements OrderMarket {
     };
   }
 
-  coinFacts(mint: string): Pick<StalenessObservation, "curve" | "pool"> {
+  /** Transfer-fee epoch: the chain's current epoch (the token program uses it at execution time). */
+  private epoch(rec: TokenRecord): bigint {
+    const slot = this.d.chain?.state.slot ?? rec.lastSlot ?? 0;
+    return BigInt(slot) / MAINNET_SLOTS_PER_EPOCH;
+  }
+
+  /** LaunchLab curve or CPMM graduation pool; not quotable until every fee input is known. */
+  private raydiumQuote(rec: TokenRecord): MarketQuote {
+    const r = this.d.market.raydiumInputs(rec);
+    if (!rec.migrated) {
+      const curve = launchLabCurve(rec);
+      if (!curve || !r.global || !r.platform || r.quoteTransferFee === undefined || !r.baseMintKnown)
+        return { venue: "launchlab", market: null };
+      let params: ReturnType<typeof launchLabTradeParams>;
+      try {
+        params = launchLabTradeParams({
+          globalConfig: { curveType: r.global.curveType, tradeFeeRate: r.global.tradeFeeRate, maxShareFeeRate: 0n },
+          platformConfig: r.platform,
+        });
+      } catch {
+        return { venue: "launchlab", market: null };
+      }
+      return {
+        venue: "launchlab",
+        market: {
+          venue: "launchlab",
+          pool: curve,
+          params,
+          transferFees: { base: rec.transferFeeConfig, quote: r.quoteTransferFee, epoch: this.epoch(rec) },
+          mintSupply: rec.supply,
+        },
+      };
+    }
+    const c = r.cpmmPool;
+    const cfg = r.ammConfig;
+    if (!c || !cfg || !rec.poolState || c.pool !== rec.pool || r.quoteTransferFee === undefined || !r.baseMintKnown) {
+      return { venue: "cpmm", market: null };
+    }
+    const st = c.state;
+    const baseIs0 = st.token0Mint === rec.mint;
+    // Reserves are kept net of the fees the pool owes: pass them as vault balances with zero fees owed.
+    return {
+      venue: "cpmm",
+      market: {
+        venue: "cpmm",
+        pool: {
+          token0Mint: st.token0Mint,
+          token1Mint: st.token1Mint,
+          status: st.status,
+          openTime: st.openTime,
+          creatorFeeOn: st.creatorFeeOn,
+          protocolFeesToken0: 0n,
+          protocolFeesToken1: 0n,
+          fundFeesToken0: 0n,
+          fundFeesToken1: 0n,
+          creatorFeesToken0: 0n,
+          creatorFeesToken1: 0n,
+        },
+        vault0Amount: baseIs0 ? rec.poolState.base : rec.poolState.quoteVault,
+        vault1Amount: baseIs0 ? rec.poolState.quoteVault : rec.poolState.base,
+        rates: cpmmFeeRates(cfg, st),
+        baseMint: rec.mint as Address,
+        transferFees: { base: rec.transferFeeConfig, quote: r.quoteTransferFee, epoch: this.epoch(rec) },
+        unixTimestamp: BigInt(Math.floor(Date.now() / 1000)),
+        baseMintSupply: rec.supply,
+      },
+    };
+  }
+
+  coinFacts(mint: string): CoinFacts {
     const rec = this.d.market.tokens.get(mint);
+    if (rec?.launchpad === "launchlab") {
+      if (!rec.launchLab) return {};
+      const creator = this.d.market.raydiumInputs(rec).launchLabPool?.creator ?? rec.creator;
+      const graduation = rec.migrated ? rec.pool : rec.launchLab.graduationPool;
+      return {
+        ...(creator ? { launchLabPool: { creator: creator as Address, status: launchLabStatus(rec) } } : {}),
+        ...(graduation ? { launchLabGraduationPool: graduation as Address } : {}),
+      };
+    }
     if (!rec?.creator) return {};
     const flags = { isMayhemMode: rec.isMayhem, ...(rec.isCashback !== null ? { isCashbackCoin: rec.isCashback } : {}) };
     if (rec.migrated && rec.pool) {
@@ -217,6 +310,11 @@ export class MarketStateView implements OrderMarket {
 
   migrated(mint: string): boolean {
     return this.d.market.tokens.get(mint)?.migrated === true;
+  }
+
+  migratedPool(mint: string): string | null {
+    const rec = this.d.market.tokens.get(mint);
+    return rec?.migrated ? rec.pool : null;
   }
 
   jitoTipFloorLamports(): bigint | null {

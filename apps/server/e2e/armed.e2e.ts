@@ -342,7 +342,7 @@ describe("the server engine fires a real armed take-profit on the mainnet fork",
     expect(order.attempts[0]?.variants.map((v) => v.tx.signature)).toContain(sig);
     expect(filled.events.map((e) => e.type)).toEqual(expect.arrayContaining(["armed", "submitted", "sent", "nonce-consumed"]));
     // The landed transaction sold everything and closed the token account (the full-exit guard).
-    const tx = await fork.rpc.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0, encoding: "json" }).send();
+    const tx = await fork.rpc.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 1, encoding: "json" }).send();
     expect(tx?.meta?.err).toBeNull();
     expect((await fork.rpc.getAccountInfo(ata, { encoding: "base64" }).send()).value).toBeNull();
     const after = (await fork.rpc.getBalance(trader.address, { commitment: "confirmed" }).send()).value;

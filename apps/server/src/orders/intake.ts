@@ -7,7 +7,8 @@
  *      safety policy;
  *   3. server rules on top: tables are operator tables, every variant pays a Jito tip and carries the
  *      jitodontfront marker (armed orders only travel Jito bundle-only), the reservation covers the worst
- *      case, an armed buy stays under the user's own per-trade cap (maxTradeSol);
+ *      case, an armed buy stays under the user's own per-trade cap (maxTradeSol), Raydium orders are quoted
+ *      in wSOL or USDC (other quotes have no SOL value for the caps, and the signer refuses them uncapped);
  *   4. every nonce is live on chain at the value the order was signed against, with the wallet as authority;
  *   5. no nonce account belongs to another account;
  *   6. validateUserArmedOrders against the user's other open orders (notional cap with OCO exclusivity,
@@ -27,6 +28,7 @@ import {
   JITO_MIN_TIP_LAMPORTS,
   LAMPORTS_PER_SOL,
   reviewedTipAccounts,
+  USDC_MINT,
   validateUserArmedOrders,
   WSOL_MINT,
 } from "@zerofee/core";
@@ -299,6 +301,16 @@ export function serverRules(o: ArmedOrder, tables: AddressesByLookupTableAddress
       }
       if (!marker) add("dontfront-missing", "armed variants must carry the read-only jitodontfront marker", v.id);
     }
+  }
+  if (
+    o.frozen.venues.some((v) => v.venue === "launchlab" || v.venue === "cpmm") &&
+    o.frozen.quoteMint !== WSOL_MINT &&
+    o.frozen.quoteMint !== USDC_MINT
+  ) {
+    add(
+      "quote-unsupported",
+      `Raydium orders must be quoted in wSOL or USDC; ${o.frozen.quoteMint} has no SOL value for the armed caps (trade it from the browser instead)`,
+    );
   }
   const wantTokens = o.side === "sell" ? o.amount : 0n;
   if (o.reservation.tokens !== wantTokens)

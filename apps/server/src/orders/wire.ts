@@ -20,7 +20,7 @@ import {
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "@zerofee/core";
-import { ORDER_KINDS } from "@zerofee/protocol";
+import { ORDER_KINDS, ORDER_VENUES } from "@zerofee/protocol";
 import { address, arr, bool, obj, oneOf, strict, ValidationError } from "../api/validate";
 
 const U64_MAX = (1n << 64n) - 1n;
@@ -30,7 +30,9 @@ const B58_RE = /^[1-9A-HJ-NP-Za-km-z]+$/;
 const OCO_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** Base64 length of a PACKET_DATA_SIZE transaction (armed transactions are v0, never larger). */
 const MAX_WIRE_B64 = Math.ceil(PACKET_DATA_SIZE / 3) * 4;
-const VENUES: readonly ArmedVenue[] = ["pump", "pumpswap"];
+/** pump.fun curve, PumpSwap, Raydium LaunchLab, Raydium CPMM (protocol ORDER_VENUES = core ArmedVenue). */
+const VENUES: readonly ArmedVenue[] = ORDER_VENUES;
+const RAYDIUM_VENUES: readonly ArmedVenue[] = ["launchlab", "cpmm"];
 
 export interface WireLimits {
   maxAttempts: number;
@@ -161,13 +163,21 @@ function attempt(v: unknown, name: string, index: number, orderId: string, lim: 
   };
 }
 
+/**
+ * pump / PumpSwap venues name their fee and buyback recipients (and coin flags); Raydium venues name the
+ * LaunchLab platform_config or CPMM amm_config instead and have no recipients (core FrozenVenueAccounts).
+ */
 function frozenVenue(v: unknown, name: string): FrozenVenueAccounts {
   const o = obj(v, name);
+  const venue = oneOf(o.venue, `${name}.venue`, VENUES);
+  const base = { venue, creator: addr(o.creator, `${name}.creator`), market: addr(o.market, `${name}.market`) };
+  if (RAYDIUM_VENUES.includes(venue)) {
+    strict(o, ["venue", "creator", "market", "config"], name);
+    return { ...base, config: addr(o.config, `${name}.config`) };
+  }
   strict(o, ["venue", "creator", "market", "feeRecipient", "buybackFeeRecipient", "isMayhemMode", "isCashbackCoin"], name);
   return {
-    venue: oneOf(o.venue, `${name}.venue`, VENUES),
-    creator: addr(o.creator, `${name}.creator`),
-    market: addr(o.market, `${name}.market`),
+    ...base,
     feeRecipient: addr(o.feeRecipient, `${name}.feeRecipient`),
     buybackFeeRecipient: addr(o.buybackFeeRecipient, `${name}.buybackFeeRecipient`),
     ...(o.isMayhemMode !== undefined ? { isMayhemMode: bool(o.isMayhemMode, `${name}.isMayhemMode`) } : {}),
