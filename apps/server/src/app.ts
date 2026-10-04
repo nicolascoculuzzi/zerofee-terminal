@@ -27,6 +27,7 @@ import type { IngestSink, Source } from "./ingest/types";
 import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
+import { jupiterRouteProbe, MintResolver } from "./market/resolve";
 import { MarketState } from "./market/state";
 import { ImageProxy } from "./media";
 import { HostPacer, PRIORITY, type Priority } from "./media/pacer";
@@ -97,6 +98,8 @@ export interface App {
   metrics: Metrics;
   /** Trade-history coverage, backfill and gap-fill from chain (null when disabled). */
   history: HistoryService | null;
+  /** On-demand resolve of mints opened by address. */
+  resolve: MintResolver;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -300,7 +303,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const txRpc = new RpcClient({ url: rpc.url, fetchFn: o.fetchFn, maxConcurrent: 2 });
   const source =
     o.source === undefined
-      ? createSource(cfg, { rpc, txRpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) })
+      ? cfg.source === "none"
+        ? null
+        : createSource(cfg, { rpc, txRpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) })
       : o.source;
   if (source instanceof RpcLogsSource) {
     const delay = source.slotDelay;
@@ -318,6 +323,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
               rpc: hrpc,
               perSec: cfg.history.rps,
               batchSize: cfg.history.batch,
+              concurrency: cfg.history.concurrency,
               paused: cfg.history.rpcUrl === rpc.url ? () => txRpc.coolingDown() || rpc.coolingDown() : undefined,
             };
             return cfg.history.helius ? new HeliusHistoryReader({ ...opts, name: "helius" }) : new RpcHistoryReader(opts);
@@ -338,6 +344,17 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       ...(o.historyDecode ? { decode: o.historyDecode } : {}),
     });
   }
+
+  // Any mint by address: on-demand chain resolves (GET /api/tokens/:mint, token:<mint> subscriptions).
+  const resolve = new MintResolver({
+    cfg: cfg.resolve,
+    market: m,
+    store: reader,
+    accounts: resolver,
+    raydium,
+    history,
+    jupiterRoutes: cfg.resolve.jupiterProbe ? jupiterRouteProbe(o.fetchFn) : null,
+  });
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
@@ -445,6 +462,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
           `cpmm ${m.stats.cpmmTrades} trades (${m.stats.cpmmIgnored} on other pools ignored); ` +
           `${m.stats.unattributedTrades} trades without a wallet; registry ${raydium.launchLabPools.size} pools, ` +
           `${raydium.cpmmPools.size} graduation pools, ${raydium.stats.rejected} CPMM pools rejected, ${raydium.platforms.size} platforms`,
+        `resolve (by address): ${JSON.stringify(resolve.stats)}, ${resolve.running} running`,
         ...(enricher?.notes() ?? ["enrich: off"]),
         `metadata: ${metadata.stats.requested} requested, ${metadata.stats.cacheHits} cached, ${metadata.stats.fetched} fetched, ` +
           `${metadata.stats.retries} retries, ${metadata.stats.permanent} failed for good, ${metadata.stats.gaveUp} gave up, ` +
@@ -538,6 +556,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     user,
     media,
     history,
+    resolve,
     onTokensChanged: user
       ? (mints) => {
           user.alerts.onTokensChanged(mints);
@@ -625,7 +644,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         (user?.alerts.watches(mint) ?? false) ||
         (user?.trackers.watchesMint(mint) ?? false) ||
         (orders?.engine.watches(mint) ?? false) ||
-        (history?.busy(mint) ?? false),
+        (history?.busy(mint) ?? false) ||
+        resolve.pinned(mint),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);
@@ -651,6 +671,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     loopLag,
     metrics,
     history,
+    resolve,
     health,
     async stop() {
       stopped = true;

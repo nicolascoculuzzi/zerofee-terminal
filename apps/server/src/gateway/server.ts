@@ -52,6 +52,7 @@ import { type LookupTableReader, MAX_LOOKUP_TABLES_PER_REQUEST } from "../feeds/
 import type { ProgramAccountsCache } from "../feeds/programAccounts";
 import { logger } from "../log";
 import { COLUMNS, diffSummary, type PulseBoard } from "../market/pulse";
+import type { ResolveOutcome } from "../market/resolve";
 import type { FeedItem, MarketState } from "../market/state";
 import type { MetricsEndpoint } from "../metrics";
 import { perf } from "../perf";
@@ -133,6 +134,11 @@ export interface GatewayDeps {
   media?: { handle(req: Request, url: URL, ip: string): Promise<Response> } | null;
   /** Trade-history coverage and backfill requests (src/history); absent = no history fields. */
   history?: { state(mint: string): TokenHistory | null; request(mint: string, priority?: 0 | 1 | 2, reason?: string): void } | null;
+  /**
+   * On-demand resolve of a mint the server does not hold (market/resolve.ts): GET /api/tokens/:mint waits for it,
+   * a token:<mint> subscription starts it (the record then goes out on the topic). Absent = memory / storage only.
+   */
+  resolve?: { resolve(mint: string, client: string): Promise<ResolveOutcome> } | null;
 }
 
 const DEBUG_TOPIC = "debug";
@@ -347,7 +353,7 @@ export class Gateway {
       if (req.method === "GET" && url.pathname === "/debug")
         return new Response(DEBUG_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
       if (req.method === "GET" && url.pathname.startsWith("/api/tokens/"))
-        return this.getToken(decodeURIComponent(url.pathname.slice("/api/tokens/".length)));
+        return await this.getToken(safeDecode(url.pathname.slice("/api/tokens/".length)), ip);
       if (req.method === "GET" && url.pathname === "/api/search") return this.search(url);
       if (req.method === "GET" && url.pathname === "/api/candles") return this.getCandles(url);
       if (req.method === "GET" && url.pathname === "/api/trades") return this.getTrades(url);
@@ -412,9 +418,20 @@ export class Gateway {
     return new Response(out as BodyInit, { headers });
   }
 
-  private getToken(mint: string): Response {
+  /** GET /api/tokens/:mint: memory, storage, or (any SPL mint) a chain resolve; see market/resolve.ts. */
+  private async getToken(mint: string, ip: string): Promise<Response> {
     const p = parseTopic(`token:${mint}`);
     if (!p) return apiError(400, "bad_request", "invalid mint");
+    if (this.d.resolve) {
+      const r = await this.d.resolve.resolve(mint, ip);
+      if (r.ok) return json({ token: r.token, tradeContext: r.tradeContext });
+      const headers: Record<string, string> = r.retryAfterSec ? { "retry-after": String(r.retryAfterSec) } : {};
+      return json(
+        { error: r.message, code: r.code, ...(r.reason ? { reason: r.reason } : {}), ...(r.redirect ? { redirect: r.redirect } : {}) },
+        r.status,
+        headers,
+      );
+    }
     const token = this.d.market.summary(mint) ?? this.d.reader?.token(mint)?.summary ?? null;
     if (!token) return apiError(404, "not_found", "unknown token");
     return json({ token, tradeContext: this.d.market.tradeContext(mint) });
@@ -530,7 +547,9 @@ export class Gateway {
     const h = this.d.history;
     if (!h) return null;
     const s = h.state(mint);
-    if (view && (!s || s.state === "partial" || s.state === "unknown")) h.request(mint, 0, "view");
+    // a coin not in memory is the resolver's: it reads the venues first, then asks for the backfill itself
+    const resolving = this.d.resolve && !this.d.market.tokens.has(mint);
+    if (view && !resolving && (!s || s.state === "partial" || s.state === "unknown")) h.request(mint, 0, "view");
     return h.state(mint) ?? s;
   }
 
@@ -615,7 +634,7 @@ export class Gateway {
       ws.send(this.hub.snapshotRaw(topic, `{"tokens":${this.d.pulse.snapshotJson(parsed.column)}}`), this.compress);
     } else {
       const data = parsed
-        ? this.snapshotData(topic as Topic, parsed)
+        ? this.snapshotData(topic as Topic, parsed, ws.data.ip)
         : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
       ws.send(this.hub.snapshot(topic, data), this.compress);
     }
@@ -720,15 +739,20 @@ export class Gateway {
     return this.hub.publish(`wallet:${address}`, "delta", delta);
   }
 
-  private snapshotData(topic: Topic, p: ParsedTopic): unknown {
+  private snapshotData(topic: Topic, p: ParsedTopic, ip = "unknown"): unknown {
     const m = this.d.market;
     switch (p.kind) {
       case "pulse":
         return { tokens: this.d.pulse.snapshot(p.column) };
       case "token": {
+        const rec = m.tokens.get(p.mint);
+        // not held (or held without a priced venue): resolve it; its full summary then goes out as a delta
+        const unresolved = !!this.d.resolve && (!rec || (!rec.curve && !rec.poolState && rec.launchpad !== "other"));
+        if (unresolved) void this.d.resolve?.resolve(p.mint, ip).catch(() => {});
         this.historyOf(p.mint, true);
-        const s = m.summary(p.mint) ?? this.d.reader?.token(p.mint)?.summary ?? null;
+        const s = unresolved ? null : (m.summary(p.mint) ?? this.d.reader?.token(p.mint)?.summary ?? null);
         if (s) this.lastToken.set(p.mint, s);
+        else this.lastToken.delete(p.mint);
         return s;
       }
       case "trades": {
@@ -885,6 +909,15 @@ export class Gateway {
       }
     }
     this.hub.publish(DEBUG_TOPIC, "delta", { feed: out, stats: this.d.debugStats() });
+  }
+}
+
+/** decodeURIComponent that answers a malformed escape with the raw text (then refused as an invalid mint). */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
   }
 }
 

@@ -228,6 +228,12 @@ interface PendingRaydiumEvent<E> {
 const isDefault = (a: string | undefined | null): boolean => !a || a === DEFAULT_PUBKEY;
 const max0 = (v: bigint): bigint => (v < 0n ? 0n : v);
 
+/**
+ * Order key of an account read at `slot`: after every transaction of that slot (the account already reflects
+ * them), before any later slot's.
+ */
+const anchorKey = (slot: number): OrderKey => [slot, Number.MAX_SAFE_INTEGER, 0];
+
 const MAX_PENDING_PER_POOL = 500;
 const MAX_PENDING_TOTAL = 50_000;
 
@@ -2192,8 +2198,89 @@ export class MarketState {
     }
     if (r.curve.complete && !rec.complete) rec.complete = true;
     if (!rec.creator) this.setCreator(rec, r.curve.creator, "curve");
+    // No trade applied yet (a coin opened by address, or discovered for a backfill): the account is the freshest
+    // curve. Anchored at the read's slot so a backfilled (older) trade never takes over the price.
+    if (!rec.curveKey && r.curve.virtualTokenReserves > 0n) {
+      rec.curve = {
+        vToken: r.curve.virtualTokenReserves,
+        vQuote: r.curve.virtualQuoteReserves,
+        rToken: r.curve.realTokenReserves,
+        rQuote: r.curve.realQuoteReserves,
+      };
+      if (r.slot !== undefined) {
+        rec.curveKey = anchorKey(r.slot);
+        rec.curveSlot = r.slot;
+      }
+    }
     this.touch(rec);
     this.changes.tradeCtx.add(rec.mint);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // on-demand resolve (market/resolve.ts): a coin opened by address, seeded from chain accounts
+  // ---------------------------------------------------------------------------------------------
+
+  /** A LaunchLab coin's record (created when unknown), linked to its pool; the pool account fills the rest. */
+  ensureLaunchLabToken(mint: string, pool: string, quoteMint: string): TokenRecord {
+    const rec = this.getOrCreate(mint, { launchpad: "launchlab", bootstrapRequested: true });
+    rec.launchpad = "launchlab";
+    this.launchLabOf(rec, pool, {});
+    this.setQuote(rec, quoteMint);
+    this.touch(rec);
+    return rec;
+  }
+
+  /** A coin with no venue the server decodes but a Jupiter route ("other": no price, no trade context). */
+  ensureOtherToken(mint: string): TokenRecord {
+    const rec = this.getOrCreate(mint, { launchpad: "other", bootstrapRequested: true });
+    this.touch(rec);
+    return rec;
+  }
+
+  /**
+   * PumpSwap pool reserves read from the pool account and its vaults (PumpSwap vaults hold exactly the
+   * reserves; virtual_quote_reserves is signed and added to the quote side). Kept only when no swap set newer ones.
+   */
+  seedPoolReserves(mint: string, pool: string, base: bigint, quoteVault: bigint, virtualQuote: bigint, slot: number): void {
+    const rec = this.tokens.get(mint);
+    if (!rec || rec.pool !== pool) return;
+    if (rec.poolKey && cmpKey(rec.poolKey, anchorKey(slot)) >= 0) return;
+    rec.poolState = { base, quoteVault, virtualQuote };
+    rec.poolKey = anchorKey(slot);
+    rec.poolSlot = slot;
+    rec.holders?.exclude(pool);
+    this.touch(rec);
+    this.changes.tradeCtx.add(mint);
+  }
+
+  /** Reserves taken from accounts without a key (LaunchLab / CPMM reads) are anchored at `slot`. */
+  anchorReserves(mint: string, slot: number): void {
+    const rec = this.tokens.get(mint);
+    if (!rec) return;
+    if (rec.curve && !rec.curveKey) {
+      rec.curveKey = anchorKey(slot);
+      rec.curveSlot ??= slot;
+    }
+    if (rec.poolState && !rec.poolKey) {
+      rec.poolKey = anchorKey(slot);
+      rec.poolSlot ??= slot;
+    }
+  }
+
+  /** A pruned record reloaded from storage: its persisted reserves predate the reload, the chain read replaces them. */
+  forgetReserveKeys(mint: string): void {
+    const rec = this.tokens.get(mint);
+    if (!rec) return;
+    rec.curveKey = null;
+    rec.poolKey = null;
+  }
+
+  /** Republishes a record (summary and trade context) and keeps it fresh for the idle eviction. */
+  publishToken(mint: string): void {
+    const rec = this.tokens.get(mint);
+    if (!rec) return;
+    this.touch(rec);
+    this.changes.tradeCtx.add(mint);
   }
 
   /** DexScreener verdict. An approved token profile does not revert, so a paid token stays paid. */

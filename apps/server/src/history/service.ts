@@ -8,12 +8,14 @@
  * Persisted in token_history with the newest signature covered per account, so a later gap-fill only walks what
  * is new (getSignaturesForAddress `until`).
  *
- * A job walks the coin's accounts (bonding curve, then its PumpSwap / LaunchLab / CPMM pool) newest first with
- * getSignaturesForAddress, skips failed transactions and signatures it already holds, fetches the rest with
- * getTransaction, decodes them with the live decoders (ingestFromJsonTx: Anchor event-CPI) and merges them in
- * rounds (MarketState.collectHistory / mergeHistory, idempotent on signature + side + amount): trades are stored,
- * the touched hours' candles rebuilt, and each round goes out as a `backfill` correction on trades:<mint> and
- * candles:<mint>:<tf>. When the walk reaches the creation, the holder book is rebuilt from the full list.
+ * A job walks the coin's accounts (its CPMM / PumpSwap pool, then its LaunchLab pool / bonding curve: newest venue
+ * first) newest first with getSignaturesForAddress, skips failed transactions and signatures it already holds,
+ * fetches the rest with getTransaction (newest first), decodes them with the live decoders (ingestFromJsonTx:
+ * Anchor event-CPI) and merges them in rounds (MarketState.collectHistory / mergeHistory, idempotent on signature +
+ * side + amount): trades are stored, the touched hours' candles rebuilt, and each round goes out as a `backfill`
+ * correction on trades:<mint> and candles:<mint>:<tf>. A round runs every HISTORY_MERGE_EVERY transactions or
+ * HISTORY_MERGE_MS (the first one as soon as anything decoded), so on a slow endpoint the recent candles and the
+ * tape fill in while the walk goes on. When the walk reaches the creation, the holder book is rebuilt.
  *
  * Refresh: a viewed coin (HISTORY_VIEW_REFRESH_MS) and a listed one (HISTORY_LISTED_REFRESH_MS) is re-checked against
  * the chain: one signatures page down to the last signature covered, getTransaction only for what the feed missed.
@@ -104,6 +106,8 @@ interface Job {
   errors: number;
   waitPoolUntil: number;
   lastProgressAt: number;
+  /** Last merge round (0: none yet, the first decoded transactions merge at once). */
+  lastMergeAt: number;
   /** A routine re-check of a complete coin: its coverage stays "complete" unless it finds trades. */
   quiet: boolean;
 }
@@ -227,6 +231,7 @@ export class HistoryService {
     const job = this.jobs.get(mint);
     if (job) {
       if (priority < job.priority) job.priority = priority;
+      if (job.started) this.extendWalks(job);
       return;
     }
     const h = this.state(mint);
@@ -254,6 +259,7 @@ export class HistoryService {
       errors: 0,
       waitPoolUntil: 0,
       lastProgressAt: 0,
+      lastMergeAt: 0,
       quiet: reason === "refresh" && h?.state === "complete",
     });
     // a viewer is waiting: say "backfilling" now (the job starts within a step or two)
@@ -408,9 +414,10 @@ export class HistoryService {
   /** One unit of work: a signatures page, a getTransaction batch, a merge round or the final bookkeeping. */
   async step(job: Job): Promise<void> {
     if (!job.started && !(await this.begin(job))) return;
-    if (job.buffer.length >= this.d.cfg.mergeEvery) return this.merge(job);
+    if (job.buffer.length >= this.d.cfg.mergeEvery || this.mergeDue(job)) return this.merge(job);
     if (job.pending.length) {
-      const n = Math.max(1, this.d.reader.batchSize);
+      // one JSON-RPC batch per in-flight slot: the reader pipelines them within its rate
+      const n = Math.max(1, this.d.reader.batchSize) * Math.max(1, this.d.reader.concurrency ?? 1);
       const batch = job.pending.splice(0, n);
       let txs: (RpcJsonTx | null)[];
       try {
@@ -522,6 +529,32 @@ export class HistoryService {
     return true;
   }
 
+  /**
+   * The coin's record learned a venue after the job began (an on-demand resolve found the pool of a coin the job
+   * discovered from its curve alone): walk the new accounts too, newest venue first.
+   */
+  private extendWalks(job: Job): void {
+    const rec = this.d.market.tokens.get(job.mint);
+    if (!rec || !job.coin) return;
+    const now = coinOf(rec);
+    if (!now.curve && job.coin.curve) now.curve = job.coin.curve;
+    const have = new Set(job.walks.map((w) => w.address));
+    const fresh = walkAccounts(now).filter((a) => !have.has(a.address));
+    if (!fresh.length) return;
+    job.coin = now;
+    job.walks.unshift(
+      ...fresh.map((a) => ({
+        address: a.address,
+        newest: null,
+        done: false,
+        reachedStart: false,
+        pages: 0,
+        lastSlot: -1,
+        rankInSlot: 0,
+      })),
+    );
+  }
+
   private async page(job: Job, w: WalkState): Promise<void> {
     const sigs: SignatureInfo[] = await this.d.reader.signatures(w.address, { before: w.before, until: w.until, limit: 1_000 });
     w.pages++;
@@ -549,11 +582,18 @@ export class HistoryService {
     this.progress(job);
   }
 
+  /** Decoded transactions have waited HISTORY_MERGE_MS (or none were merged yet): show them now. */
+  private mergeDue(job: Job): boolean {
+    const every = this.d.cfg.mergeMs;
+    return every > 0 && job.buffer.length > 0 && this.now() - job.lastMergeAt >= every;
+  }
+
   /** Applies the buffered transactions: trades stored, touched hours' candles rebuilt, a correction published. */
   private async merge(job: Job): Promise<void> {
     const coin = job.coin as CoinAccounts;
     const buffer = job.buffer;
     job.buffer = [];
+    job.lastMergeAt = this.now();
     const { entries } = this.d.market.collectHistory(coin, buffer);
     const { added, hours } = this.d.market.mergeHistory(job.mint, entries, job.known);
     job.stats.added += added.length;
@@ -685,6 +725,7 @@ export class HistoryService {
       rpcErrors: r.errors,
       rateLimited: r.rateLimited,
       rps: this.d.cfg.rps,
+      ...(r.rate !== undefined ? { rate: r.rate } : {}),
     };
   }
 

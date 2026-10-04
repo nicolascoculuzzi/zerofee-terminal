@@ -171,3 +171,31 @@ function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): Trad
     solUsd: null,
   };
 }
+
+/**
+ * A pruned record reloaded on demand (market/resolve.ts): its rolling windows and trade ring from the stored trades
+ * of the last 24 h (holder books are not rebuilt here: a backfill that reaches the creation does that).
+ */
+export function replayRecent(market: MarketState, reader: StorageReader, rec: TokenRecord, now: number): number {
+  const entries: TradeEntry[] = [];
+  let group: TradeRow[] = [];
+  const flush = () => {
+    if (!group.length) return;
+    const buyers = new Set(group.filter((r) => r.side === 0).map((r) => r.trader));
+    for (const r of group) entries.push(replayTrade(rec, r, buyers));
+    group = [];
+  };
+  for (const r of reader.iterateTradesOf(rec.mint, now - 86_400_000, now)) {
+    if (group.length && (group[0] as TradeRow).signature !== r.signature) flush();
+    group.push(r);
+  }
+  flush();
+  if (entries.length) {
+    const ring = entries.concat(rec.trades);
+    rec.trades = ring.length > 200 ? ring.slice(ring.length - 200) : ring;
+    const last = entries[entries.length - 1] as TradeEntry;
+    if (rec.lastTradeAt === null || last.tsMs > rec.lastTradeAt) rec.lastTradeAt = last.tsMs;
+    market.touchToken(rec.mint);
+  }
+  return entries.length;
+}

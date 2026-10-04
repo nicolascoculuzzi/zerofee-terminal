@@ -42,6 +42,12 @@ export interface RpcStats {
   dataAllowance: number;
   coolingDownUntil: number;
   lastError: string | null;
+  /**
+   * Last `x-ratelimit-method-remaining` / `-limit` the endpoint reported (the public mainnet RPC: 10 calls of one
+   * method per 10 s per IP, getTransaction included); null when it sends none.
+   */
+  methodRemaining: number | null;
+  methodLimit: number | null;
 }
 
 const b64 = getBase64Encoder();
@@ -51,7 +57,16 @@ export class RpcClient {
   private inFlight = 0;
   private readonly waiters: (() => void)[] = [];
   private nextId = 1;
-  readonly stats: RpcStats = { calls: 0, errors: 0, rateLimited: 0, dataAllowance: 0, coolingDownUntil: 0, lastError: null };
+  readonly stats: RpcStats = {
+    calls: 0,
+    errors: 0,
+    rateLimited: 0,
+    dataAllowance: 0,
+    coolingDownUntil: 0,
+    lastError: null,
+    methodRemaining: null,
+    methodLimit: null,
+  };
 
   constructor(private readonly opts: RpcClientOptions) {
     this.fetchFn = opts.fetchFn ?? fetch;
@@ -92,9 +107,10 @@ export class RpcClient {
         body: JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method, params }),
         signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000),
       });
+      this.noteLimits(res);
       if (res.status === 429) {
         this.stats.rateLimited++;
-        this.cooldown(this.opts.cooldownMs ?? 5_000);
+        this.cooldown(this.rateLimitWait(res));
         throw new RpcError(method, 429, "HTTP 429");
       }
       const text = await res.text();
@@ -108,6 +124,10 @@ export class RpcClient {
         if (/data allowance/i.test(body.error.message)) {
           this.stats.dataAllowance++;
           this.cooldown(this.opts.cooldownMs ?? 30_000);
+        } else if (body.error.code === 429) {
+          // a JSON-RPC 429 in a 200 response ("Too many requests for a specific RPC call"): same as HTTP 429
+          this.stats.rateLimited++;
+          this.cooldown(this.rateLimitWait(res));
         }
         throw new RpcError(method, body.error.code, body.error.message);
       }
@@ -149,9 +169,10 @@ export class RpcClient {
         body: JSON.stringify(paramsList.map((params, i) => ({ jsonrpc: "2.0", id: first + i, method, params }))),
         signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000),
       });
+      this.noteLimits(res);
       if (res.status === 429) {
         this.stats.rateLimited++;
-        this.cooldown(this.opts.cooldownMs ?? 5_000);
+        this.cooldown(this.rateLimitWait(res));
         throw new RpcError(method, 429, "HTTP 429");
       }
       const text = await res.text();
@@ -194,6 +215,26 @@ export class RpcClient {
 
   private cooldown(ms: number): void {
     this.stats.coolingDownUntil = Math.max(this.stats.coolingDownUntil, Date.now() + ms);
+  }
+
+  /**
+   * Cooldown after a 429: the endpoint's `Retry-After` (seconds) when it sends one, at least the configured
+   * cooldown. The public RPC answers a per-method limit with Retry-After: 10; asking again sooner only earns
+   * more 429s (they count against the same window).
+   */
+  private rateLimitWait(res: Response): number {
+    const base = this.opts.cooldownMs ?? 5_000;
+    const ra = Number(res.headers?.get?.("retry-after"));
+    return Number.isFinite(ra) && ra > 0 ? Math.max(base, Math.min(60_000, ra * 1000)) : base;
+  }
+
+  private noteLimits(res: Response): void {
+    const h = res.headers;
+    if (!h?.get) return;
+    const rem = h.get("x-ratelimit-method-remaining");
+    const lim = h.get("x-ratelimit-method-limit");
+    if (rem !== null && rem !== "" && Number.isFinite(Number(rem))) this.stats.methodRemaining = Number(rem);
+    if (lim !== null && lim !== "" && Number.isFinite(Number(lim))) this.stats.methodLimit = Number(lim);
   }
 
   /** getMultipleAccounts (base64), chunked by 100; missing accounts are null. */

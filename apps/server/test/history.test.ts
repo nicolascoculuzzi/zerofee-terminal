@@ -537,3 +537,71 @@ describe("long histories and failing reads", () => {
     expect(w.reader.tradesOfMint(life.mint)).toHaveLength(13);
   });
 });
+
+describe("what a viewer sees while a slow backfill runs", () => {
+  test("trades are stored and published per merge round (HISTORY_MERGE_MS), newest first, long before the walk ends", async () => {
+    const life = coinLife("slow", 30);
+    const w = world();
+    w.market.applyTx(life.txs[life.txs.length - 1] as IngestTx);
+    const rec = w.market.tokens.get(life.mint);
+    if (rec) rec.bondingCurve = life.curve.bondingCurve;
+    // ~25 ms per getTransaction: the count rule (mergeEvery 1,000) alone would show nothing until the end
+    const reader = new FakeHistoryReader(chainOf(life.curve.bondingCurve, life.txs), 1, 25);
+    const rounds: { at: number; slots: number[]; added: number; state: string }[] = [];
+    const svc = new HistoryService({
+      cfg: { ...HISTORY_CFG, mergeEvery: 1_000, mergeMs: 100 },
+      market: w.market,
+      reader,
+      store: w.reader,
+      writer: w.writer,
+      watched: () => [],
+      listed: () => [],
+      decode: decodeFake,
+      publish: (_m, added, _candles, h) =>
+        rounds.push({ at: Date.now(), slots: added.map((t) => t.slot), added: h.progress?.added ?? -1, state: h.state }),
+    });
+    services.push(svc);
+    svc.start();
+    svc.request(life.mint, 0);
+    await waitFor(() => svc.state(life.mint)?.state === "complete", 10_000);
+    const partial = rounds.filter((r) => r.state === "backfilling" && r.slots.length > 0);
+    // several rounds went out while backfilling, each with its trades stored and counted in `progress.added`
+    expect(partial.length).toBeGreaterThanOrEqual(3);
+    expect(partial[0]?.added).toBeGreaterThan(0);
+    for (let i = 1; i < partial.length; i++)
+      expect((partial[i] as { added: number }).added).toBeGreaterThan((partial[i - 1] as { added: number }).added);
+    // the first round holds the newest trades: every later round is older
+    const newestFirst = Math.min(...(partial[0] as { slots: number[] }).slots);
+    for (const r of partial.slice(1)) expect(Math.max(...r.slots)).toBeLessThan(newestFirst);
+    w.writer.flush();
+    expect(w.reader.tradesOfMint(life.mint)).toHaveLength(31);
+  });
+
+  test("a graduate's pool is walked before its curve, each account newest transaction first", async () => {
+    const life = coinLife("grad", 10);
+    const w = world();
+    w.market.applyTx(life.txs[life.txs.length - 1] as IngestTx);
+    const rec = w.market.tokens.get(life.mint);
+    const pool = addr("grad-pool");
+    if (rec) {
+      rec.bondingCurve = life.curve.bondingCurve;
+      rec.pool = pool;
+      rec.migrated = true;
+    }
+    // the curve carries the older half of the life, the pool the newer half
+    const older = life.txs.slice(0, 6);
+    const newer = life.txs.slice(6, -1);
+    const chain = new Map([...chainOf(life.curve.bondingCurve, older), ...chainOf(pool, newer)]);
+    const reader = new FakeHistoryReader(chain);
+    const svc = service(w, reader);
+    svc.start();
+    svc.request(life.mint, 0);
+    await waitFor(() => svc.state(life.mint)?.state === "complete", 5_000);
+    expect(reader.calls[0]?.address).toBe(pool);
+    const expected = [...newer]
+      .reverse()
+      .map((t) => t.signature)
+      .concat([...older].reverse().map((t) => t.signature));
+    expect(reader.fetched).toEqual(expected);
+  });
+});

@@ -81,6 +81,8 @@ export interface CurveResolved {
   mint: string;
   bondingCurve: string;
   curve: BondingCurve;
+  /** Context slot of the read, when known (on-demand resolves). */
+  slot?: number;
 }
 
 export interface ResolverEvents {
@@ -155,6 +157,19 @@ export class AccountResolver {
 
   get pending(): number {
     return this.queue.size;
+  }
+
+  /**
+   * One getMultipleAccounts (<= 100 addresses, processed) right now, outside the batch queue: the on-demand resolve
+   * of a coin opened by address, where a user waits on the answer and the read's slot anchors the reserves.
+   * Throws while the client cools down after a rate limit.
+   */
+  async fetchAccounts(addresses: readonly string[]): Promise<{ slot: number; accounts: (RpcAccount | null)[] }> {
+    if (addresses.length > 100) throw new Error("fetchAccounts: at most 100 addresses");
+    const r = await this.rpc.getMultipleAccounts(addresses as Address[], "processed");
+    this.stats.batches++;
+    this.stats.accounts += addresses.length;
+    return r;
   }
 
   /** Loads persisted pools (startup). */
