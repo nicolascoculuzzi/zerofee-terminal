@@ -3,17 +3,26 @@ import type { ReactNode } from "react";
 import { Button } from "../../components/ui/Button";
 import { Hotkey } from "../../components/ui/controls";
 import { WalletBadge } from "../../components/ui/WalletIcon";
+import { cn } from "../../lib/cn";
 import { fmtSol, shortAddr } from "../../lib/format";
 import type { ConnectedWallet, TradingWallet } from "../../services/walletService";
 import { useSettings } from "../../state/settings";
 import type { FundResult } from "./FundStep";
-import { StepActions, type StepFrame, StepHeader } from "./parts";
+import { Panel, StepActions, type StepFrame, StepHeader } from "./parts";
 
-function Item({ ok, children }: { ok: boolean; children: ReactNode }) {
+function Item({ ok, label, children }: { ok: boolean; label: string; children: ReactNode }) {
   return (
-    <li className="flex min-h-8 items-center gap-2 py-1 text-data">
-      {ok ? <Check className="icon-xs text-buy" /> : <TriangleAlert className="icon-xs text-warn" />}
-      <span className={ok ? "text-fg-1" : "text-warn"}>{children}</span>
+    <li className="flex min-h-11 items-center gap-3 px-3 py-2 text-data">
+      <span
+        className={cn(
+          "flex size-5 shrink-0 items-center justify-center rounded-full",
+          ok ? "bg-buy-tint text-buy" : "bg-warn-tint text-warn",
+        )}
+      >
+        {ok ? <Check className="icon-xs" /> : <TriangleAlert className="icon-xs" />}
+      </span>
+      <span className="w-28 shrink-0 text-fg-3">{label}</span>
+      <span className={cn("min-w-0 flex-1 text-right", ok ? "text-fg-1" : "text-warn")}>{children}</span>
     </li>
   );
 }
@@ -41,23 +50,32 @@ export function DoneStep({
   return (
     <>
       <StepHeader frame={frame} />
-      <ul className="divide-y divide-hairline border-y border-hairline">
-        <Item ok>
-          <span className="inline-flex flex-wrap items-center gap-1">
-            Signed in as <span className="font-mono">{shortAddr(connected.address)}</span> with <WalletBadge wallet={connected} />
-          </span>
-        </Item>
-        <Item ok>Trading wallet created ({wallet.unlockMethod === "passkey" ? "passkey" : "passphrase"})</Item>
-        <Item ok={backedUp}>{backedUp ? "Backup verified" : "Backup not verified"}</Item>
-        <Item ok={funded !== null}>{funded ? `Funded ${fmtSol(funded.sol)} SOL` : "Not funded · Fund later"}</Item>
-      </ul>
+      <Panel>
+        <ul className="divide-y divide-hairline">
+          <Item ok label="Signed in">
+            <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
+              <WalletBadge wallet={connected} />
+              <span className="font-mono text-fg-2">{shortAddr(connected.address)}</span>
+            </span>
+          </Item>
+          <Item ok label="Trading wallet">
+            {wallet.label} · {wallet.unlockMethod === "passkey" ? "passkey" : "passphrase"}
+          </Item>
+          <Item ok={backedUp} label="Backup">
+            {backedUp ? "Verified" : "Not verified"}
+          </Item>
+          <Item ok={funded !== null} label="Balance">
+            {funded ? `Funded ${fmtSol(funded.sol)} SOL` : "Not funded · fund any time from the top bar"}
+          </Item>
+        </ul>
+      </Panel>
       <StepActions>
         <Button size="xl" variant="primary" onClick={onOpen}>
           Open Pulse <ArrowRight />
         </Button>
       </StepActions>
       {helpKey && (
-        <p className="mt-4 flex items-center gap-1 text-label text-fg-3">
+        <p className="mt-4 flex items-center justify-center gap-1 text-label text-fg-3">
           Press <Hotkey binding={helpKey} /> any time for shortcuts.
         </p>
       )}
