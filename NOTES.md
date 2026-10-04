@@ -31,7 +31,7 @@ Whole-history backfill of FLOP (`--backfill-only`, server never saw the coin: di
 | Run | Fetched | Stored trades | Chain successful txs | Missing with FLOP trades | Holders / top 10 |
 |---|---|---|---|---|---|
 | 1 (first code) | 393 in 64 min | 156 | 429 | 199 | 19 / 35.2% (wrong: built on 156 trades) |
-| 2 (fixed) | FLOP_RUN2 |
+| 2 (fixed, merged main) | 429 in 31 min | 428 (in 428 txs) | 429 | 0 (the one other successful tx carries no FLOP trade) | 24 / 73.1%, complete from the creation |
 
 Run 1 found two bugs. (1) The 72 h trade-retention prune (every minute) deleted the backfilled trades of a coin older than 72 h while its backfill ran, because the retention exemption was only written when the job finished. It is now written when the job starts. (2) A getTransaction batch that still failed after the reader's retries (429) was dropped. It is now put back and retried after a 15 s pause. The public RPC gave this run ~0.1-0.2 getTransaction/s: the preview server on the same IP kept a 500-deep Raydium re-read queue.
 ## 2026-10-04: follow-ups (CSP style-src, one loop-lag monitor, WS_COMPRESSION on)
