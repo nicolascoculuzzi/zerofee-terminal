@@ -7,9 +7,13 @@
  * 2026-10-03), which a 0 would refuse. Every v0 / legacy transaction is returned either way.
  *
  * Budget: one token bucket (`Pacer`) per reader, in calls per second, shared by every coin's backfill. The
- * public RPC answers 429 at about 2 getTransaction calls per second, so the default is low; a paid endpoint
- * (HISTORY_RPC_URL) takes a higher HISTORY_RPS and JSON-RPC batches (HISTORY_BATCH). A 429 pauses the reader
- * for the client's cooldown and the call is retried; `paused()` lets the live feed's own client pre-empt it.
+ * public mainnet RPC limits each method to 10 calls per 10 s per IP (`x-ratelimit-method-limit: 10`; a JSON-RPC
+ * batch counts each item, and a 429 answers Retry-After: 10), shared with the live feed's own re-reads on the
+ * same IP, so the default is 1/s and JSON-RPC batching (HISTORY_BATCH) only pays off on a paid endpoint
+ * (HISTORY_RPC_URL). Calls are pipelined: up to `concurrency` requests in flight, each started by the pacer, so
+ * an endpoint's latency no longer caps throughput below HISTORY_RPS. The rate adapts (AIMD): a 429 halves it and
+ * pauses the reader for the endpoint's Retry-After; every success wins back a twentieth of the configured rate.
+ * `paused()` lets the live feed's own client pre-empt it.
  *
  * Optional (production): with a Helius key, `HeliusHistoryReader` adds `getTransactionsForAddress` full pages
  * (up to 100 parsed transactions per call). It is a speed-up only: the result is decoded by the same decoders.
@@ -34,8 +38,10 @@ export interface FullPageEntry {
 
 export interface HistoryReader {
   readonly name: string;
-  /** Signatures per transactions() call (1 = no batching). */
+  /** Signatures per JSON-RPC batch (1 = no batching). */
   readonly batchSize: number;
+  /** Batches a transactions() call keeps in flight at once (default 1: sequential). */
+  readonly concurrency?: number;
   /** getSignaturesForAddress, newest first. `until`: stop at this signature (exclusive). */
   signatures(address: string, o: { before?: string; until?: string; limit?: number }): Promise<SignatureInfo[]>;
   /** getTransaction per signature, in input order; null when the node does not have it (yet). */
@@ -55,6 +61,8 @@ export interface ReaderStats {
   retries: number;
   waitedMs: number;
   lastError: string | null;
+  /** Current adaptive call rate (calls / s); absent for readers without one. */
+  rate?: number;
 }
 
 /** Token bucket in calls per second. `take(n)` resolves once n calls may start; `paused()` holds everything. */
@@ -64,12 +72,22 @@ export class Pacer {
   private chain: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly perSec: number,
+    private perSec: number,
     private readonly paused: () => boolean = () => false,
     private readonly now: () => number = Date.now,
     private readonly wait: (ms: number) => Promise<void> = sleep,
   ) {
     this.tokens = Math.min(1, perSec);
+  }
+
+  get rate(): number {
+    return this.perSec;
+  }
+
+  /** Changes the rate (AIMD); tokens already earned are kept up to the new bucket size. */
+  setRate(perSec: number): void {
+    this.perSec = perSec;
+    this.tokens = Math.min(this.tokens, Math.max(1, perSec));
   }
 
   /** Waits for `n` tokens (n may exceed the bucket size: it then waits for the deficit). Returns ms waited. */
@@ -107,6 +125,10 @@ export interface RpcHistoryReaderOptions {
   rpc: RpcClient;
   perSec: number;
   batchSize?: number;
+  /** Batches in flight at once within the pacer's rate (default 1). */
+  concurrency?: number;
+  /** Lowest rate the AIMD backoff goes down to (default perSec / 4: the Retry-After cooldown does the waiting). */
+  minPerSec?: number;
   /** Extra pause condition (e.g. the live feed's client is cooling down: live goes first). */
   paused?: () => boolean;
   maxRetries?: number;
@@ -129,25 +151,49 @@ const emptyStats = (): ReaderStats => ({
 export class RpcHistoryReader implements HistoryReader {
   readonly name: string;
   readonly batchSize: number;
+  readonly concurrency: number;
   readonly stats = emptyStats();
   protected readonly pacer: Pacer;
+  private readonly maxRate: number;
+  private readonly minRate: number;
 
   constructor(protected readonly o: RpcHistoryReaderOptions) {
     this.name = o.name ?? "rpc";
     this.batchSize = Math.max(1, Math.min(100, o.batchSize ?? 1));
+    this.concurrency = Math.max(1, Math.min(32, o.concurrency ?? 1));
+    this.maxRate = o.perSec;
+    this.minRate = Math.min(o.perSec, Math.max(0.01, o.minPerSec ?? o.perSec / 4));
     this.pacer = new Pacer(o.perSec, () => o.rpc.coolingDown() || (o.paused?.() ?? false));
+    this.stats.rate = o.perSec;
   }
 
-  /** Runs `fn` under the pacer, retrying 429s / transient failures (after the client's cooldown). */
+  /** AIMD: a 429 halves the rate, each success wins back a twentieth of the configured one. */
+  private adapt(ok: boolean): void {
+    if (!(this.maxRate > 0)) return;
+    const r = this.pacer.rate;
+    const next = ok ? Math.min(this.maxRate, r + this.maxRate / 20) : Math.max(this.minRate, r / 2);
+    if (next !== r) this.pacer.setRate(next);
+    this.stats.rate = Math.round(next * 1000) / 1000;
+  }
+
+  /**
+   * Runs `fn` under the pacer, retrying 429s / transient failures. A 429 puts the client in cooldown for the
+   * endpoint's Retry-After, and the pacer holds every call until it ends: retrying sooner only earns more 429s.
+   */
   protected async paced<T>(cost: number, fn: () => Promise<T>): Promise<T> {
     const max = this.o.maxRetries ?? 4;
     for (let attempt = 0; ; attempt++) {
       this.stats.waitedMs += await this.pacer.take(cost);
       try {
-        return await fn();
+        const r = await fn();
+        this.adapt(true);
+        return r;
       } catch (e) {
         const rpcErr = e instanceof RpcError ? e : null;
-        if (rpcErr?.code === 429) this.stats.rateLimited++;
+        if (rpcErr?.code === 429) {
+          this.stats.rateLimited++;
+          this.adapt(false);
+        }
         this.stats.lastError = e instanceof Error ? e.message : String(e);
         // JSON-RPC errors other than rate limits / transport failures are final (bad params, unsupported version).
         const transient = !rpcErr || rpcErr.code === 429 || rpcErr.code === null || (rpcErr.code >= 500 && rpcErr.code < 600);
@@ -156,7 +202,8 @@ export class RpcHistoryReader implements HistoryReader {
           throw e;
         }
         this.stats.retries++;
-        await sleep(Math.min(8_000, 400 * 2 ** attempt));
+        // 429: the client's cooldown (Retry-After) already holds the pacer; other failures back off here
+        if (rpcErr?.code !== 429 || !this.o.rpc.coolingDown()) await sleep(Math.min(8_000, 400 * 2 ** attempt));
       }
     }
   }
@@ -176,30 +223,45 @@ export class RpcHistoryReader implements HistoryReader {
     return rows.map((r) => ({ signature: r.signature, slot: r.slot, err: r.err ?? null, blockTime: r.blockTime ?? null }));
   }
 
+  /**
+   * getTransaction for each signature, in input order: JSON-RPC batches of `batchSize`, up to `concurrency` of
+   * them in flight (each started by the pacer). Throws when a batch still fails after the retries; the caller
+   * then retries the whole call.
+   */
   async transactions(signatures: readonly string[]): Promise<(RpcJsonTx | null)[]> {
-    const out: (RpcJsonTx | null)[] = [];
     const cfg = { encoding: "json", maxSupportedTransactionVersion: 1, commitment: this.o.commitment ?? "confirmed" };
-    for (let i = 0; i < signatures.length; i += this.batchSize) {
-      const chunk = signatures.slice(i, i + this.batchSize);
-      const res = await this.paced(chunk.length, () =>
-        this.o.rpc.callBatch<RpcJsonTx | null>(
-          "getTransaction",
-          chunk.map((s) => [s, cfg]),
-        ),
-      );
-      for (const r of res) {
-        if (r instanceof RpcError) {
-          this.stats.errors++;
-          this.stats.lastError = r.message;
-          out.push(null);
-          continue;
-        }
-        this.stats.transactions++;
-        if (!r) this.stats.notFound++;
-        out.push(r);
+    const chunks: string[][] = [];
+    for (let i = 0; i < signatures.length; i += this.batchSize) chunks.push(signatures.slice(i, i + this.batchSize));
+    const results: (RpcJsonTx | null)[][] = new Array(chunks.length);
+    let next = 0;
+    let failed = false;
+    const worker = async () => {
+      while (next < chunks.length && !failed) {
+        const k = next++;
+        const chunk = chunks[k] as string[];
+        const res = await this.paced(chunk.length, () =>
+          this.o.rpc.callBatch<RpcJsonTx | null>(
+            "getTransaction",
+            chunk.map((s) => [s, cfg]),
+          ),
+        ).catch((e) => {
+          failed = true; // the others stop after their current batch: the caller retries the whole call
+          throw e;
+        });
+        results[k] = res.map((r) => {
+          if (r instanceof RpcError) {
+            this.stats.errors++;
+            this.stats.lastError = r.message;
+            return null;
+          }
+          this.stats.transactions++;
+          if (!r) this.stats.notFound++;
+          return r;
+        });
       }
-    }
-    return out;
+    };
+    await Promise.all(Array.from({ length: Math.min(this.concurrency, chunks.length) }, worker));
+    return results.flat();
   }
 }
 

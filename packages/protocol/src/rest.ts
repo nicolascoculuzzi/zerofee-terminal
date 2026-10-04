@@ -5,7 +5,11 @@
  *   GET  /api/health                         HealthResponse
  *   GET  /api/perf                           PerfResponse             (latency breakdown, event-loop lag)
  *   GET  /api/pulse                          PulseBootstrapResponse   (all three Pulse lists, for the first paint)
- *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
+ *   GET  /api/tokens/:mint                   TokenResponse            (any SPL mint: one the server has never seen, or has
+ *                                                                      pruned, is read from chain on demand and its history
+ *                                                                      backfill starts; 404 TokenNotFoundBody with a reason
+ *                                                                      when it is not a token or has no market; 400 for a
+ *                                                                      malformed address; 429 / 503 are worth retrying)
  *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
  *   GET  /api/candles?mint&tf&from&to&before&limit
  *                                            CandlesResponse          (epoch ms, all optional. The newest `limit` buckets (default
@@ -176,6 +180,23 @@ export interface TokenResponse {
 }
 
 /**
+ * Why GET /api/tokens/:mint has no token (404):
+ *  - "not_a_token"  the account does not exist or is not an SPL / Token-2022 mint (a wallet, a token account ...);
+ *  - "no_venue"     a mint with no pump.fun curve, PumpSwap canonical pool, Raydium LaunchLab pool or graduation
+ *                   CPMM pool, and no Jupiter route either.
+ * A pool or pair address of a coin answers "not_a_token" with `redirect`: the coin's mint (a pasted DexScreener /
+ * Axiom pair link). Clients show the reason as final; 429 ("rate_limited") and 503 ("unavailable") are not.
+ */
+export type TokenMissingReason = "not_a_token" | "no_venue";
+
+export interface TokenNotFoundBody extends ApiErrorBody {
+  code: "not_found";
+  reason: TokenMissingReason;
+  /** The coin's mint when the address is one of its pools. */
+  redirect?: string;
+}
+
+/**
  * GET /api/search. A contract address matches that token exactly (in memory or in the database); any other
  * query matches tickers and names of the tokens the server holds in memory (live and recently active ones),
  * best first: exact ticker, ticker prefix, then name; ties go to the most recently traded.
@@ -236,6 +257,8 @@ export interface HistoryHealth {
   rateLimited: number;
   /** Calls per second budget (HISTORY_RPS). */
   rps: number;
+  /** Current adaptive rate (calls / s): HISTORY_RPS, halved after each 429 and won back on success. */
+  rate?: number;
 }
 
 export interface ProgramAccount {

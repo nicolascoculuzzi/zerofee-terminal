@@ -1,23 +1,37 @@
 import { useEffect } from "react";
 import { create } from "zustand";
+import { isBase58Address } from "../lib/address";
 import type { TokenDetail, TokenDetailDelta, Trade } from "../protocol";
+import { IS_LIVE } from "../runtime";
+import { getServices } from "../services";
 import { subscribeSequenced } from "./subscribe";
+import { type MissingReason, resolveLoop } from "./tokenResolve";
 
 const TAPE_FLUSH_MS = 80;
 const TAPE_MAX = 800;
+/** Live: no snapshot this soon means the server doesn't hold the coin; ask it to read it from chain. */
+const RESOLVE_AFTER_MS = 500;
+/** After the server resolved it, the socket's summary should follow at once; ask for a fresh snapshot otherwise. */
+const RESYNC_AFTER_MS = 2_500;
 
 export interface TokenState {
   mint: string | null;
   detail: TokenDetail | null;
   /** Newest first. */
   trades: Trade[];
-  status: "idle" | "loading" | "ready" | "missing";
+  /** "resolving": the server is reading a coin it didn't hold from chain ("Loading from chain…"). */
+  status: "idle" | "loading" | "resolving" | "ready" | "missing";
+  /** Why the token is missing (a definitive server answer, or a malformed address). */
+  missingReason: MissingReason | null;
+  /** The address was a pool of this coin: open the coin instead. */
+  redirect: string | null;
   reset(mint: string | null): void;
   setDetail(detail: TokenDetail): void;
   applyDelta(delta: TokenDetailDelta): void;
   setTrades(trades: Trade[]): void;
   pushTrades(trades: Trade[]): void;
-  setMissing(): void;
+  setMissing(reason?: MissingReason, redirect?: string | null): void;
+  setResolving(): void;
 }
 
 export const useToken = create<TokenState>()((set, get) => ({
@@ -25,8 +39,10 @@ export const useToken = create<TokenState>()((set, get) => ({
   detail: null,
   trades: [],
   status: "idle",
+  missingReason: null,
+  redirect: null,
   reset(mint) {
-    set({ mint, detail: null, trades: [], status: mint ? "loading" : "idle" });
+    set({ mint, detail: null, trades: [], status: mint ? "loading" : "idle", missingReason: null, redirect: null });
   },
   setDetail(detail) {
     set({ detail, status: "ready" });
@@ -52,8 +68,12 @@ export const useToken = create<TokenState>()((set, get) => ({
   pushTrades(trades) {
     set((s) => ({ trades: [...trades, ...s.trades].slice(0, TAPE_MAX) }));
   },
-  setMissing() {
-    if (get().status === "loading") set({ status: "missing" });
+  setMissing(reason = "not_found", redirect = null) {
+    const s = get().status;
+    if (s === "loading" || s === "resolving") set({ status: "missing", missingReason: reason, redirect });
+  },
+  setResolving() {
+    if (get().status === "loading") set({ status: "resolving" });
   },
 }));
 
@@ -75,11 +95,39 @@ export function useTokenFeed(mint: string | undefined): void {
       buffer = [];
       useToken.getState().pushTrades(batch);
     };
-    const missingTimer = setTimeout(() => useToken.getState().setMissing(), 2500);
+    const stop = new AbortController();
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    if (!isBase58Address(mint)) useToken.getState().setMissing("invalid");
+    else if (!IS_LIVE) timers.push(setTimeout(() => useToken.getState().setMissing(), 2500));
+    else
+      timers.push(
+        setTimeout(() => {
+          if (useToken.getState().detail) return;
+          useToken.getState().setResolving();
+          void resolveLoop(mint, {
+            signal: stop.signal,
+            onDone: (a) => {
+              if (a.kind === "missing") {
+                useToken.getState().setMissing(a.reason, a.redirect);
+                return;
+              }
+              // resolved: the socket sends the summary; if it got lost, ask for fresh snapshots
+              timers.push(
+                setTimeout(() => {
+                  if (useToken.getState().detail) return;
+                  const socket = (getServices().data as { socket?: { resync(topic: string): void } }).socket;
+                  for (const t of [`token:${mint}`, `tradectx:${mint}`, `trades:${mint}`]) socket?.resync(t);
+                }, RESYNC_AFTER_MS),
+              );
+            },
+          });
+        }, RESOLVE_AFTER_MS),
+      );
     const offDetail = subscribeSequenced(
       `token:${mint}`,
       (detail) => {
-        clearTimeout(missingTimer);
+        for (const t of timers) clearTimeout(t);
+        stop.abort();
         useToken.getState().setDetail(detail);
       },
       (delta) => useToken.getState().applyDelta(delta),
@@ -93,7 +141,8 @@ export function useTokenFeed(mint: string | undefined): void {
       },
     );
     return () => {
-      clearTimeout(missingTimer);
+      for (const t of timers) clearTimeout(t);
+      stop.abort();
       if (timer) clearTimeout(timer);
       offDetail();
       offTrades();

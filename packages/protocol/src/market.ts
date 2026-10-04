@@ -26,10 +26,12 @@
  *                 bonding curve, then its Raydium CPMM pool after graduation. `TokenSummary.platform` names the
  *                 launchpad that runs the curve;
  *  - "cpmm"       a token only seen in a Raydium CPMM pool. Reserved: the server tracks CPMM pools of graduated
- *                 LaunchLab coins only (those keep "launchlab"), so it does not emit this value yet.
+ *                 LaunchLab coins only (those keep "launchlab"), so it does not emit this value yet;
+ *  - "other"      a mint opened by address that trades on none of the above but has a Jupiter route: no curve or
+ *                 pool the server prices (price fields null, no trade context: clients trade it through Jupiter).
  * New values may be added; treat unknown ones as "other".
  */
-export type Launchpad = "pump" | "pumpswap" | "launchlab" | "cpmm";
+export type Launchpad = "pump" | "pumpswap" | "launchlab" | "cpmm" | "other";
 
 /**
  * Links from the token's metadata JSON, each null or an absolute `https://` URL (never javascript:, data:

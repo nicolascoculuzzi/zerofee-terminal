@@ -2,6 +2,41 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-04: any coin by address; history throughput on the public RPC (laptop)
+
+Setup: `https://api.mainnet-beta.solana.com` from one IP, shared with a running preview server (its logs feed,
+Raydium re-reads at RPC_LOGS_TX_FETCH_RPS=2 and its own backfills). Test server: this branch, INGEST_SOURCE=none,
+HISTORY_BACKGROUND=false, a trimmed copy of the preview's tokens table.
+
+**Opening any mint (src/market/resolve.ts).** GET /api/tokens/:mint for a coin the server never saw answers in one
+getMultipleAccounts (mint, Metaplex metadata, curve PDA, canonical PumpSwap pool, LaunchLab pools) plus one for
+vaults / configs. Measured on the test server: OILTOWN (pruned, PumpSwap) 0.08 s, CONK and Chunkee (LaunchLab
+graduates, CPMM via the registry's reads) 0.5 s, Jupiter-only coins (Pnut, BONK, WIF, JUP: Jupiter /build probe,
+keyless, serialized at 0.5/s) 1.7-2.2 s. Under 429 storms on the shared IP the read is retried within
+RESOLVE_TIMEOUT_MS and the page keeps "Loading from chain…" until a definitive answer.
+
+**Why history was slow.** The public endpoint reports `x-ratelimit-method-limit: 10` per method per IP (10
+getTransaction per 10 s), counts every JSON-RPC batch item, and answers 429 with `Retry-After: 10`. The live feed's
+Raydium re-reads on the same IP try 2/s, so the backfill gets what is left. The old reader was sequential (one
+getTransaction in flight) and retried 429s after 0.4-8 s while the endpoint asked for 10 s, so most retries were
+more 429s. A merge round ran only every 40 transactions, so at ~6/min nothing showed for 7 minutes ("added" 0).
+
+**Measured** (FLOP curve, 429 signatures, perSec 1, alternating runs of ~5 min, same contention):
+
+| Reader | Run 1 | Run 2 | 429s per run |
+| --- | --- | --- | --- |
+| old (sequential, 5 s cooldown, exponential retry) | 5.8 tx/min | 6.2 tx/min | 54, 53 |
+| new (2 in flight, Retry-After honored, AIMD) | 7.7 tx/min | 6.3 tx/min | 16, 15 |
+
+Throughput is capped by the per-IP method budget, not by the reader: ~+15% and 70% fewer 429s here. What changed
+for the user: trades and candles now appear per merge round (HISTORY_MERGE_MS, first one at once; in-server FLOP:
+35 of 36 fetched trades visible within 6 minutes instead of none), newest venue and newest trade first, and a coin
+the user leaves stops holding the queue (back to the listed tier after 15 s).
+
+**Production:** set HISTORY_RPC_URL to a paid endpoint and raise HISTORY_RPS (20-50), HISTORY_BATCH (10-20) and
+HISTORY_CONCURRENCY (4-8); pipelining matters there (latency no longer caps the rate). With a Helius key,
+HISTORY_HELIUS=true uses getTransactionsForAddress (100 full transactions per call), not exercised without a key.
+
 ## 2026-10-04: trade capture audit, gap repair and history backfill (public RPC, laptop)
 
 Setup: `https://api.mainnet-beta.solana.com` for everything (feed, re-reads, history, verification) from one IP, `DRY_RUN=true`, reads only. Tool: `bun run apps/server/scripts/capture-audit.ts` (`--db` audits a running server's SQLite; `--inprocess` runs the server instrumented; `--backfill-only --mint` backfills and checks whole histories). Truth = `getSignaturesForAddress` on each coin's curve / pool, then `getTransaction` for every successful signature in the window, decoded with the live decoders; a trade is captured when the store holds one of the same signature and side for the coin.

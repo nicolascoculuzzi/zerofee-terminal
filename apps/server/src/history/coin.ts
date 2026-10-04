@@ -21,13 +21,17 @@ export interface CoinAccounts {
   cpmmPool: string | null;
 }
 
-/** Accounts to walk, oldest venue first (curve before pool): the order history is discovered in. */
+/**
+ * Accounts to walk, newest venue first (a graduate's pool before its curve). Each account is walked newest first
+ * too, so a backfill fills the chart's recent candles and the trade tape before older history, and a capped walk
+ * (HISTORY_MAX_TX_PER_COIN) keeps the recent trades rather than the launch.
+ */
 export function walkAccounts(c: CoinAccounts): { address: string; venue: TradeVenue }[] {
   const out: { address: string; venue: TradeVenue }[] = [];
-  if (c.curve) out.push({ address: c.curve, venue: "pump" });
-  if (c.launchLabPool) out.push({ address: c.launchLabPool, venue: "launchlab" });
-  if (c.pumpPool) out.push({ address: c.pumpPool, venue: "pumpswap" });
   if (c.cpmmPool) out.push({ address: c.cpmmPool, venue: "cpmm" });
+  if (c.pumpPool) out.push({ address: c.pumpPool, venue: "pumpswap" });
+  if (c.launchLabPool) out.push({ address: c.launchLabPool, venue: "launchlab" });
+  if (c.curve) out.push({ address: c.curve, venue: "pump" });
   return out;
 }
 

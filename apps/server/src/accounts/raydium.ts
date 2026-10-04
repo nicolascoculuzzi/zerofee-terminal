@@ -221,17 +221,24 @@ export class RaydiumRegistry {
     this.pending.add(key);
     this.fetcher.requestAccount(address, (acc) => {
       this.pending.delete(key);
-      if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return;
-      try {
-        const cfg = decodeLaunchLabPlatformConfig(acc.data);
-        this.platforms.set(address, cfg);
-        this.stats.platforms++;
-        this.events.platform?.(address, cfg);
-      } catch (e) {
-        this.stats.decodeErrors++;
-        log.debug(`PlatformConfig ${address}: ${e instanceof Error ? e.message : e}`);
-      }
+      this.ingestPlatform(address, acc);
     });
+  }
+
+  /** A PlatformConfig account read elsewhere (on-demand resolve batch): cached and reported. */
+  ingestPlatform(address: string, acc: RpcAccount | null): LaunchLabPlatformConfig | null {
+    if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return null;
+    try {
+      const cfg = decodeLaunchLabPlatformConfig(acc.data);
+      this.platforms.set(address, cfg);
+      this.stats.platforms++;
+      this.events.platform?.(address, cfg);
+      return cfg;
+    } catch (e) {
+      this.stats.decodeErrors++;
+      log.debug(`PlatformConfig ${address}: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
   }
 
   requestGlobal(address: string, refresh = false): void {
@@ -240,14 +247,30 @@ export class RaydiumRegistry {
     this.pending.add(key);
     this.fetcher.requestAccount(address, (acc) => {
       this.pending.delete(key);
-      if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return;
-      try {
-        this.globals.set(address, decodeLaunchLabGlobalConfig(acc.data));
-      } catch (e) {
-        this.stats.decodeErrors++;
-        log.debug(`GlobalConfig ${address}: ${e instanceof Error ? e.message : e}`);
-      }
+      this.ingestGlobal(address, acc);
     });
+  }
+
+  /** A GlobalConfig account read elsewhere (on-demand resolve batch). */
+  ingestGlobal(address: string, acc: RpcAccount | null): LaunchLabGlobalConfig | null {
+    if (!acc || acc.owner !== RAYDIUM_LAUNCHLAB_PROGRAM_ID) return null;
+    try {
+      const cfg = decodeLaunchLabGlobalConfig(acc.data);
+      this.globals.set(address, cfg);
+      return cfg;
+    } catch (e) {
+      this.stats.decodeErrors++;
+      log.debug(`GlobalConfig ${address}: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }
+
+  /**
+   * A LaunchLab pool account read elsewhere (on-demand resolve batch): decoded and recorded like requestLaunchLabPool's
+   * answer; null when it is not a LaunchLab pool. The caller reports it (events.launchLabPool) once the coin exists.
+   */
+  ingestLaunchLabPool(pool: string, acc: RpcAccount | null): LaunchLabPoolInfo | null {
+    return this.onLaunchLabAccount(pool, acc);
   }
 
   requestAmmConfig(address: string, refresh = false): void {

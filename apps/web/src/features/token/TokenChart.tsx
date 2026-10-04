@@ -57,7 +57,7 @@ const VENUE_LEGEND: Record<Venue, string> = {
   raydium_cpmm: "Raydium CPMM",
   meteora_dbc: "Meteora DBC",
   meteora_damm_v2: "Meteora DAMM",
-  other: "pool",
+  other: "Jupiter route",
 };
 
 type Tone = "buy" | "sell" | "fg" | "fg2" | "dim";

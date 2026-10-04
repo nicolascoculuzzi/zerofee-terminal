@@ -10,7 +10,8 @@ import { loadMediaConfig, type MediaConfig } from "./media/config";
 import { DEFAULT_IPFS_GATEWAYS } from "./media/urls";
 import { loadOrdersConfig, type OrdersConfig } from "./orders/config";
 
-export type IngestSourceKind = "rpc" | "yellowstone";
+/** "none": no live feed (on-demand resolves and history only: development on a shared IP, tests). */
+export type IngestSourceKind = "rpc" | "yellowstone" | "none";
 export type RpcCommitment = "processed" | "confirmed";
 
 export interface ServerConfig {
@@ -46,6 +47,8 @@ export interface ServerConfig {
   blockhashPollMs: number;
   /** Trade-history backfill and gap-fill from chain (src/history). */
   history: HistoryConfig;
+  /** Opening any mint by address: on-demand chain resolves (market/resolve.ts). */
+  resolve: ResolveConfig;
 
   yellowstoneEndpoint: string | null;
   yellowstoneXToken: string | null;
@@ -192,6 +195,21 @@ export interface ServerConfig {
   orders: OrdersConfig;
 }
 
+export interface ResolveConfig {
+  enabled: boolean;
+  /** Chain resolves per client (IP) per minute, and the burst allowed on top. */
+  perMin: number;
+  burst: number;
+  /** Chain resolves running at once (server-wide); beyond that requests get 503 and retry. */
+  maxConcurrent: number;
+  /** A REST resolve answers within this long (the record keeps filling in after). */
+  timeoutMs: number;
+  /** A resolved coin stays in memory at least this long after its last request, viewed or not. */
+  pinMs: number;
+  /** For a mint with no venue the server decodes, ask Jupiter whether it routes (keyless /build probe). */
+  jupiterProbe: boolean;
+}
+
 export interface HistoryConfig {
   enabled: boolean;
   /** Endpoint for history reads (getSignaturesForAddress, getTransaction); its own client and 429 cooldown. */
@@ -200,6 +218,8 @@ export interface HistoryConfig {
   rps: number;
   /** getTransaction calls per JSON-RPC batch (1 = no batching; each item still counts against `rps`). */
   batch: number;
+  /** Batches in flight at once within `rps` (pipelining: latency no longer caps throughput below `rps`). */
+  concurrency: number;
   /** Most transactions fetched per coin and backfill (pump.fun coins can have thousands of trades). */
   maxTxPerCoin: number;
   /** Most getSignaturesForAddress pages (1,000 each) per account and backfill. */
@@ -212,6 +232,11 @@ export interface HistoryConfig {
   retainDays: number;
   /** Transactions per merge round (trades stored, candles rebuilt, a backfill correction published). */
   mergeEvery: number;
+  /**
+   * A merge round also runs once this long has passed with decoded transactions waiting (the first one at once),
+   * so a slow endpoint still shows trades and candles as they come in. 0 = by count (mergeEvery) only.
+   */
+  mergeMs: number;
   /** Wait after a feed gap before gap-filling (in-flight re-reads land first). */
   gapDelayMs: number;
   /**
@@ -355,7 +380,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     host: str(env, "SERVER_HOST", "127.0.0.1"),
     port: int(env, "SERVER_PORT", 8787, 0, 65535),
     trustProxy: bool(env, "TRUST_PROXY", false),
-    source: oneOf<IngestSourceKind>(env, "INGEST_SOURCE", "rpc", ["rpc", "yellowstone"]),
+    source: oneOf<IngestSourceKind>(env, "INGEST_SOURCE", "rpc", ["rpc", "yellowstone", "none"]),
     rpcUrl,
     rpcWsUrl: str(env, "RPC_WS_URL", rpcUrl.replace(/^http/, "ws")),
     rpcLogsCommitment: oneOf<RpcCommitment>(env, "RPC_LOGS_COMMITMENT", "processed", ["processed", "confirmed"]),
@@ -368,6 +393,15 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcLogsSilenceSlots: int(env, "RPC_LOGS_SILENCE_SLOTS", 40, 0, 100_000),
     blockhashPollMs: int(env, "BLOCKHASH_POLL_MS", 2_000, 250, 60_000),
     history: loadHistory(env, rpcUrl),
+    resolve: {
+      enabled: bool(env, "RESOLVE_ENABLED", true),
+      perMin: int(env, "RESOLVE_PER_MIN", 12, 1, 100_000),
+      burst: int(env, "RESOLVE_BURST", 6, 1, 100_000),
+      maxConcurrent: int(env, "RESOLVE_MAX_CONCURRENT", 4, 1, 1_000),
+      timeoutMs: int(env, "RESOLVE_TIMEOUT_MS", 6_000, 500, 60_000),
+      pinMs: int(env, "RESOLVE_PIN_MIN", 30, 1, 24 * 60) * 60_000,
+      jupiterProbe: bool(env, "RESOLVE_JUPITER_PROBE", true),
+    },
     yellowstoneEndpoint: optional(env, "YELLOWSTONE_ENDPOINT"),
     yellowstoneXToken: optional(env, "YELLOWSTONE_X_TOKEN"),
     yellowstoneCommitment: oneOf<RpcCommitment>(env, "YELLOWSTONE_COMMITMENT", "processed", ["processed", "confirmed"]),
@@ -499,12 +533,14 @@ function loadHistory(env: Env, rpcUrl: string): HistoryConfig {
     rpcUrl: str(env, "HISTORY_RPC_URL", helius ? heliusRpc : rpcUrl),
     rps: float(env, "HISTORY_RPS", 1, 0.05, 10_000),
     batch: int(env, "HISTORY_BATCH", 1, 1, 100),
+    concurrency: int(env, "HISTORY_CONCURRENCY", 2, 1, 32),
     maxTxPerCoin: int(env, "HISTORY_MAX_TX_PER_COIN", 3_000, 10, 1_000_000),
     maxSignaturePages: int(env, "HISTORY_MAX_SIG_PAGES", 30, 1, 10_000),
     background: bool(env, "HISTORY_BACKGROUND", true),
     queueMax: int(env, "HISTORY_QUEUE_MAX", 2_000, 10, 1_000_000),
     retainDays: int(env, "HISTORY_RETAIN_DAYS", 14, 0, 3_650),
     mergeEvery: int(env, "HISTORY_MERGE_EVERY", 40, 1, 10_000),
+    mergeMs: int(env, "HISTORY_MERGE_MS", 1_500, 0, 600_000),
     gapDelayMs: int(env, "HISTORY_GAP_DELAY_MS", 15_000, 0, 600_000),
     viewRefreshMs: int(env, "HISTORY_VIEW_REFRESH_MS", 60_000, 0, 86_400_000),
     listedRefreshMs: int(env, "HISTORY_LISTED_REFRESH_MS", 600_000, 0, 86_400_000),

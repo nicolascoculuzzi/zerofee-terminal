@@ -165,6 +165,14 @@ export function StatsStrip({ token, className }: { token: TokenSummary; classNam
  * (no gradient); "Migrating" once the curve completes, and the pool once migrated.
  */
 function ProgressCell({ token }: { token: TokenSummary }) {
+  if (token.venue === "other") {
+    // opened by address, no curve or pool the server prices: trades go through Jupiter
+    return (
+      <Cell metric="progress" label="Venue">
+        <span className="text-fg-2">Jupiter</span>
+      </Cell>
+    );
+  }
   if (token.migratedAt !== null) {
     return (
       <Cell metric="progress" label="Pool">
