@@ -4,6 +4,7 @@
  * Never log secret values; use redactUrl() for URLs that may embed keys.
  */
 import { DEFAULT_RPC_URL, HELIUS_SENDER_ENDPOINTS, type HeliusSenderRegion, JITO_BLOCK_ENGINES, type JitoRegion } from "@zerofee/core";
+import { loadOrdersConfig, type OrdersConfig } from "./orders/config";
 
 export type IngestSourceKind = "rpc" | "yellowstone";
 export type RpcCommitment = "processed" | "confirmed";
@@ -117,6 +118,8 @@ export interface ServerConfig {
     alertSweepMs: number;
     deliveryRetentionDays: number;
   };
+  /** Armed-orders engine (orders/config.ts). */
+  orders: OrdersConfig;
 }
 
 type Env = Record<string, string | undefined>;
@@ -323,6 +326,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       alertSweepMs: int(env, "ALERT_SWEEP_MS", 10_000, 1_000, 3_600_000),
       deliveryRetentionDays: int(env, "ALERT_DELIVERY_RETENTION_DAYS", 30, 1, 3_650),
     },
+    orders: loadOrdersConfig(env),
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
   if (cfg.userDb.databaseUrl && !/^postgres(ql)?:\/\//.test(cfg.userDb.databaseUrl))

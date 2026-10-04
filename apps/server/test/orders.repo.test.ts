@@ -9,7 +9,7 @@ import { isUniqueViolation, LimitExceededError, UserStore } from "../src/db/pg";
 import { setLogLevel } from "../src/log";
 import { ArmedOrdersRepo, NonceSlotTakenError, StaleOrderVersionError } from "../src/orders/repo";
 import { addr } from "./helpers";
-import { nonceValueOf, synthOrder, variantOf } from "./orderFixtures";
+import { FAKE_VARIANT_WIRE, nonceValueOf, synthOrder, variantOf } from "./orderFixtures";
 import { DRIVERS, type TestDb } from "./pgHelpers";
 
 setLogLevel("error");
@@ -60,7 +60,7 @@ describe.each(DRIVERS)("armed orders repository ($name)", ({ open }) => {
     const slView = views.find((v) => v.id === sl.id);
     expect(slView).toMatchObject({ kind: "stop-loss", status: "armed", amount: "123456789012345678", open: true, ocoGroup: "g1" });
     expect(slView?.attempts.map((a) => a.variants)).toEqual([6, 6]);
-    expect(JSON.stringify(views)).not.toContain("AQID"); // no wire bytes in views
+    expect(JSON.stringify(views)).not.toContain(FAKE_VARIANT_WIRE); // no wire bytes in views
     expect(JSON.stringify(views)).not.toContain(sl.attempts[0]?.nonce.cancel.wireBase64 as string);
 
     const slots = await repo.slots(uid);
