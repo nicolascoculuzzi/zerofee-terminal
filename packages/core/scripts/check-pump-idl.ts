@@ -1,6 +1,6 @@
 /**
- * Daily venue interface watch (SPEC.md "Verify before you code"): pump.fun / PumpSwap and Raydium
- * LaunchLab / CPMM.
+ * Daily venue interface watch (SPEC.md "Verify before you code"): pump.fun / PumpSwap, Raydium
+ * LaunchLab / CPMM and Jupiter v6.
  *
  * pump.fun: compares the committed IDL snapshots in packages/core/idl/ (pinned in idl/SOURCE.json) with
  * the official repo (github.com/pump-fun/pump-public-docs).
@@ -8,15 +8,20 @@
  * and reports changes to the program sources the layouts were also taken from (the IDL repo lags the
  * deployed programs): raydium-cp-swap's program and raydium-cpi's LaunchLab crate.
  * Both: compares the pinned official SDK versions in packages/core/package.json (the golden-test oracles,
- * incl. @raydium-io/raydium-sdk-v2) with npm. Prints a Markdown report; exits 1 on any drift.
+ * incl. @raydium-io/raydium-sdk-v2) with npm.
+ * Jupiter: compares idl/jupiter.json (pinned in idl/JUPITER_SOURCE.json) with the program's on-chain
+ * Anchor IDL account (RPC_URL, default public mainnet). A new Swap variant means routes through that
+ * venue are refused by the signer until its embedded copy is updated.
+ * Prints a Markdown report; exits 1 on any drift.
  *
  *   bun run packages/core/scripts/check-pump-idl.ts            # check
- *   bun run packages/core/scripts/check-pump-idl.ts --update   # refresh snapshots, SOURCE.json and RAYDIUM_SOURCE.json
+ *   bun run packages/core/scripts/check-pump-idl.ts --update   # refresh snapshots, SOURCE.json, RAYDIUM_SOURCE.json, JUPITER_SOURCE.json
  *
  * A drift means: read the upstream changelog, update builders/decoders/constants, re-run the
  * golden tests, and re-arm any armed orders the change invalidates.
  */
 import { join } from "node:path";
+import { fetchJupiterIdl, readJupiterSource, writeJupiterIdl } from "./jupiter-idl";
 
 const UPSTREAM_REPO = "pump-fun/pump-public-docs";
 const IDL_FILES = ["pump.json", "pump_amm.json", "pump_fees.json"] as const;
@@ -222,12 +227,29 @@ async function checkRaydium(lines: string[]): Promise<boolean> {
   return drift;
 }
 
-const lines: string[] = [`## pump.fun / Raydium interface watch (${new Date().toISOString().slice(0, 10)})`];
+async function checkJupiter(lines: string[]): Promise<boolean> {
+  const source = await readJupiterSource();
+  const chain = await fetchJupiterIdl();
+  const local = sha256(new Uint8Array(await Bun.file(join(idlDir, "jupiter.json")).arrayBuffer()));
+  if (update) await writeJupiterIdl(chain);
+  if (chain.sha256 !== source.sha256 || local !== source.sha256) {
+    lines.push(
+      `- **jupiter.json changed**: pin ${source.sha256.slice(0, 12)}, vendored ${local.slice(0, 12)}, on chain ${chain.sha256.slice(0, 12)} ` +
+        `(IDL account ${chain.idlAccount}, slot ${chain.slot}). Update packages/signer/src/firewall/rules/jupiter-idl.ts (the embedded Swap enum).`,
+    );
+    return true;
+  }
+  lines.push(`- jupiter.json: unchanged (on-chain IDL at slot ${chain.slot})`);
+  return false;
+}
+
+const lines: string[] = [`## pump.fun / Raydium / Jupiter interface watch (${new Date().toISOString().slice(0, 10)})`];
 let drift = false;
 let failed = false;
 for (const [title, check] of [
   ["pump.fun / PumpSwap", checkPump],
   ["Raydium LaunchLab / CPMM", checkRaydium],
+  ["Jupiter v6 (long-tail fallback)", checkJupiter],
 ] as const) {
   lines.push("", `### ${title}`, "");
   try {
@@ -244,7 +266,7 @@ if (update) {
     "",
     failed
       ? "Update incomplete: a section failed (see above), so its snapshots and pins may not be written."
-      : "Snapshots, SOURCE.json and RAYDIUM_SOURCE.json updated (Raydium program-source pins moved to HEAD). " +
+      : "Snapshots, SOURCE.json, RAYDIUM_SOURCE.json and JUPITER_SOURCE.json updated (Raydium program-source pins moved to HEAD). " +
           "SDK pins are updated by hand after the golden tests pass.",
   );
 } else if (drift) {
@@ -252,7 +274,7 @@ if (update) {
     "",
     "### What to do",
     "1. Read the upstream diff and changelog notes (pump: docs/ in pump-public-docs; Raydium: the program-source diff and SDK release).",
-    "2. Update packages/core builders, decoders and constants (pump/, pumpswap/, raydium/, events/); bump the SDK pins.",
+    "2. Update packages/core builders, decoders and constants (pump/, pumpswap/, raydium/, events/, jupiter/) and the signer's copies; bump the SDK pins.",
     "3. `bun test` (golden tests against the official SDKs) and dry-run simulations.",
     "4. Re-arm any armed orders the change invalidates; then `--update` the snapshots.",
   );

@@ -14,6 +14,7 @@ import {
   ASSOCIATED_TOKEN_PROGRAM,
   COMPUTE_BUDGET_PROGRAM,
   DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS,
+  JUPITER_PROGRAM,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
   RAYDIUM_CPMM_PROGRAM,
@@ -23,6 +24,7 @@ import {
   TOKEN_PROGRAM,
   USDC_MINT,
 } from "./firewall/programs";
+import { createJupiterRule } from "./firewall/rules/jupiter";
 import { createPumpBondingCurveRule, createPumpSwapRule } from "./firewall/rules/pump";
 import { createRaydiumCpmmRule, createRaydiumLaunchLabRule } from "./firewall/rules/raydium";
 import type { FirewallCaps } from "./firewall/types";
@@ -61,8 +63,7 @@ export const SIGNER_TIP_ACCOUNTS: readonly Address[] = Object.freeze([...JITO_TI
 
 /**
  * Programs a signed transaction may invoke: the built-ins (System also covers durable nonces) and the
- * venues that have a firewall rule (pump.fun, PumpSwap, Raydium LaunchLab, Raydium CPMM). Jupiter
- * joins only with its rule.
+ * venues that have a firewall rule (pump.fun, PumpSwap, Raydium LaunchLab, Raydium CPMM, Jupiter v6).
  */
 export const SIGNER_ALLOWED_PROGRAMS: readonly Address[] = Object.freeze([
   SYSTEM_PROGRAM,
@@ -74,6 +75,7 @@ export const SIGNER_ALLOWED_PROGRAMS: readonly Address[] = Object.freeze([
   PUMP_AMM_PROGRAM,
   RAYDIUM_LAUNCHLAB_PROGRAM,
   RAYDIUM_CPMM_PROGRAM,
+  JUPITER_PROGRAM,
 ]);
 
 /**
@@ -105,7 +107,8 @@ export interface SignerPolicyOptions {
 
 /**
  * The shipped policy: embedded allowlist, tip accounts and venue rules: pump.fun, PumpSwap (canonical
- * pools only), Raydium LaunchLab (share_fee_rate 0) and Raydium CPMM.
+ * pools only), Raydium LaunchLab (share_fee_rate 0), Raydium CPMM and Jupiter v6 (fee-free exact-in
+ * routes between the trading wallet's own token accounts).
  */
 export function createSignerPolicy(options: SignerPolicyOptions = {}): SignerPolicy {
   return {
@@ -117,6 +120,7 @@ export function createSignerPolicy(options: SignerPolicyOptions = {}): SignerPol
       createPumpSwapRule({ programId: PUMP_AMM_PROGRAM, pumpProgramId: PUMP_PROGRAM }),
       createRaydiumLaunchLabRule({ programId: RAYDIUM_LAUNCHLAB_PROGRAM }),
       createRaydiumCpmmRule({ programId: RAYDIUM_CPMM_PROGRAM }),
+      createJupiterRule({ programId: JUPITER_PROGRAM }),
     ]),
   };
 }

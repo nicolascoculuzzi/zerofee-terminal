@@ -5,6 +5,7 @@ export * from "./armed";
 export * from "./constants";
 export * from "./events";
 export * from "./fees";
+export * from "./jupiter";
 export * from "./metadata";
 export * from "./pump";
 export * from "./pumpswap";

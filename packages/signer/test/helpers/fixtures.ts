@@ -9,6 +9,7 @@ import { randomBytes } from "../../src/bytes";
 import {
   ASSOCIATED_TOKEN_PROGRAM,
   COMPUTE_BUDGET_PROGRAM,
+  JUPITER_PROGRAM,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
   RAYDIUM_CPMM_PROGRAM,
@@ -18,6 +19,7 @@ import {
   TOKEN_PROGRAM,
   USDC_MINT,
 } from "../../src/firewall/programs";
+import { createJupiterRule } from "../../src/firewall/rules/jupiter";
 import { createPumpBondingCurveRule, createPumpSwapRule } from "../../src/firewall/rules/pump";
 import { createRaydiumCpmmRule, createRaydiumLaunchLabRule } from "../../src/firewall/rules/raydium";
 import type { FirewallCaps, FirewallContext } from "../../src/firewall/types";
@@ -29,8 +31,8 @@ export const PROGRAMS = {
   pumpFees: address("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"),
   raydiumLaunchLab: RAYDIUM_LAUNCHLAB_PROGRAM,
   raydiumCpmm: RAYDIUM_CPMM_PROGRAM,
-  /** Jupiter v6: allowlisted by SPEC, but it has no firewall rule yet. */
-  jupiter: address("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"),
+  /** Jupiter v6 (the long-tail fallback). */
+  jupiter: JUPITER_PROGRAM,
 } as const;
 
 /** Raydium accounts from core's mainnet snapshot (2026-10-03). */
@@ -109,7 +111,6 @@ export function makeContext(actors: TestActors, overrides: Partial<FirewallConte
       PROGRAMS.pumpAmm,
       PROGRAMS.raydiumLaunchLab,
       PROGRAMS.raydiumCpmm,
-      // Allowlisted by SPEC but without a firewall rule yet: must still be refused.
       PROGRAMS.jupiter,
     ],
     tipAccounts: [...JITO_TIP_ACCOUNTS, ...HELIUS_TIP_ACCOUNTS],
@@ -119,6 +120,7 @@ export function makeContext(actors: TestActors, overrides: Partial<FirewallConte
       createPumpSwapRule({ programId: PROGRAMS.pumpAmm, pumpProgramId: PROGRAMS.pump }),
       createRaydiumLaunchLabRule({ programId: PROGRAMS.raydiumLaunchLab }),
       createRaydiumCpmmRule({ programId: PROGRAMS.raydiumCpmm }),
+      createJupiterRule({ programId: PROGRAMS.jupiter }),
     ],
     ...overrides,
   };

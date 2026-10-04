@@ -4,9 +4,37 @@
  *   buy  = spend `amount` quote base units (fees included)   -> buy_exact_quote_in(_v2) / buy_exact_in / swap_base_input
  *   sell = sell `amount` base units for >= quote*(1-slippage) -> sell(_v2) / sell_exact_in / swap_base_input
  * Limits are applied to what the user actually RECEIVES (after any Token-2022 transfer fee).
+ *
+ * The exception is the long-tail fallback (venue "jupiter"): no local venue exists, so the quote and the
+ * route come from Jupiter `/build` at build time (one HTTP round trip), with the user's slippage and no
+ * Jupiter fee. Its compute budget and tips are ours (assembleTransaction), and it needs the route's
+ * address lookup tables (BuiltTrade.lookupTables).
  */
-import type { Address, Instruction } from "@solana/kit";
-import { DEFAULT_CU_LIMITS, RAYDIUM_FEE_RATE_DENOMINATOR } from "./constants";
+import type { Address, AddressesByLookupTableAddress, Blockhash, Instruction } from "@solana/kit";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  DEFAULT_CU_LIMITS,
+  HELIUS_SENDER_TIP_ACCOUNTS,
+  JITO_TIP_ACCOUNTS_FALLBACK,
+  JUPITER_MAX_ACCOUNTS,
+  JUPITER_REVIEWED_HOPS,
+  MAX_COMPUTE_UNIT_LIMIT,
+  RAYDIUM_FEE_RATE_DENOMINATOR,
+} from "./constants";
+import {
+  fetchJupiterBuild,
+  JupiterApiError,
+  type JupiterBuildRequest,
+  type JupiterBuildResponse,
+  type JupiterClientOptions,
+} from "./jupiter/client";
+import {
+  type JupiterRoute,
+  JupiterRouteError,
+  type JupiterRouteInstruction,
+  jupiterRouteFromBuild,
+  jupiterRouteProblem,
+} from "./jupiter/route";
 import { curveFeeRates, quoteBuyExactQuoteIn, quoteSell } from "./pump/curve";
 import { buildPumpBuyInstructions, buildPumpSellInstructions } from "./pump/instructions";
 import { buildAmmBuyInstructions, buildAmmSellInstructions } from "./pumpswap/instructions";
@@ -15,8 +43,9 @@ import { buildCpmmSwapInstructions } from "./raydium/cpmm/instructions";
 import { cpmmFeeRates, quoteCpmmSwapBaseInput } from "./raydium/cpmm/math";
 import { buildLaunchLabBuyInstructions, buildLaunchLabSellInstructions } from "./raydium/launchlab/instructions";
 import { launchLabTradeParams, quoteLaunchLabBuyExactIn, quoteLaunchLabSellExactIn } from "./raydium/launchlab/math";
-import type { CpmmState, LaunchLabState, TokenState } from "./state";
-import { assertSwappableMint } from "./token";
+import type { CpmmState, JupiterState, LaunchLabState, TokenState } from "./state";
+import { assertSwappableMint, closeAccountInstruction } from "./token";
+import { assembleTransaction } from "./tx/assemble";
 import { minOutForTrade } from "./util/math";
 
 export interface TradeRequest {
@@ -48,6 +77,22 @@ export interface TradeQuote {
    * amount_out, CPMM SwapEvent input_amount / output_amount), for exact fill reconciliation.
    */
   expectedEvent?: { amountIn: bigint; amountOut: bigint };
+  /**
+   * Jupiter fallback: Jupiter's quote and route. Venue fees along the route are inside `expectedOut`
+   * (Jupiter does not itemize them), so feesQuote / feesBase / feePpm are all 0 here.
+   */
+  jupiter?: {
+    instruction: JupiterRouteInstruction;
+    labels: string[];
+    ammKeys: Address[];
+    priceImpactPct: string | null;
+    /** The /build route-account budget the quote came from (undefined: Jupiter's default, 64). */
+    maxAccounts?: number;
+    /** Jupiter's creation of the (existing) token account was left out to fit one packet. */
+    droppedAtaCreate: boolean;
+    /** The open route was one the signer would refuse, so the quote is over the reviewed venues only. */
+    reviewedVenuesOnly: boolean;
+  };
 }
 
 export interface BuiltTrade {
@@ -56,6 +101,17 @@ export interface BuiltTrade {
   /** Hot write-locked account for priority-fee sampling (curve or pool). */
   hotAccount: Address;
   defaultCuLimit: number;
+  /** Address lookup tables the instructions need (Jupiter routes); pass them to assembleTransaction. */
+  lookupTables?: AddressesByLookupTableAddress;
+}
+
+/** How the Jupiter fallback calls `/build` (API key, base URL, fetch) and shapes the route. */
+export interface JupiterTradeOptions
+  extends JupiterClientOptions,
+    Pick<JupiterBuildRequest, "maxAccounts" | "excludeDexes" | "forJitoBundle" | "mode"> {}
+
+export interface BuildTradeOptions {
+  jupiter?: JupiterTradeOptions;
 }
 
 const NO_BASE_FEES = { trade: 0n, creator: 0n, transfer: 0n };
@@ -69,7 +125,7 @@ function closeOnExit(state: TokenState, req: TradeRequest): boolean {
   return (req.closeOnFullExit ?? true) && req.amount === state.userBaseBalance && state.userBaseWithheld === 0n;
 }
 
-export async function buildTrade(state: TokenState, req: TradeRequest): Promise<BuiltTrade> {
+export async function buildTrade(state: TokenState, req: TradeRequest, opts: BuildTradeOptions = {}): Promise<BuiltTrade> {
   if (req.amount <= 0n) throw new RangeError("amount must be > 0");
   switch (state.venue) {
     case "launchlab":
@@ -78,9 +134,179 @@ export async function buildTrade(state: TokenState, req: TradeRequest): Promise<
       return buildCpmmTrade(state, req);
     case "pump":
       return buildPumpTrade(state, req);
+    case "jupiter":
+      return buildJupiterTrade(state, req, opts.jupiter);
     default:
       return buildPumpSwapTrade(state, req);
   }
+}
+
+const NO_QUOTE_FEES = { protocol: 0n, creator: 0n, lp: 0n, buyback: 0n, platform: 0n, fund: 0n, total: 0n };
+const NO_FEE_PPM = { protocol: 0n, platform: 0n, creator: 0n, lp: 0n, fund: 0n };
+
+/** The /build `dexes` labels of the venues whose route_v2 hops the signer can verify. */
+export const JUPITER_REVIEWED_DEX_LABELS: readonly string[] = [...new Set(Object.values(JUPITER_REVIEWED_HOPS).map((h) => h.label))];
+/** At most this many /build calls per trade (keyless access is 0.5 requests/s). */
+export const JUPITER_MAX_QUOTES = 6;
+
+/** /build route-account budgets to try: the caller's (or Jupiter's default 64), then smaller ones. */
+export function jupiterMaxAccountsSteps(start?: number): (number | undefined)[] {
+  const first = start ?? JUPITER_MAX_ACCOUNTS;
+  return [start, ...[48, 32, 24].filter((n) => n < first)];
+}
+
+/**
+ * The largest compute budget and tip layout any landing mode adds (CU limit and price, a Helius and a
+ * Jito tip, the jitodontfront marker), to check that a route fits one packet before choosing the mode.
+ */
+const SIZE_PROBE = {
+  blockhash: { blockhash: "11111111111111111111111111111111" as Blockhash, lastValidBlockHeight: 0n },
+  fees: {
+    cuLimit: MAX_COMPUTE_UNIT_LIMIT,
+    cuPriceMicroLamports: 1n,
+    tips: [
+      { lane: "helius" as const, lamports: 1n, tipAccount: HELIUS_SENDER_TIP_ACCOUNTS[0]! },
+      { lane: "jito" as const, lamports: 1n, tipAccount: JITO_TIP_ACCOUNTS_FALLBACK[0]! },
+    ],
+    jitoDontFront: true,
+  },
+};
+
+/** Whether a Jupiter trade fits one packet in every landing mode (largest budget and tip layout). */
+export function jupiterRouteFits(user: Address, instructions: Instruction[], lookupTables: AddressesByLookupTableAddress): boolean {
+  try {
+    assembleTransaction({ feePayer: user, instructions, lookupTables, ...SIZE_PROBE });
+    return true;
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("transaction too large")) return false;
+    throw e;
+  }
+}
+
+const createsAta = (ix: Instruction, ata: Address) =>
+  ix.programAddress === ASSOCIATED_TOKEN_PROGRAM_ID && ix.accounts?.[1]?.address === ata;
+
+/**
+ * Long-tail fallback: Jupiter `/build` for quote -> token (buy) or token -> quote (sell), exact in, the
+ * user's slippage. A full exit also closes the token account, like the local venues.
+ */
+async function buildJupiterTrade(state: JupiterState, req: TradeRequest, opts: JupiterTradeOptions = {}): Promise<BuiltTrade> {
+  const isBuy = req.side === "buy";
+  if (!isBuy) assertSellable(state, req.amount);
+  const inputMint = isBuy ? state.quoteMint : state.mint;
+  const outputMint = isBuy ? state.mint : state.quoteMint;
+  const { maxAccounts, excludeDexes, forJitoBundle, mode, ...client } = opts;
+  const closeBase = !isBuy && closeOnExit(state, req);
+  const withClose = (ixs: Instruction[]) =>
+    closeBase
+      ? [
+          ...ixs,
+          closeAccountInstruction({
+            account: state.userBaseAta,
+            destination: state.user,
+            owner: state.user,
+            tokenProgram: state.mintInfo.tokenProgram,
+          }),
+        ]
+      : ixs;
+
+  // A route must be one the signer firewall can verify (jupiterRouteProblem: no hop may act on the
+  // user's accounts unchecked) and fit one packet with our compute budget and tips, the firewall's static
+  // keys kept static. Otherwise: re-quote over the venues whose hops are reviewed; drop the no-op
+  // creation of a token account that already exists; ask for fewer accounts (Jupiter's documented
+  // remedy). Each re-quote is a new /build call, at most JUPITER_MAX_QUOTES.
+  let route: JupiterRoute | undefined;
+  let instructions: Instruction[] = [];
+  let budget: number | undefined;
+  let droppedAtaCreate = false;
+  let restricted = false;
+  let quotes = 0;
+  let lastProblem = "";
+  search: for (const accounts of jupiterMaxAccountsSteps(maxAccounts)) {
+    const options: readonly boolean[] = restricted ? [true] : [false, true];
+    for (const restrict of options) {
+      if (quotes++ >= JUPITER_MAX_QUOTES) break search;
+      budget = accounts;
+      restricted = restrict;
+      let build: JupiterBuildResponse;
+      try {
+        build = await fetchJupiterBuild(
+          {
+            inputMint,
+            outputMint,
+            amount: req.amount,
+            slippageBps: req.slippageBps,
+            taker: state.user,
+            maxAccounts: accounts,
+            ...(restrict ? { dexes: JUPITER_REVIEWED_DEX_LABELS } : { excludeDexes }),
+            forJitoBundle,
+            mode,
+          },
+          client,
+        );
+      } catch (e) {
+        // No route over the reviewed venues alone: report why the open routes were refused.
+        if (restrict && e instanceof JupiterApiError && e.status === 400) {
+          throw new JupiterRouteError(
+            `Jupiter /build: no route the signer can verify (${lastProblem}; none over ${JUPITER_REVIEWED_DEX_LABELS.join(", ")})`,
+          );
+        }
+        throw e;
+      }
+      route = await jupiterRouteFromBuild(build, {
+        user: state.user,
+        inputMint,
+        outputMint,
+        amount: req.amount,
+        slippageBps: req.slippageBps,
+      });
+      const problem = jupiterRouteProblem(route, state.user);
+      if (problem) {
+        lastProblem = problem;
+        route = undefined;
+        continue;
+      }
+      instructions = withClose(route.instructions);
+      if (jupiterRouteFits(state.user, instructions, route.lookupTables)) break search;
+      if (isBuy && state.userBaseAtaExists) {
+        const trimmed = withClose(route.instructions.filter((ix) => !createsAta(ix, state.userBaseAta)));
+        if (jupiterRouteFits(state.user, trimmed, route.lookupTables)) {
+          instructions = trimmed;
+          droppedAtaCreate = true;
+          break search;
+        }
+      }
+      lastProblem = "too large for one transaction";
+      route = undefined;
+      break; // too large: try a smaller account budget
+    }
+  }
+  if (!route) throw new JupiterRouteError(`Jupiter /build: no usable route (${lastProblem}), even with fewer accounts`);
+  return {
+    quote: {
+      venue: "jupiter",
+      side: req.side,
+      amountIn: req.amount,
+      expectedOut: route.outAmount,
+      minOut: route.minOut,
+      feesQuote: NO_QUOTE_FEES,
+      feesBase: NO_BASE_FEES,
+      feePpm: NO_FEE_PPM,
+      jupiter: {
+        instruction: route.instruction,
+        labels: route.labels,
+        ammKeys: route.ammKeys,
+        priceImpactPct: route.priceImpactPct,
+        ...(budget !== undefined ? { maxAccounts: budget } : {}),
+        droppedAtaCreate,
+        reviewedVenuesOnly: restricted,
+      },
+    },
+    instructions,
+    hotAccount: route.ammKeys[0] ?? state.mint,
+    defaultCuLimit: DEFAULT_CU_LIMITS.jupiter,
+    lookupTables: route.lookupTables,
+  };
 }
 
 async function buildPumpTrade(state: Extract<TokenState, { venue: "pump" }>, req: TradeRequest): Promise<BuiltTrade> {

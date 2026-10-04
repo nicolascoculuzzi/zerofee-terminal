@@ -42,11 +42,11 @@
  * into such a pool is still bounded by its minimum output (never 0) and, with expectations, by the
  * browser's own quote, which is only as honest as the reserves in the trade context.
  */
-import { type Address, getAddressEncoder, getProgramDerivedAddress, type ReadonlyUint8Array } from "@solana/kit";
-import { readU64LE, startsWith, toHex } from "../../bytes";
-import { SYSTEM_PROGRAM, TOKEN_PROGRAMS, WSOL_MINT } from "../programs";
-import type { AccountRef, DecodedInstruction, FirewallCaps, RuleEnv, TradeAction, VenueCheck, VenueRule } from "../types";
-import { countMismatch, splitTrailingDontFront, where } from "./common";
+import type { Address, ReadonlyUint8Array } from "@solana/kit";
+import { readU64LE } from "../../bytes";
+import { SYSTEM_PROGRAM } from "../programs";
+import type { DecodedInstruction, RuleEnv, TradeAction, VenueCheck, VenueRule } from "../types";
+import { countMismatch, splitTrailingDontFront } from "./common";
 import {
   CPMM_DATA_LENGTH,
   CPMM_INSTRUCTION_NAMES,
@@ -61,15 +61,23 @@ import {
   type LaunchLabSwapInstruction,
   RAYDIUM_SEEDS,
 } from "./raydium-idl";
-
-const addressEncoder = getAddressEncoder();
-const utf8 = (text: string) => new TextEncoder().encode(text);
-const key = (address: Address) => addressEncoder.encode(address);
-
-async function findPda(programAddress: Address, seeds: ReadonlyUint8Array[]): Promise<Address> {
-  const [pda] = await getProgramDerivedAddress({ programAddress, seeds });
-  return pda;
-}
+import {
+  type Check,
+  checkDerived,
+  checkFixed,
+  checkPayer,
+  checkStaticSeed,
+  checkUserTokenAccount,
+  findPda,
+  isQuoteAsset,
+  key,
+  type SwapDirection,
+  select,
+  staticMint,
+  swapDirection,
+  utf8,
+  withBytes,
+} from "./venue-checks";
 
 /** LaunchLab vault authority ["vault_auth_seed"] (mainnet WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh). */
 export const findLaunchLabAuthority = (programId: Address) => findPda(programId, [utf8(RAYDIUM_SEEDS.launchLabAuthority)]);
@@ -89,103 +97,6 @@ export const findCpmmVault = (programId: Address, pool: Address, mint: Address) 
 /** CPMM oracle observation ["observation", pool]. */
 export const findCpmmObservation = (programId: Address, pool: Address) =>
   findPda(programId, [utf8(RAYDIUM_SEEDS.cpmmObservation), key(pool)]);
-
-const hasCap = (caps: FirewallCaps, mint: string) => Object.hasOwn(caps.maxBuyQuote, mint);
-/** wSOL, or a mint the user configured a per-trade cap for: what a buy may spend. */
-const isQuoteAsset = (caps: FirewallCaps, mint: Address) => mint === WSOL_MINT || hasCap(caps, mint);
-
-/** One instruction under check: its label for violations, its accounts and the violations so far. */
-interface Check {
-  readonly label: string;
-  readonly core: readonly AccountRef[];
-  readonly env: RuleEnv;
-  readonly violations: string[];
-}
-
-/** The payer is the trading wallet (signing), and the trading wallet appears in no other position. */
-function checkPayer(c: Check, payerIndex: number): void {
-  const { signer } = c.env.ctx;
-  const payer = c.core[payerIndex]!;
-  if (payer.address !== signer || !payer.isSigner) c.violations.push(`${c.label}: user must be the trading wallet`);
-  c.core.forEach((account, i) => {
-    if (i !== payerIndex && account.address === signer)
-      c.violations.push(`${c.label}: trading wallet used in an unexpected position (${i})`);
-  });
-}
-
-/** Mints pick the cap and the user's token accounts, so their identity must not come from lookup-table data. */
-function staticMint(c: Check, index: number, what: string): Address {
-  const ref = c.core[index]!;
-  if (!ref.isStatic) c.violations.push(`${c.label}: ${what} must be a static account key, not loaded from a lookup table`);
-  return ref.address;
-}
-
-/**
- * The token program at `programIndex` is SPL Token or Token-2022 (static: the venue CPIs into it with
- * the user's signature), and the account at `accountIndex` is the trading wallet's ATA for `mint` under it.
- */
-async function checkUserTokenAccount(c: Check, accountIndex: number, mint: Address, programIndex: number): Promise<void> {
-  const tokenProgram = c.core[programIndex]!;
-  if (!tokenProgram.isStatic || !TOKEN_PROGRAMS.includes(tokenProgram.address)) {
-    c.violations.push(`${c.label}: token program at position ${programIndex} must be SPL Token or Token-2022 (static key)`);
-    return;
-  }
-  const account = c.core[accountIndex]!;
-  const expected = await c.env.ata(c.env.ctx.signer, mint, tokenProgram.address);
-  if (!account.isStatic || account.address !== expected) {
-    c.violations.push(
-      `${c.label}: token account at position ${accountIndex} must be the trading wallet's associated token account for ${mint}`,
-    );
-  }
-}
-
-const NOT_STATIC = "must be a static account key, not loaded from a lookup table";
-
-/** The account at `index` is exactly `expected`, as a static key. `what` names it in the violation. */
-function checkFixed(c: Check, index: number, expected: Address, what: string, why = ""): void {
-  const ref = c.core[index]!;
-  const reason = why ? ` (${why})` : "";
-  if (ref.address !== expected) c.violations.push(`${c.label}: position ${index} must be ${what}, not ${ref.address}${reason}`);
-  else if (!ref.isStatic) c.violations.push(`${c.label}: ${what} at position ${index} ${NOT_STATIC}${reason}`);
-}
-
-/** The account at `index` is the derivation `expected` (described by `pda`), as a static key. */
-function checkDerived(c: Check, index: number, expected: Address, what: string, pda: string): void {
-  const ref = c.core[index]!;
-  if (ref.address !== expected) {
-    c.violations.push(`${c.label}: ${what} ${ref.address} at position ${index} is not ${pda} (expected ${expected})`);
-  } else if (!ref.isStatic) {
-    c.violations.push(`${c.label}: ${what} at position ${index} ${NOT_STATIC}`);
-  }
-}
-
-/** An account used as a derivation seed must be the account the program will actually load. */
-function checkStaticSeed(c: Check, index: number, what: string, seeds: string): void {
-  if (!c.core[index]!.isStatic) c.violations.push(`${c.label}: ${what} at position ${index} ${NOT_STATIC} (it seeds ${seeds})`);
-}
-
-/** Common prologue: program, discriminator (unknown instructions are refused by name), label. */
-function select<T extends { readonly name: string; readonly discriminator: readonly number[] }>(
-  ix: DecodedInstruction,
-  programId: Address,
-  name: string,
-  defs: readonly { def: T; bytes: Uint8Array }[],
-  instructionNames: Readonly<Record<string, string>>,
-): { def: T; label: string } | { refusal: string } {
-  const base = where(ix, name);
-  if (ix.programAddress !== programId) return { refusal: `${base}: rule applied to the wrong program` };
-  if (ix.data.length < 8) return { refusal: `${base}: instruction data too short` };
-  const def = defs.find((d) => startsWith(ix.data, d.bytes))?.def;
-  if (!def) {
-    const hex = toHex(ix.data.subarray(0, 8));
-    const allowed = defs.map((d) => d.def.name).join(", ");
-    return { refusal: `${base}: instruction "${instructionNames[hex] ?? `unknown ${hex}`}" is not allowed (only ${allowed})` };
-  }
-  return { def, label: `${base} ${def.name}` };
-}
-
-const withBytes = <T extends { readonly discriminator: readonly number[] }>(defs: readonly T[]) =>
-  defs.map((def) => ({ def, bytes: Uint8Array.from(def.discriminator) }));
 
 // ---------------------------------------------------------------------------------------------
 // Raydium LaunchLab
@@ -290,22 +201,7 @@ export function createRaydiumLaunchLabRule(options: RaydiumRuleOptions): VenueRu
 // Raydium CPMM
 // ---------------------------------------------------------------------------------------------
 
-interface CpmmDirection {
-  readonly side: "buy" | "sell";
-  readonly baseMint: Address;
-  readonly quoteMint: Address;
-}
-
-/** Spending wSOL (then a capped quote mint) is a buy of the other mint; receiving it is a sell. */
-function cpmmDirection(caps: FirewallCaps, inputMint: Address, outputMint: Address): CpmmDirection | undefined {
-  if (inputMint === WSOL_MINT) return { side: "buy", baseMint: outputMint, quoteMint: inputMint };
-  if (outputMint === WSOL_MINT) return { side: "sell", baseMint: inputMint, quoteMint: outputMint };
-  if (hasCap(caps, inputMint)) return { side: "buy", baseMint: outputMint, quoteMint: inputMint };
-  if (hasCap(caps, outputMint)) return { side: "sell", baseMint: inputMint, quoteMint: outputMint };
-  return undefined;
-}
-
-function cpmmAction(venue: string, def: CpmmSwapInstruction, data: ReadonlyUint8Array, d: CpmmDirection): TradeAction {
+function cpmmAction(venue: string, def: CpmmSwapInstruction, data: ReadonlyUint8Array, d: SwapDirection): TradeAction {
   const input = readU64LE(data, def.inputOffset);
   const output = readU64LE(data, def.outputOffset);
   const common = { kind: "trade", venue, instruction: def.name, baseMint: d.baseMint, quoteMint: d.quoteMint } as const;
@@ -367,7 +263,7 @@ export function createRaydiumCpmmRule(options: RaydiumRuleOptions): VenueRule {
       );
       checkDerived(c, L.observation, await findCpmmObservation(programId, pool), "observation", `the PDA ["observation", pool ${pool}]`);
 
-      const direction = cpmmDirection(env.ctx.caps, inputMint, outputMint);
+      const direction = swapDirection(env.ctx.caps, inputMint, outputMint);
       if (!direction) {
         violations.push(
           `${label}: no per-trade cap is configured for either mint (${inputMint} in, ${outputMint} out); one side must be wSOL or a quote mint with a cap`,

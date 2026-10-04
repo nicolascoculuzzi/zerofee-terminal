@@ -13,13 +13,10 @@
  * the firewall pins (pump: mints, token programs, user ATAs; PumpSwap: also the pool).
  */
 import {
-  type AccountLookupMeta,
-  type AccountMeta,
   type Address,
   type AddressesByLookupTableAddress,
   appendTransactionMessageInstructions,
   compileTransaction,
-  compressTransactionMessageUsingAddressLookupTables,
   createTransactionMessage,
   getBase58Decoder,
   getBase64EncodedWireTransaction,
@@ -37,8 +34,8 @@ import {
 import { PACKET_DATA_SIZE, SYSTEM_PROGRAM_ID } from "../constants";
 import { transactionSize, withBudgetAndTips } from "../tx/assemble";
 import { setComputeUnitLimitInstruction, setComputeUnitPriceInstruction } from "../tx/computeBudget";
+import { compressKeepingStatic, firewallStaticAccounts } from "../tx/lookupTables";
 import { type TipAccountSets, type TipSpec, tipInstruction } from "../tx/tip";
-import { FIREWALL_ALL_STATIC_PROGRAMS, FIREWALL_STATIC_VENUE_POSITIONS, NEVER_LOOKED_UP } from "./staticAccounts";
 
 /** One durable-nonce slot as seen at signing time. */
 export interface DurableNonceRef {
@@ -80,22 +77,15 @@ export class ArmedTxTooLargeError extends Error {
   }
 }
 
-/** Accounts that must never be loaded from a lookup table in this armed tx. */
-function mustStayStatic(nonce: DurableNonceRef, instructions: readonly Instruction[], tipAccounts?: TipAccountSets): Set<Address> {
-  const keep = new Set<Address>([nonce.account, ...NEVER_LOOKED_UP, ...(tipAccounts?.helius ?? []), ...(tipAccounts?.jito ?? [])]);
-  for (const ix of instructions) {
-    const accounts = ix.accounts ?? [];
-    if (FIREWALL_ALL_STATIC_PROGRAMS.has(ix.programAddress)) for (const a of accounts) keep.add(a.address);
-    for (const i of FIREWALL_STATIC_VENUE_POSITIONS.get(ix.programAddress) ?? []) {
-      const a = accounts[i];
-      if (a) keep.add(a.address);
-    }
-    for (const a of accounts) if (a.address.startsWith("jitodontfront")) keep.add(a.address);
-  }
-  return keep;
+/** Accounts that must never be loaded from a lookup table in this armed tx: the firewall's static keys and the nonce account. */
+function mustStayStatic(
+  feePayer: Address,
+  nonce: DurableNonceRef,
+  instructions: readonly Instruction[],
+  tipAccounts?: TipAccountSets,
+): Set<Address> {
+  return new Set<Address>([nonce.account, ...firewallStaticAccounts(feePayer, instructions, tipAccounts)]);
 }
-
-type AnyMeta = AccountMeta | AccountLookupMeta;
 
 function nonceMessage(feePayer: Address, nonce: DurableNonceRef, instructions: readonly Instruction[]) {
   return pipe(
@@ -109,22 +99,8 @@ function nonceMessage(feePayer: Address, nonce: DurableNonceRef, instructions: r
       ),
   );
 }
-type NonceMessage = ReturnType<typeof nonceMessage>;
-
-/** Compresses with kit, then reverts any lookup of an account that must stay static. */
-function compress(message: NonceMessage, tables: AddressesByLookupTableAddress | undefined, keepStatic: Set<Address>): NonceMessage {
-  if (!tables || Object.keys(tables).length === 0) return message;
-  const compressed = compressTransactionMessageUsingAddressLookupTables(message, tables);
-  const instructions = compressed.instructions.map((ix) => {
-    const accounts = ix.accounts as readonly AnyMeta[] | undefined;
-    if (!accounts?.some((a) => "lookupTableAddress" in a && keepStatic.has(a.address))) return ix;
-    return Object.freeze({
-      ...ix,
-      accounts: accounts.map((a) => ("lookupTableAddress" in a && keepStatic.has(a.address) ? { address: a.address, role: a.role } : a)),
-    });
-  });
-  return Object.freeze({ ...compressed, instructions }) as unknown as NonceMessage;
-}
+/** Compresses with kit, then reverts any lookup of an account that must stay static (tx/lookupTables.ts). */
+const compress = compressKeepingStatic;
 
 function armedInstructions(p: ArmedTxParams): Instruction[] {
   return withBudgetAndTips({
@@ -148,7 +124,7 @@ function assertNonce(feePayer: Address, nonce: DurableNonceRef): void {
 export function compileArmedTransaction(p: ArmedTxParams): { transaction: Transaction; size: number } {
   assertNonce(p.feePayer, p.nonce);
   const ixs = armedInstructions(p);
-  const message = compress(nonceMessage(p.feePayer, p.nonce, ixs), p.lookupTables, mustStayStatic(p.nonce, ixs, p.tipAccounts));
+  const message = compress(nonceMessage(p.feePayer, p.nonce, ixs), p.lookupTables, mustStayStatic(p.feePayer, p.nonce, ixs, p.tipAccounts));
   const transaction = compileTransaction(message);
   const size = transactionSize(transaction);
   const limit = p.sizeLimit ?? PACKET_DATA_SIZE;
@@ -182,7 +158,7 @@ export function measureArmedTransaction(p: ArmedTxParams): ArmedTxSize {
   const ixs = armedInstructions(p);
   const plain = compileTransaction(nonceMessage(p.feePayer, p.nonce, ixs));
   const withTables = compileTransaction(
-    compress(nonceMessage(p.feePayer, p.nonce, ixs), p.lookupTables, mustStayStatic(p.nonce, ixs, p.tipAccounts)),
+    compress(nonceMessage(p.feePayer, p.nonce, ixs), p.lookupTables, mustStayStatic(p.feePayer, p.nonce, ixs, p.tipAccounts)),
   );
   const limit = p.sizeLimit ?? PACKET_DATA_SIZE;
   const size = transactionSize(withTables);

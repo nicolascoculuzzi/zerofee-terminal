@@ -2,6 +2,48 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: Jupiter hops are not checked by Jupiter (mainnet simulation)
+
+`bun run packages/core/scripts/jupiter-hop-redirect.ts <wallet> <mint> <other holder>` builds a real `/build` route, then points only the hop's output account at another holder's token account. `user_destination_token_account` stays the wallet's ATA. Both versions are simulated (public RPC, unsigned, never sent).
+
+| Route | As built | Hop output redirected |
+|---|---|---|
+| `route_v2`, 0.01 SOL -> 6Vsnb… via Meteora DAMM v2 (run twice) | wallet's ATA credited 10,268,118,068 | **succeeds**: wallet's ATA unchanged (0), other holder credited 10,268,118,068 |
+| `shared_accounts_route_v2`, 0.01 SOL -> BONK via 1DEX > TesseraV | wallet's ATA credited | fails, Jupiter 6021 `InvalidOutputTokenAccount` |
+
+So a `route_v2` hop decides where the output goes (and which user account the input comes from, with the user's signature), and checking the route's own user accounts proves nothing. The signer now pins the hop's user side for single `route_v2` hops through reviewed venues (Meteora DBC, Meteora DAMM v2, Orca Whirlpool). It accepts shared-accounts routes only if no hop names the user. Core re-quotes anything else over the reviewed venues.
+
+## 2026-10-03: Jupiter `/build` long-tail fallback dry runs (public RPC, keyless Jupiter, laptop)
+
+Setup: `https://api.mainnet-beta.solana.com`, keyless `https://api.jup.ag/swap/v2/build` (0.5 requests/s), `DRY_RUN=true`, unsigned simulation (`SIMULATE_AS`, read-only wallets that hold SOL or the token), `SLIPPAGE_BPS=1500`. Two tools:
+- `bun run trade`: `LANDING_MODE=standard`, CU limit sized by a pre-simulation.
+- `packages/core/scripts/jupiter-live-check.ts`: the same build through the shipped signer firewall, fed the lookup tables as they are on chain, in all three landing modes.
+
+Slots ~453,130,650–453,133,400. None of these tokens has a pump curve, canonical PumpSwap pool or LaunchLab pair, so core resolved each to the Jupiter fallback.
+
+| Run (standard mode) | Route | CU used / limit | Size | Accounts | Fill vs quote |
+|---|---|---|---|---|---|
+| Buy 0.01 SOL of 6Vsnb… (SPL, Meteora DAMM v2), wallet already holds it | `route_v2`, 1 hop | 42,348 / 50,818 | 731 B | 13 static + 6 from 1 table | exact; the ATA was credited exactly the quote |
+| Sell 50% of the same | `route_v2` | 34,092 / 40,911 | 699 B | 13 + 6 from 1 table | exact |
+| Sell 100% (+ close the token account) | `route_v2` | 34,210 / 41,052 | 706 B | 13 + 6 from 1 table | exact |
+| Buy 0.01 SOL of 3XhUN… (Meteora Dynamic Bonding Curve, SPL), fresh ATA | `route_v2` | 56,462 / 67,755 | 916 B | 20 static, no table | exact |
+| Sell a holder's balance of the DBC coin | `route_v2` | 50,067 / 60,081 | 891 B | 20 static, no table | simulated OK |
+| Buy 0.01 SOL of 4Vn9m… (Token-2022, DAMM v2), fresh ATA | `route_v2` | 48,716 / 58,460 | 856 B | 17 + 3 from 1 table | exact |
+| Buy 0.01 SOL of BONK (split Invariant 9% / BisonFi 91%, then TesseraV), re-quoted at `maxAccounts=48` | `shared_accounts_route_v2` | 247,218 / 296,662 | 1,074 B | 20 + 18 from 3 tables | +0.001% (state moved) |
+| Sell 0.01% of a BONK holding (TesseraV > BisonFi) | `shared_accounts_route_v2` | 144,623 / 186,802 | 983 B | 2 tables | simulated OK |
+
+Firewall: the 6Vsnb… buy and full sell, the DBC buy and sell, and the BONK buy and sell went through the live check. Each passed `createSignerPolicy` in every landing mode, with Jupiter's quote as the expectation. After the hop rules (entry above), the DBC buy, a BONK buy (a three-hop shared route, 1,145 B, 222,728 CU) and a 6Vsnb… full sell (706 B, 34,224 CU) were re-run and passed again in all three modes. Turbo is 49 B smaller than standard (one Sender tip instead of two tips). Protected is 16 B smaller (one Jito tip plus the jitodontfront marker).
+
+What these numbers mean:
+
+- Single-hop long-tail routes are small. The DBC route uses no lookup table at all. Multi-hop routes need the tables: the captured two-hop BONK sell is 1,392 B without them and 995 B with them. Keeping the firewall's static keys out of the tables (user side, mints, token programs, tips, every System/Token/ATA account) costs 60–120 B over unrestricted compression.
+- One BONK buy quote came back at 1,243 B once our two tips were added. `buildTrade` now checks each route against the largest budget-and-tip layout of any mode. If it doesn't fit, it drops the no-op creation of an ATA that already exists, then re-quotes with `maxAccounts` 48, 32, 24 (Jupiter's documented remedy). Later BONK buys needed 48 or 24, and the quote records which. Each re-quote is another `/build` call; keyless callers hit 429s, which the client retries after `Retry-After`.
+- CU varies too much for a static limit: 34–57k for long-tail single hops, 145–250k for multi-hop BONK routes. The CLI sizes the limit with an unsigned simulation at 1.4M CU (limit = simulated × 1.2). The shipped firewall cap is 400k, so a route needing more than ~333k simulated CU would be refused.
+- Latency (one run each): `stateLoaded` 570–790 ms (one batch plus the quote mint). `quoted` +300–550 ms: the `/build` call from a laptop, keyless. `built` +255–280 ms, including the CU-sizing simulation. In the browser, state is streamed, but the `/build` round trip and the sizing simulation remain, which is why Jupiter is only the fallback.
+- A DAMM v2 route loads about 5.3 MB of account data (the Jupiter and DAMM programs), well inside the 64 MB default.
+- Jupiter's `otherAmountThreshold` rounds the minimum up. The firewall reports floor(quoted out × (1 − slippage)), one base unit lower and never above what Jupiter enforces.
+- Found on the way: BONK's would-be pump curve PDA holds 1.12 SOL as a System account. Venue resolution read it as a complete curve ("migration pending?"). Venue PDAs now count only when their program owns them.
+
 ## 2026-10-04: implausible market caps classified against the chain (public RPC, laptop)
 
 Setup: the server as `main.ts` builds it (`createApp`, RPC logs at processed on `api.mainnet-beta.solana.com`, `DRY_RUN=true`, enrichment and PumpPortal off) inside a harness that scanned every token's summary each 15 s and kept every one below a plausible floor (curve: mcSol < 25 SOL; pool: < 1 SOL) or at exactly 0, with the events behind it. Run 1: 10 min on the old code, SOL $120.1-120.3, 157,002 events (27,896 curve trades, 129,106 PumpSwap swaps), 328 creates, 2,425 tokens in memory. Each flagged token was then checked read-only against its bonding curve, mint and pool accounts, and its market cap recomputed with `@zerofee/core`'s `curveMarketCap` on our own reserves and the real mint supply.
