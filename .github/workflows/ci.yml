@@ -21,6 +21,10 @@ jobs:
       - run: bun test
       - run: bun run typecheck
       - run: bunx biome ci .
+      - name: Build the web app
+        run: bun run --cwd apps/web build
+        env:
+          VITE_BUILD_HASH: ${{ github.sha }}
 
   # Deployment artifacts (deploy/, docs/ops/DEPLOY.md): build the server image without pushing it,
   # boot it the way production runs it, and validate the compose file, the Caddyfile and the scripts.
