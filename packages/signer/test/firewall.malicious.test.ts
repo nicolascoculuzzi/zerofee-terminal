@@ -279,10 +279,10 @@ describe("firewall: signatures, programs and fees", () => {
     await expectRefused(buildTransaction({ feePayer: a.signer, instructions: [evil] }), makeContext(a), /is not allowlisted/);
   });
 
-  test("allowlisted program without a firewall rule (Raydium LaunchLab today)", async () => {
+  test("allowlisted program without a firewall rule (Jupiter today)", async () => {
     const a = makeActors();
     const ix: Instruction = {
-      programAddress: PROGRAMS.raydiumLaunchLab,
+      programAddress: PROGRAMS.jupiter,
       accounts: [{ address: a.signer, role: AccountRole.WRITABLE_SIGNER }],
       data: new Uint8Array(32),
     };

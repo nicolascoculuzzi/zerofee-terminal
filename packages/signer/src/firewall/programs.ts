@@ -4,8 +4,9 @@
  * read live; test/constants-crosscheck.test.ts fails when a value drifts from packages/core.
  *
  * Built-in rules decode System, Compute Budget, SPL Token, Token-2022 and ATA instructions; venue
- * programs (pump.fun, PumpSwap) are handled by venue rules. Whether any program may be invoked at
- * all is still decided by ctx.allowedPrograms. Tip accounts live in ../policy.ts.
+ * programs (pump.fun, PumpSwap, Raydium LaunchLab, Raydium CPMM) are handled by venue rules. Whether
+ * any program may be invoked at all is still decided by ctx.allowedPrograms. Tip accounts live in
+ * ../policy.ts.
  */
 import { type Address, address } from "@solana/kit";
 
@@ -27,6 +28,16 @@ export const USDC_MINT: Address = address("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
 export const PUMP_PROGRAM: Address = address("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 /** PumpSwap (pump AMM) program. https://github.com/pump-fun/pump-public-docs/blob/main/idl/pump_amm.json */
 export const PUMP_AMM_PROGRAM: Address = address("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA");
+/**
+ * Raydium LaunchLab (the bonding curves behind BONK.fun / letsbonk, StonkFun, TRiX).
+ * https://github.com/raydium-io/raydium-idl/blob/e7e0c96fe77bcf6a020b84a44c47a722aac8e359/raydium_launchpad/raydium_launchpad.json
+ */
+export const RAYDIUM_LAUNCHLAB_PROGRAM: Address = address("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj");
+/**
+ * Raydium CPMM (cp-swap), where LaunchLab coins graduate.
+ * https://github.com/raydium-io/raydium-idl/blob/e7e0c96fe77bcf6a020b84a44c47a722aac8e359/raydium_cpmm/raydium_cp_swap.json
+ */
+export const RAYDIUM_CPMM_PROGRAM: Address = address("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
 /** Sysvars referenced by nonce instructions. */
 export const SYSVAR_RECENT_BLOCKHASHES: Address = address("SysvarRecentB1ockHashes11111111111111111111");
 export const SYSVAR_RENT: Address = address("SysvarRent111111111111111111111111111111111");

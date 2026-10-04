@@ -59,7 +59,8 @@ function quoteCap(caps: FirewallContext["caps"], mint: string): bigint | undefin
 /**
  * A trade whose minimum output is zero accepts any price: a sandwich, or a caller that lies about the
  * quote, takes the whole sale (sells are not capped) or the whole spend. Exact-out buys are exempt:
- * they receive exactly `baseAmount` and pay at most the capped max_quote_in.
+ * they receive exactly `baseAmount` and pay at most the capped max_quote_in. Exact-out sells report
+ * their exact quote out as minQuoteOut, so a zero there is refused like any other sell.
  */
 function zeroMinimumOut(action: TradeAction): string | undefined {
   if (action.side === "sell" && !(action.minQuoteOut !== undefined && action.minQuoteOut > 0n)) {
@@ -308,10 +309,11 @@ export async function inspectTransaction(txBytes: Uint8Array, ctx: FirewallConte
   const maxSolOutLamports = maxBuyLamports + tipLamports + budget.priorityFeeLamports + networkFeeLamports;
   const deposits = actions.some(({ action }) => action.kind === "create_ata" || action.kind === "nonce_create");
   const extension = actions.some(({ action }) => action.kind === "extend_account");
+  const venueRent = actions.some(({ action }) => action.kind === "trade" && action.mayPayVenueRent === true);
   lines.push(
     `At most ${formatSol(maxSolOutLamports)} leaves the trading wallet for buys, tips and fees${
       deposits ? "; refundable deposits are listed above" : ""
-    }${extension ? "; plus the pool extension rent above" : ""}.`,
+    }${extension ? "; plus the pool extension rent above" : ""}${venueRent ? "; plus any fee-vault rent above" : ""}.`,
   );
 
   const summary: TransactionSummary = {

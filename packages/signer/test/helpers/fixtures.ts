@@ -1,7 +1,8 @@
 /**
  * Mainnet IDs for tests. Program IDs and tip accounts are the signer's embedded copies (what ships;
  * test/constants-crosscheck.test.ts compares them with @zerofee/core). Global, FeeConfig and fee
- * recipients come from the pump.fun research note (verified as PDAs in idl-layout.test.ts).
+ * recipients come from the pump.fun research note (verified as PDAs in idl-layout.test.ts); the
+ * Raydium configs and mints are accounts of core's mainnet snapshot (packages/core/test/fixtures/raydium-mainnet.json).
  */
 import { type Address, address, getAddressDecoder } from "@solana/kit";
 import { randomBytes } from "../../src/bytes";
@@ -10,12 +11,15 @@ import {
   COMPUTE_BUDGET_PROGRAM,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
+  RAYDIUM_CPMM_PROGRAM,
+  RAYDIUM_LAUNCHLAB_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
   USDC_MINT,
 } from "../../src/firewall/programs";
 import { createPumpBondingCurveRule, createPumpSwapRule } from "../../src/firewall/rules/pump";
+import { createRaydiumCpmmRule, createRaydiumLaunchLabRule } from "../../src/firewall/rules/raydium";
 import type { FirewallCaps, FirewallContext } from "../../src/firewall/types";
 import { HELIUS_SENDER_TIP_ACCOUNTS, JITO_TIP_ACCOUNTS } from "../../src/policy";
 
@@ -23,7 +27,24 @@ export const PROGRAMS = {
   pump: PUMP_PROGRAM,
   pumpAmm: PUMP_AMM_PROGRAM,
   pumpFees: address("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"),
-  raydiumLaunchLab: address("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"),
+  raydiumLaunchLab: RAYDIUM_LAUNCHLAB_PROGRAM,
+  raydiumCpmm: RAYDIUM_CPMM_PROGRAM,
+  /** Jupiter v6: allowlisted by SPEC, but it has no firewall rule yet. */
+  jupiter: address("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"),
+} as const;
+
+/** Raydium accounts from core's mainnet snapshot (2026-10-03). */
+export const RAYDIUM = {
+  /** LaunchLab GlobalConfig: SOL quote, constant product, index 0. */
+  solGlobalConfig: address("6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX"),
+  /** LaunchLab PlatformConfig of letsbonk.fun (BONK.fun). */
+  letsbonkPlatform: address("FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1"),
+  /** LaunchLab PlatformConfig of StonkFun. */
+  stonkPlatform: address("6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt"),
+  /** CPMM AmmConfig the graduated BONK.fun pool trades on. */
+  ammConfig: address("GtdipqAcw8eAYxGcANs3vpN7UaN7UH7u89Kd8wPqLThd"),
+  /** METAx: a Token-2022 xStock that StonkFun pairs coins with (8 decimals). */
+  xStock: address("Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu"),
 } as const;
 
 export { JITO_TIP_ACCOUNTS };
@@ -86,14 +107,18 @@ export function makeContext(actors: TestActors, overrides: Partial<FirewallConte
       ASSOCIATED_TOKEN_PROGRAM,
       PROGRAMS.pump,
       PROGRAMS.pumpAmm,
-      // Allowlisted by SPEC but without a firewall rule yet: must still be refused.
       PROGRAMS.raydiumLaunchLab,
+      PROGRAMS.raydiumCpmm,
+      // Allowlisted by SPEC but without a firewall rule yet: must still be refused.
+      PROGRAMS.jupiter,
     ],
     tipAccounts: [...JITO_TIP_ACCOUNTS, ...HELIUS_TIP_ACCOUNTS],
     caps: DEFAULT_CAPS,
     venueRules: [
       createPumpBondingCurveRule({ programId: PROGRAMS.pump }),
       createPumpSwapRule({ programId: PROGRAMS.pumpAmm, pumpProgramId: PROGRAMS.pump }),
+      createRaydiumLaunchLabRule({ programId: PROGRAMS.raydiumLaunchLab }),
+      createRaydiumCpmmRule({ programId: PROGRAMS.raydiumCpmm }),
     ],
     ...overrides,
   };
