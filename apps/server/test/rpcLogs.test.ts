@@ -191,6 +191,7 @@ describe("RpcLogsSource reconnect backoff", () => {
         wsUrl: "ws://unused",
         programs: [PUMP_PROGRAM_ID],
         commitment: "processed",
+        queueMax: 1_000,
         WebSocketImpl: NeverOpens as unknown as typeof WebSocket,
       });
       const internals = src as unknown as { connect(): void; backoff: { attempts: number } };
