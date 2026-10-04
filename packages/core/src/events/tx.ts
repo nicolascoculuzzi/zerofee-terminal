@@ -1,13 +1,15 @@
 /**
  * Transaction-level event extraction for sources that deliver the full transaction (Yellowstone gRPC,
- * `getTransaction`). pump and PumpSwap emit every event twice: a `Program data:` log line AND an Anchor
- * event-CPI (a self-invocation whose data is EVENT_IX_TAG + disc + borsh). We decode the CPI copy (logs
- * can be truncated) and fall back to logs only when no CPI event is found, so nothing is counted twice.
+ * `getTransaction`). pump, PumpSwap and Raydium LaunchLab emit every event twice: a `Program data:` log line
+ * AND an Anchor event-CPI (a self-invocation whose data is EVENT_IX_TAG + disc + borsh). We decode the CPI
+ * copy (logs can be truncated) and fall back to logs only when no CPI event is found, so nothing is counted
+ * twice. Raydium CPMM only logs (LOG_ONLY_EVENT_PROGRAMS), so its events always come from the logs: after a
+ * successful CPI pass they are appended behind the CPI-decoded events.
  */
 import type { Address } from "@solana/kit";
 import { EVENT_IX_TAG, PUMP_AMM_IX, PUMP_AMM_PROGRAM_ID } from "../constants";
 import { startsWith } from "../util/bytes";
-import { decodeEventPayload, isEventProgram } from "./decode";
+import { decodeEventPayload, isEventProgram, LOG_ONLY_EVENT_PROGRAMS } from "./decode";
 import { decodeLogEvents } from "./logs";
 import { type DecodedEvent, EventDecodeError } from "./types";
 
@@ -36,14 +38,21 @@ export interface TransactionEventInput {
 
 export interface TransactionEventsResult {
   events: DecodedEvent[];
+  /** "cpi" when event-CPIs were found (log-only programs' events may still have been merged from the logs). */
   via: "cpi" | "logs" | "none";
   failures: number;
   failureMessages: string[];
-  /** Logs were truncated (only meaningful when via = "logs"). */
+  /**
+   * Logs were truncated, so events read from them may be missing: all events when via = "logs", the
+   * log-only programs' events when via = "cpi".
+   */
   truncated: boolean;
 }
 
-/** Decodes the pump / PumpSwap events of one executed transaction, in emission order. */
+/**
+ * Decodes the events of one executed transaction (EVENT_PROGRAMS), in emission order; with via = "cpi",
+ * events of log-only programs (Raydium CPMM) follow the CPI-decoded ones in their own log order.
+ */
 export function decodeTransactionEvents(tx: TransactionEventInput): TransactionEventsResult {
   const events: DecodedEvent[] = [];
   const failureMessages: string[] = [];
@@ -63,7 +72,14 @@ export function decodeTransactionEvents(tx: TransactionEventInput): TransactionE
       }
     }
     if (events.length || failureMessages.length) {
-      return { events, via: "cpi", failures: failureMessages.length, failureMessages, truncated: false };
+      let truncated = false;
+      if (tx.logs?.length) {
+        const r = decodeLogEvents(tx.logs, LOG_ONLY_EVENT_PROGRAMS);
+        events.push(...r.events);
+        failureMessages.push(...r.failureMessages);
+        truncated = r.truncated;
+      }
+      return { events, via: "cpi", failures: failureMessages.length, failureMessages, truncated };
     }
   }
   if (tx.logs?.length) {

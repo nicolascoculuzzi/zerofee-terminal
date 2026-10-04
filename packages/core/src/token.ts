@@ -5,6 +5,7 @@
  */
 import { AccountRole, type Address, getProgramDerivedAddress, type Instruction } from "@solana/kit";
 import { ASSOCIATED_TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "./constants";
+import { decodeToken2022MintExtensions, type Token2022Extensions } from "./token2022";
 import { addressBytes, concatBytes, Reader, u32le, u64le } from "./util/bytes";
 
 export type TokenProgram = typeof TOKEN_PROGRAM_ID | typeof TOKEN_2022_PROGRAM_ID;
@@ -99,15 +100,30 @@ export interface MintInfo {
   supply: bigint;
   decimals: number;
   tokenProgram: TokenProgram;
+  /** Token-2022 extensions (transfer fee, hook, pausable); empty for SPL Token mints. */
+  extensions: Token2022Extensions;
 }
 
-/** Decodes the 82-byte base mint layout (Token and Token-2022 share it). */
+/** Decodes the 82-byte base mint layout (Token and Token-2022 share it) plus Token-2022 extensions. */
 export function decodeMint(data: Uint8Array, owner: Address): MintInfo {
   if (data.length < 82) throw new Error(`mint account too short (${data.length})`);
   const r = new Reader(data, 36);
   const supply = r.u64();
   const decimals = r.u8();
-  return { supply, decimals, tokenProgram: tokenProgramFromMintOwner(owner) };
+  const tokenProgram = tokenProgramFromMintOwner(owner);
+  const extensions = decodeToken2022MintExtensions(tokenProgram === TOKEN_2022_PROGRAM_ID ? data : new Uint8Array(0));
+  return { supply, decimals, tokenProgram, extensions };
+}
+
+/**
+ * Refuses mints a plain swap cannot move: an active transfer hook (needs extra accounts the venue
+ * does not pass), a paused mint, or a non-transferable mint.
+ */
+export function assertSwappableMint(mint: Address, info: Pick<MintInfo, "extensions">): void {
+  const x = info.extensions;
+  if (x.transferHookProgramId) throw new Error(`${mint} has an active transfer hook (${x.transferHookProgramId}); not supported`);
+  if (x.paused) throw new Error(`${mint} is paused (Token-2022 pausable)`);
+  if (x.nonTransferable) throw new Error(`${mint} is non-transferable`);
 }
 
 export interface TokenAccountInfo {

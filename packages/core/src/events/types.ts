@@ -2,6 +2,7 @@
  * Decoded pump.fun / PumpSwap events. Layouts: pump-sdk 2.0.0 vendored idl/pump.json and idl/pump_amm.json
  * (https://github.com/pump-fun/pump-public-docs/tree/main/idl). Events only ever gain trailing fields; fields an
  * older program version did not emit decode as 0 / false / "" / [] / default pubkey.
+ * Raydium LaunchLab / CPMM events: idl/raydium_launchpad.json and idl/raydium_cp_swap.json (see ./raydium.ts).
  */
 import type { Address } from "@solana/kit";
 
@@ -190,7 +191,89 @@ export interface AmmSwapEvent {
   holderRewards: bigint;
 }
 
-export type DecodedEvent = PumpCreateEvent | PumpTradeEvent | PumpCompleteEvent | PumpMigrationEvent | AmmCreatePoolEvent | AmmSwapEvent;
+/**
+ * Raydium LaunchLab `TradeEvent` (every buy/sell variant). Same discriminator as pump's `TradeEvent`: only
+ * decoded when attributed to the LaunchLab program.
+ */
+export interface LaunchLabTradeEvent {
+  kind: "launchlabTrade";
+  pool: Address;
+  totalBaseSell: bigint;
+  virtualBase: bigint;
+  virtualQuote: bigint;
+  realBaseBefore: bigint;
+  realQuoteBefore: bigint;
+  realBaseAfter: bigint;
+  realQuoteAfter: bigint;
+  /** buy: quote into the vault (after the quote transfer fee); sell: base into the vault (after the transfer fee). */
+  amountIn: bigint;
+  /** buy: base out of the vault (before the base transfer fee); sell: quote out of the vault, net of fees. */
+  amountOut: bigint;
+  protocolFee: bigint;
+  platformFee: bigint;
+  creatorFee: bigint;
+  shareFee: bigint;
+  isBuy: boolean;
+  /** Pool status after the trade (LAUNCHLAB_POOL_STATUS; 1 = curve complete, waiting for migration). */
+  poolStatus: number;
+  exactIn: boolean;
+}
+
+/** Raydium LaunchLab `PoolCreateEvent` (`initialize` / `initialize_v2` / `initialize_with_token_2022`). */
+export interface LaunchLabPoolCreateEvent {
+  kind: "launchlabPoolCreate";
+  pool: Address;
+  creator: Address;
+  /** GlobalConfig the pool uses. */
+  config: Address;
+  decimals: number;
+  name: string;
+  symbol: string;
+  uri: string;
+  /** CurveParams variant: 0 constant, 1 fixed, 2 linear. */
+  curveType: number;
+  supply: bigint;
+  /** Constant curves only (0 otherwise). */
+  totalBaseSell: bigint;
+  totalQuoteFundRaising: bigint;
+  migrateType: number;
+  totalLockedAmount: bigint;
+  cliffPeriod: bigint;
+  unlockPeriod: bigint;
+  /** 0 quote token, 1 both tokens. */
+  ammFeeOn: number;
+}
+
+/** Raydium CPMM `SwapEvent` (`swap_base_input` / `swap_base_output`). Logged only: CPMM has no event-CPI. */
+export interface CpmmSwapEvent {
+  kind: "cpmmSwap";
+  pool: Address;
+  /** Vault balances net of fees owed, before the swap. */
+  inputVaultBefore: bigint;
+  outputVaultBefore: bigint;
+  /** Excluding transfer fees. */
+  inputAmount: bigint;
+  outputAmount: bigint;
+  inputTransferFee: bigint;
+  outputTransferFee: bigint;
+  baseInput: boolean;
+  inputMint: Address;
+  outputMint: Address;
+  tradeFee: bigint;
+  creatorFee: bigint;
+  creatorFeeOnInput: boolean;
+}
+
+export type RaydiumEvent = LaunchLabTradeEvent | LaunchLabPoolCreateEvent | CpmmSwapEvent;
+
+export type DecodedEvent =
+  | PumpCreateEvent
+  | PumpTradeEvent
+  | PumpCompleteEvent
+  | PumpMigrationEvent
+  | AmmCreatePoolEvent
+  | AmmSwapEvent
+  | RaydiumEvent;
 
 export type DecodedEventKind = DecodedEvent["kind"];
 

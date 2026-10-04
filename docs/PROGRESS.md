@@ -25,10 +25,10 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Piece | Status |
 |---|---|
 | Armed orders core: nonce slots, lookup tables, variant grids, triggers | ✅ (validator suite 10/10; all armed txs pass the firewall; worst case 1,053 of 1,232 bytes) |
-| Armed orders: server engine + UI | ⏳ |
-| Raydium LaunchLab + CPMM (StonkFun, Bonk) | 🔨 |
+| Armed orders: server engine + UI | 🔨 (UI view built; server engine in progress) |
+| Raydium LaunchLab + CPMM (StonkFun, Bonk) | ✅ engine (mainnet dry runs exact); 🔨 firewall rules |
 | Jupiter `/build` fallback for the long tail | ⏳ |
-| Wallet tracker + alerts (Web Push, Telegram, Discord) | ⏳ (Telegram bot token 🙋) |
+| Wallet tracker + alerts (Web Push, Telegram, Discord) | ✅ alert delivery + accounts/settings server; 🔨 tracker matcher (Telegram bot token 🙋) |
 | Copy trading, trailing stops, DCA, dev-sell exits | ⏳ |
 | X tracker | ⏳ (X data key 🙋) |
 | Snipers (browser-open, hard caps), public API | ⏳ |
