@@ -4,7 +4,7 @@ import { LAUNCHPAD_BY_ID } from "../../lib/metrics";
 import type { Launchpad } from "../../protocol";
 import { PlatformMark } from "./Logo";
 import { LAUNCHPAD_LOGO } from "./logos";
-import { tokenImageSrc } from "./tokenImage";
+import { imageRetryDelay, probeImage, tokenImageSrc } from "./tokenImage";
 
 /**
  * Token avatars and monograms (DESIGN.md 4.22, ring and badge per 4.4). A 4px-radius square:
@@ -12,7 +12,9 @@ import { tokenImageSrc } from "./tokenImage";
  * or two characters in Plex 600 on one of 8 muted fills picked by hash(mint). No gradients, no art.
  * The monogram is drawn first and stays until the image has loaded, which then fades in over it
  * (opacity, dur-1; reduced motion: none) inside the same fixed box, so nothing ever shifts. A failed
- * image keeps the monogram and is retried twice (a brand-new token's image can take a moment).
+ * image keeps the monogram; the avatar asks the proxy why (HEAD, `x-zf-image`): while the server is still
+ * fetching it ("pending") it looks again after Retry-After / a back-off (3 s doubling to 2 min, 12 times),
+ * and never again once the server says it failed for good.
  * Initials on muted squares after Xero: https://mobbin.com/screens/44ed8739-8ccb-4d6f-a532-7a31b1fa5c5f
  */
 export type AvatarSize = "2xs" | "xs" | "sm" | "md" | "row" | "lg" | "xl" | "card";
@@ -42,10 +44,8 @@ const PX: Record<AvatarSize, number> = { "2xs": 16, xs: 20, sm: 28, md: 32, row:
  */
 const CARD_MIN_DPR = 2;
 
-/** Retries of a failed image (ms after the failure); the server negative-caches failures for 15 s first. */
-const RETRY_MS = [20_000, 60_000];
-
-type ImgState = { base: string | null; attempt: number; state: "loading" | "loaded" | "failed" };
+/** loading -> loaded; or failed (asking the server / waiting to look again) -> loading ... or gone (keep the monogram). */
+type ImgState = { base: string | null; attempt: number; state: "loading" | "loaded" | "failed" | "gone" };
 
 /** Monogram glyph at about 40% of the box height, never below the 10px floor (DESIGN.md 2.2). */
 const TEXT: Record<AvatarSize, string> = {
@@ -126,12 +126,24 @@ export const TokenAvatar = memo(function TokenAvatar({
   const img: ImgState = stored.base === base ? stored : { base, attempt: 0, state: "loading" };
   useEffect(() => {
     if (img.state !== "failed" || !img.base) return;
-    const wait = RETRY_MS[img.attempt];
-    if (wait === undefined) return;
-    const t = setTimeout(() => setImg({ base: img.base, attempt: img.attempt + 1, state: "loading" }), wait);
-    return () => clearTimeout(t);
+    const at = img.base;
+    const attempt = img.attempt;
+    let live = true;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    void probeImage(attempt ? `${at}&r=${attempt}` : at).then((p) => {
+      if (!live) return;
+      if (p.state === "failed") return setImg({ base: at, attempt, state: "gone" });
+      const wait = p.state === "ok" ? 0 : imageRetryDelay(attempt, p.retryAfterMs);
+      if (wait === null) return setImg({ base: at, attempt, state: "gone" });
+      // a little jitter so a page of pending avatars doesn't come back in lockstep
+      t = setTimeout(() => setImg({ base: at, attempt: attempt + 1, state: "loading" }), wait * (0.9 + Math.random() * 0.2));
+    });
+    return () => {
+      live = false;
+      if (t) clearTimeout(t);
+    };
   }, [img.base, img.attempt, img.state]);
-  const src = base && img.state !== "failed" ? (img.attempt ? `${base}&r=${img.attempt}` : base) : null;
+  const src = base && img.state !== "failed" && img.state !== "gone" ? (img.attempt ? `${base}&r=${img.attempt}` : base) : null;
   const shown = src !== null && img.state === "loaded";
   return (
     <div

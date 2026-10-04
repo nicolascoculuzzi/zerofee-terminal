@@ -268,6 +268,17 @@ export class HostHealth {
     return up.length === candidates.length ? candidates : [...up, ...candidates.filter((c) => !this.available(c.host))];
   }
 
+  /**
+   * Candidates worth trying now: tripped hosts (and any `alsoDown`, e.g. hosts paused after a 429) are left
+   * out while another host remains, and reported as skipped, so a failure of the rest still counts as
+   * transient (the skipped hosts may serve it later).
+   */
+  usable<T extends { host: string }>(candidates: T[], alsoDown?: (host: string) => boolean): { use: T[]; skipped: number } {
+    const up = candidates.filter((c) => this.available(c.host) && !alsoDown?.(c.host));
+    if (!up.length) return { use: this.order(candidates), skipped: 0 };
+    return { use: up, skipped: candidates.length - up.length };
+  }
+
   snapshot(): { host: string; ok: number; failed: number; down: boolean }[] {
     return [...this.hosts].map(([host, h]) => ({ host, ok: h.ok, failed: h.failed, down: h.until > this.now() }));
   }
@@ -287,11 +298,17 @@ export class HostHealth {
  * Staggered race ("happy eyeballs"): starts the first candidate, then the next one after `staggerMs` or as
  * soon as every started attempt has failed. The first success wins and the others are aborted. Rejects
  * with every attempt's error when all fail.
+ *
+ * Paced attempts: an attempt that first waits for a slot on its host (media/pacer.ts) calls `started()`
+ * when its request actually goes out, and the stagger counts from then. If it is still queued after
+ * `patienceMs`, the next candidate is launched anyway (another host may have room); queued attempts cost
+ * the upstream nothing and leave their queue when the race is decided.
  */
 export function staggeredRace<C, T>(
   candidates: readonly C[],
-  attempt: (c: C, signal: AbortSignal) => Promise<T>,
+  attempt: (c: C, signal: AbortSignal, started: () => void) => Promise<T>,
   staggerMs: number,
+  patienceMs = Number.POSITIVE_INFINITY,
 ): Promise<T> {
   if (!candidates.length) return Promise.reject(new AggregateError([], "no candidates"));
   return new Promise<T>((resolve, reject) => {
@@ -313,8 +330,22 @@ export function staggeredRace<C, T>(
       controllers.push(ctl);
       running++;
       if (timer) clearTimeout(timer);
-      timer = next < candidates.length ? setTimeout(launch, staggerMs) : null;
-      attempt(c, ctl.signal).then(
+      timer = null;
+      let begun = false;
+      const arm = (ms: number) => {
+        if (done || next >= candidates.length) return;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(launch, ms);
+      };
+      const started = () => {
+        if (begun) return;
+        begun = true;
+        if (controllers[controllers.length - 1] === ctl) arm(staggerMs);
+      };
+      // unpaced callers never call started(): plain stagger; paced ones get `patienceMs` while queued
+      arm(Number.isFinite(patienceMs) ? Math.max(staggerMs, patienceMs) : staggerMs);
+      if (!Number.isFinite(patienceMs)) begun = true;
+      attempt(c, ctl.signal, started).then(
         (v) => {
           if (done) return;
           finish();
