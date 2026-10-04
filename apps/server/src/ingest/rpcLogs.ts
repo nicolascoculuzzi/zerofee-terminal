@@ -522,7 +522,13 @@ export class RpcLogsSource implements Source {
     const notBefore = p.receivedAt + (f?.firstDelayMs ?? 1_200);
     if (f && f.perSec > 0 && (truncated || incomplete)) {
       // data loss: always re-read (the logs-only record goes out if the re-read fails)
-      if (this.enqueueFetch({ p, fallback, migration, priority: 0, reason: truncated ? "truncated" : "incomplete", attempts: 0, notBefore }, f)) return;
+      if (
+        this.enqueueFetch(
+          { p, fallback, migration, priority: 0, reason: truncated ? "truncated" : "incomplete", attempts: 0, notBefore },
+          f,
+        )
+      )
+        return;
       this.capture.partial++;
     } else if (f && f.perSec > 0 && (migration || r.events.some((e) => RAYDIUM_KINDS.has(e.kind)))) {
       if (f.wants && !f.wants(r.events, migration)) this.fetchStats.skipped++;

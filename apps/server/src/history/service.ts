@@ -317,7 +317,9 @@ export class HistoryService {
         this.consider(a.mint, a.p, "gap");
         this.stats.gapFills++;
       }
-      log.info(`feed gap (${g.source} ${g.reason}, slots ${g.fromSlot ?? "?"}..${g.toSlot ?? "?"}): gap-fill queued for ${active.length} coins`);
+      log.info(
+        `feed gap (${g.source} ${g.reason}, slots ${g.fromSlot ?? "?"}..${g.toSlot ?? "?"}): gap-fill queued for ${active.length} coins`,
+      );
     }, this.d.cfg.gapDelayMs);
     (t as { unref?: () => void }).unref?.();
     this.gapTimers.add(t);
@@ -420,6 +422,7 @@ export class HistoryService {
       coin.pumpPool = null; // never resolved: walk the curve only
     }
     job.coin = coin;
+    this.d.writer.flush();
     const row = this.d.store.historyRow(job.mint);
     const cursors = row?.cursors ? (JSON.parse(row.cursors) as Record<string, string>) : {};
     // gap-fill of a coin whose walk once completed: stop at the newest signature covered then
@@ -434,7 +437,6 @@ export class HistoryService {
       lastSlot: -1,
       rankInSlot: 0,
     }));
-    this.d.writer.flush();
     for (const r of this.d.store.tradeKeys(job.mint)) {
       const k = `${r.signature}|${r.side === 0 ? "buy" : "sell"}|${r.token_amount}`;
       job.known.counts.set(k, (job.known.counts.get(k) ?? 0) + 1);
@@ -455,7 +457,9 @@ export class HistoryService {
       progress: { signatures: 0, fetched: 0, added: 0 },
       updatedAt: this.now(),
     });
-    log.debug(`backfill ${job.mint} (${PRIORITY_NAMES[job.priority]}, ${job.reason}): ${job.walks.length} accounts, ${job.known.sigs.size} txs held`);
+    log.debug(
+      `backfill ${job.mint} (${PRIORITY_NAMES[job.priority]}, ${job.reason}): ${job.walks.length} accounts, ${job.known.sigs.size} txs held`,
+    );
     return true;
   }
 
@@ -535,8 +539,7 @@ export class HistoryService {
     const prev = this.d.store.historyRow(job.mint);
     const prevComplete = prev?.state === "complete" || (prev?.fromCreation === true && !prev.capped);
     // complete: every account walked to its first transaction, or a gap-fill of a once-complete walk
-    const complete =
-      !failed && !job.capped && walked && job.walks.every((w) => w.reachedStart || (w.until !== undefined && prevComplete));
+    const complete = !failed && !job.capped && walked && job.walks.every((w) => w.reachedStart || (w.until !== undefined && prevComplete));
     const fromCreation = complete && rec.createdAt !== null;
     if (fromCreation && (job.stats.added > 0 || !rec.holders)) {
       const rows = this.d.store.tradesOfMint(job.mint, 200_000);
@@ -564,7 +567,7 @@ export class HistoryService {
       fromCreation: h.fromCreation,
       capped: h.capped,
       trades: h.trades,
-      cursors: complete ? JSON.stringify(cursors) : prev?.cursors ?? null,
+      cursors: complete ? JSON.stringify(cursors) : (prev?.cursors ?? null),
       retainUntil: this.d.cfg.retainDays > 0 ? now + this.d.cfg.retainDays * 86_400_000 : null,
       updatedAt: now,
     });

@@ -81,7 +81,6 @@ import { RateCounter, SampleRing } from "../util/stats";
 import { CandleBook, type CandleTrade, type CandleUpdate, cmpKey, type OrderKey } from "./candles";
 import { HolderBook, type MetricsConfig, type SnapshotEntry } from "./holders";
 import { knownQuoteDecimals, normalizeQuoteMint, quoteSolRate, ui } from "./quote";
-import { RollingWindows } from "./windows";
 import {
   buildTradeContext,
   type CurveReserves,
@@ -1189,14 +1188,23 @@ export class MarketState {
    * so no bucket straddles two windows), plus in-memory trades not stored yet. Writes the rebuilt buckets and
    * returns them per timeframe, oldest first.
    */
-  rebuildCandleWindows(mint: string, windows: readonly { from: number; to: number; rows: readonly TradeRow[] }[]): Map<Timeframe, Candle[]> {
+  rebuildCandleWindows(
+    mint: string,
+    windows: readonly { from: number; to: number; rows: readonly TradeRow[] }[],
+  ): Map<Timeframe, Candle[]> {
     const out = new Map<Timeframe, Candle[]>();
     const rec = this.tokens.get(mint);
     for (const w of windows) {
       const byId = new Map<string, CandleTrade>();
       for (const r of w.rows) {
         if (r.price_sol === null || !(r.price_sol > 0)) continue;
-        byId.set(r.id, { tsMs: r.block_time, price: r.price_sol, volume: r.amount_sol ?? 0, key: [r.slot, r.tx_index ?? 0, r.ev_index], solUsd: null });
+        byId.set(r.id, {
+          tsMs: r.block_time,
+          price: r.price_sol,
+          volume: r.amount_sol ?? 0,
+          key: [r.slot, r.tx_index ?? 0, r.ev_index],
+          solUsd: null,
+        });
       }
       for (const e of rec?.trades ?? []) {
         if (e.tsMs < w.from || e.tsMs >= w.to || !(e.priceSol > 0)) continue;

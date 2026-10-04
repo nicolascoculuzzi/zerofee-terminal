@@ -16,7 +16,7 @@
  */
 import type { RpcJsonTx } from "../ingest/jsonTx";
 import { sleep } from "../util/backoff";
-import { RpcError, type RpcClient } from "../util/rpc";
+import { type RpcClient, RpcError } from "../util/rpc";
 
 export interface SignatureInfo {
   signature: string;
@@ -166,7 +166,10 @@ export class RpcHistoryReader implements HistoryReader {
     if (o.before) cfg.before = o.before;
     if (o.until) cfg.until = o.until;
     const rows = await this.paced(1, () =>
-      this.o.rpc.call<{ signature: string; slot: number; err: unknown; blockTime?: number | null }[]>("getSignaturesForAddress", [address, cfg]),
+      this.o.rpc.call<{ signature: string; slot: number; err: unknown; blockTime?: number | null }[]>("getSignaturesForAddress", [
+        address,
+        cfg,
+      ]),
     );
     this.stats.signaturePages++;
     this.stats.signatures += rows.length;
@@ -217,10 +220,10 @@ export class HeliusHistoryReader extends RpcHistoryReader {
     };
     if (o.before) cfg.paginationToken = o.before;
     const r = await this.paced(1, () =>
-      this.o.rpc.call<{ data?: (RpcJsonTx & { transactionIndex?: number })[]; paginationToken?: string | null }>("getTransactionsForAddress", [
-        address,
-        cfg,
-      ]),
+      this.o.rpc.call<{ data?: (RpcJsonTx & { transactionIndex?: number })[]; paginationToken?: string | null }>(
+        "getTransactionsForAddress",
+        [address, cfg],
+      ),
     );
     this.stats.signaturePages++;
     const entries: FullPageEntry[] = [];

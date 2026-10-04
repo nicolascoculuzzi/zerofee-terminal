@@ -245,7 +245,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const programAccounts = new ProgramAccountsCache(rpc);
   const txRpc = new RpcClient({ url: rpc.url, fetchFn: o.fetchFn, maxConcurrent: 2 });
   const source =
-    o.source === undefined ? createSource(cfg, { rpc, txRpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) }) : o.source;
+    o.source === undefined
+      ? createSource(cfg, { rpc, txRpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) })
+      : o.source;
 
   // Trade history: its own client and budget; on the live endpoint it yields while the live re-reads cool down.
   let history: HistoryService | null = null;
@@ -324,7 +326,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       if (h.kind === "launchlabMigration") m.onLaunchLabMigrationHint();
     },
     gap: (g) => {
-      log.warn(`feed gap (${g.source}): ${g.reason}, slots ${g.fromSlot ?? "?"}..${g.toSlot ?? "?"}${g.signature ? ` ${g.signature}` : ""}`);
+      log.warn(
+        `feed gap (${g.source}): ${g.reason}, slots ${g.fromSlot ?? "?"}..${g.toSlot ?? "?"}${g.signature ? ` ${g.signature}` : ""}`,
+      );
       if (cfg.rpcLogsGapFill) history?.onGap(g);
     },
   };

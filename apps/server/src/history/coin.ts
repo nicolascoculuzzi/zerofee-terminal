@@ -70,7 +70,8 @@ export function coinTrades(tx: IngestTx, c: CoinAccounts): TruthTrade[] {
     if (!eventMatchesCoin(ev, acc, c)) return;
     const base = { signature: tx.signature, slot: tx.slot, evIndex: i };
     if (ev.kind === "pumpTrade") out.push({ ...base, venue: "pump", side: ev.isBuy ? "buy" : "sell" });
-    else if (ev.kind === "ammBuy" || ev.kind === "ammSell") out.push({ ...base, venue: "pumpswap", side: ev.kind === "ammBuy" ? "buy" : "sell" });
+    else if (ev.kind === "ammBuy" || ev.kind === "ammSell")
+      out.push({ ...base, venue: "pumpswap", side: ev.kind === "ammBuy" ? "buy" : "sell" });
     else if (ev.kind === "launchlabTrade") out.push({ ...base, venue: "launchlab", side: ev.isBuy ? "buy" : "sell" });
     else if (ev.kind === "cpmmSwap") {
       const io = acc?.kind === "cpmmSwap" ? acc : ev;

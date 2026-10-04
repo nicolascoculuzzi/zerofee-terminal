@@ -153,7 +153,18 @@ export function aggregateCandles(tf: Timeframe, trades: readonly CandleTrade[]):
     const t = Math.floor(tr.tsMs / ms) * ms;
     const a = byT.get(t);
     if (!a) {
-      byT.set(t, { t, o: tr.price, h: tr.price, l: tr.price, c: tr.price, v: tr.volume, n: 1, solUsd: tr.solUsd, openKey: tr.key, closeKey: tr.key });
+      byT.set(t, {
+        t,
+        o: tr.price,
+        h: tr.price,
+        l: tr.price,
+        c: tr.price,
+        v: tr.volume,
+        n: 1,
+        solUsd: tr.solUsd,
+        openKey: tr.key,
+        closeKey: tr.key,
+      });
       continue;
     }
     // sorted by key: every later trade closes the bucket

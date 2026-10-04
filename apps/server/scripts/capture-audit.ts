@@ -205,7 +205,9 @@ async function pickCoins(db: Database, t0: number, t1: number): Promise<CoinPick
   const picks: CoinPick[] = [];
   const taken = new Set<string>();
   for (const mint of MINTS) {
-    const r = db.query("SELECT venue, COUNT(*) AS n FROM trades WHERE mint = ? AND block_time BETWEEN ? AND ? GROUP BY venue").all(mint, t0, t1) as {
+    const r = db
+      .query("SELECT venue, COUNT(*) AS n FROM trades WHERE mint = ? AND block_time BETWEEN ? AND ? GROUP BY venue")
+      .all(mint, t0, t1) as {
       venue: number;
       n: number;
     }[];
@@ -221,7 +223,13 @@ async function pickCoins(db: Database, t0: number, t1: number): Promise<CoinPick
       if (VENUE_BY_CODE[r.venue] !== venue || taken.has(r.mint)) continue;
       const accounts = accountsOf(db, r.mint);
       const has =
-        venue === "pump" ? accounts.curve : venue === "pumpswap" ? accounts.pumpPool : venue === "launchlab" ? accounts.launchLabPool : accounts.cpmmPool;
+        venue === "pump"
+          ? accounts.curve
+          : venue === "pumpswap"
+            ? accounts.pumpPool
+            : venue === "launchlab"
+              ? accounts.launchLabPool
+              : accounts.cpmmPool;
       if (!has) continue;
       taken.add(r.mint);
       picks.push({ mint: r.mint, venue, recorded: r.n, accounts });
@@ -248,7 +256,12 @@ function accountFor(c: CoinPick): string | null {
   return c.venue === "pump" ? a.curve : c.venue === "pumpswap" ? a.pumpPool : c.venue === "launchlab" ? a.launchLabPool : a.cpmmPool;
 }
 
-async function truthFor(reader: RpcHistoryReader, c: CoinPick, t0: number, t1: number): Promise<{ trades: TruthTrade[]; sigs: number; failed: number }> {
+async function truthFor(
+  reader: RpcHistoryReader,
+  c: CoinPick,
+  t0: number,
+  t1: number,
+): Promise<{ trades: TruthTrade[]; sigs: number; failed: number }> {
   const account = accountFor(c);
   if (!account) return { trades: [], sigs: 0, failed: 0 };
   const inWindow: SignatureInfo[] = [];
@@ -318,9 +331,7 @@ function classify(t: TruthTrade): LossClass {
   if (!INPROCESS) return "unclassified (db mode)";
   const n = notified.get(t.signature);
   if (!n) {
-    const inGap = downWindows.some(
-      (w) => w.slotBefore !== null && t.slot > w.slotBefore && (w.slotAfter === null || t.slot < w.slotAfter),
-    );
+    const inGap = downWindows.some((w) => w.slotBefore !== null && t.slot > w.slotBefore && (w.slotAfter === null || t.slot < w.slotAfter));
     return inGap ? "not delivered (reconnect gap)" : "not delivered (no notification)";
   }
   if (n.truncated) return "truncated logs";
@@ -365,14 +376,20 @@ async function main(): Promise<void> {
     t0 = t1 - WINDOW_MIN * 60_000;
     if (HEALTH) {
       try {
-        const h = (await (await fetch(`${HEALTH}/api/health`)).json()) as { sources: { reconnects: number; dropped: number; notes: string[] }[] };
+        const h = (await (await fetch(`${HEALTH}/api/health`)).json()) as {
+          sources: { reconnects: number; dropped: number; notes: string[] }[];
+        };
         healthNotes = [`reconnects ${h.sources[0]?.reconnects}, queue dropped ${h.sources[0]?.dropped}`, ...(h.sources[0]?.notes ?? [])];
       } catch (e) {
         healthNotes = [`health unavailable: ${e instanceof Error ? e.message : e}`];
       }
     }
   }
-  const reader = new RpcHistoryReader({ rpc: new RpcClient({ url: RPC_URL, maxConcurrent: 2, timeoutMs: 20_000 }), perSec: RPS, maxRetries: 6 });
+  const reader = new RpcHistoryReader({
+    rpc: new RpcClient({ url: RPC_URL, maxConcurrent: 2, timeoutMs: 20_000 }),
+    perSec: RPS,
+    maxRetries: 6,
+  });
   log(`window ${new Date(t0).toISOString()} .. ${new Date(t1).toISOString()} (${((t1 - t0) / 60_000).toFixed(1)} min)`);
   const picks = await pickCoins(db, t0, t1);
   log(`auditing ${picks.length} coins: ${picks.map((p) => `${short(p.mint)}/${p.venue}(${p.recorded})`).join(" ")}`);
@@ -394,7 +411,9 @@ async function main(): Promise<void> {
         failedSkipped: truth.failed,
         apiTrades: await apiCount(c.mint),
       });
-      log(`${short(c.mint)} ${c.venue}: chain ${truth.trades.length} trades (${truth.sigs} txs, ${truth.failed} failed skipped), captured ${cmp.captured} (${pct(cmp.captured, truth.trades.length)})`);
+      log(
+        `${short(c.mint)} ${c.venue}: chain ${truth.trades.length} trades (${truth.sigs} txs, ${truth.failed} failed skipped), captured ${cmp.captured} (${pct(cmp.captured, truth.trades.length)})`,
+      );
     } catch (e) {
       log(`${short(c.mint)}: audit failed: ${e instanceof Error ? e.message : e}`);
     }
@@ -415,8 +434,12 @@ async function main(): Promise<void> {
   console.log("\n=== capture rate (trades on chain in the window vs trades in the store) ===");
   console.log("venue      coins  chain  captured  rate");
   for (const [venue, v] of byVenue)
-    console.log(`${venue.padEnd(10)} ${String(v.coins).padStart(5)} ${String(v.truth).padStart(6)} ${String(v.captured).padStart(9)}  ${pct(v.captured, v.truth)}`);
-  console.log(`${"all".padEnd(10)} ${String(results.length).padStart(5)} ${String(total.truth).padStart(6)} ${String(total.captured).padStart(9)}  ${pct(total.captured, total.truth)}`);
+    console.log(
+      `${venue.padEnd(10)} ${String(v.coins).padStart(5)} ${String(v.truth).padStart(6)} ${String(v.captured).padStart(9)}  ${pct(v.captured, v.truth)}`,
+    );
+  console.log(
+    `${"all".padEnd(10)} ${String(results.length).padStart(5)} ${String(total.truth).padStart(6)} ${String(total.captured).padStart(9)}  ${pct(total.captured, total.truth)}`,
+  );
   if (losses.size) {
     console.log("\n=== where missing trades were lost ===");
     for (const [k, n] of [...losses].sort((a, b) => b[1] - a[1])) console.log(`${String(n).padStart(6)}  ${k}`);
@@ -462,8 +485,9 @@ async function main(): Promise<void> {
  * the coin's successful trade transactions on chain (whole history) against the trades the server now stores.
  */
 async function backfillCheck(app: App, reader: RpcHistoryReader, picks: CoinPick[]): Promise<unknown> {
-  const history = (app as unknown as { history?: { request(mint: string, priority: number): void; state(mint: string): { state: string } | null } })
-    .history;
+  const history = (
+    app as unknown as { history?: { request(mint: string, priority: number): void; state(mint: string): { state: string } | null } }
+  ).history;
   if (!history) {
     log("backfill: this server has no history service");
     return null;
@@ -485,7 +509,15 @@ async function backfillCheck(app: App, reader: RpcHistoryReader, picks: CoinPick
     log(
       `backfill ${short(c.mint)} ${c.venue}: state ${history.state(c.mint)?.state}, stored ${stored.n} trades; chain ${truth.trades.length} trades in ${truth.sigs} txs; captured ${cmp.captured} (${pct(cmp.captured, truth.trades.length)})`,
     );
-    out.push({ mint: c.mint, venue: c.venue, state: history.state(c.mint), stored: stored.n, chain: truth.trades.length, txs: truth.sigs, captured: cmp.captured });
+    out.push({
+      mint: c.mint,
+      venue: c.venue,
+      state: history.state(c.mint),
+      stored: stored.n,
+      chain: truth.trades.length,
+      txs: truth.sigs,
+      captured: cmp.captured,
+    });
   }
   return out;
 }

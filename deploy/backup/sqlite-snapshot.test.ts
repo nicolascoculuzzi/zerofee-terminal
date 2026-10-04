@@ -68,7 +68,15 @@ describe("snapshot", () => {
     const keptTrades = count(src, "SELECT count(*) AS n FROM trades WHERE block_time >= ?", NOW - 6 * HOUR);
     src.close();
     expect(keptTrades).toBe(61);
-    expect(s.rows).toEqual({ candles: 100, metadata_cache: 1, pools: 1, tokens: 5, trades: keptTrades, wallet_funders: 1 });
+    expect(s.rows).toEqual({
+      candles: 100,
+      metadata_cache: 1,
+      pools: 1,
+      token_history: 0,
+      tokens: 5,
+      trades: keptTrades,
+      wallet_funders: 1,
+    });
     expect(s.newest).toEqual({ candles: NOW, tokens: NOW, trades: NOW });
     expect(s.bytes).toBeGreaterThan(0);
     expect(s.bytes).toBeLessThan(s.sourceBytes);

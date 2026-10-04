@@ -35,7 +35,6 @@ import {
   type PulseColumn,
   parseTopic,
   type SearchResponse,
-  TIMEFRAME_MS,
   TIMEFRAMES,
   type Timeframe,
   type TokenHistory,
@@ -424,7 +423,10 @@ export class Gateway {
     if (!isTimeframe(tf)) return apiError(400, "bad_request", "tf must be one of 1s,15s,1m,5m,15m,1h");
     const to = Number(url.searchParams.get("to") ?? Date.now() + 60_000);
     const from = Number(url.searchParams.get("from") ?? 0);
-    const limit = Math.min(MAX_CANDLES_REST, Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? MAX_CANDLES_REST)) || MAX_CANDLES_REST));
+    const limit = Math.min(
+      MAX_CANDLES_REST,
+      Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? MAX_CANDLES_REST)) || MAX_CANDLES_REST),
+    );
     if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) return apiError(400, "bad_request", "invalid from/to");
     // one extra bucket tells whether an older page exists
     const page = this.candles(mint, tf, from, to, limit + 1);

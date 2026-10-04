@@ -112,7 +112,11 @@ export class StorageReader {
    * One page of a token's trades, newest first, by (slot, tx index, id) keyset: `before` is the previous page's
    * last trade as `slot:txIndex:id` (txIndex -1 when unknown). Returns the page and the cursor of its last row.
    */
-  tradesPage(mint: string, before: { slot: number; txIndex: number; id: string } | null, limit: number): { trades: Trade[]; next: string | null } {
+  tradesPage(
+    mint: string,
+    before: { slot: number; txIndex: number; id: string } | null,
+    limit: number,
+  ): { trades: Trade[]; next: string | null } {
     const rows = (
       before
         ? this.db
@@ -121,7 +125,9 @@ export class StorageReader {
                ORDER BY slot DESC, COALESCE(tx_index, -1) DESC, id DESC LIMIT ?5`,
             )
             .all(mint, before.slot, before.txIndex, before.id, limit + 1)
-        : this.db.query("SELECT * FROM trades WHERE mint = ?1 ORDER BY slot DESC, COALESCE(tx_index, -1) DESC, id DESC LIMIT ?2").all(mint, limit + 1)
+        : this.db
+            .query("SELECT * FROM trades WHERE mint = ?1 ORDER BY slot DESC, COALESCE(tx_index, -1) DESC, id DESC LIMIT ?2")
+            .all(mint, limit + 1)
     ) as TradeRow[];
     const more = rows.length > limit;
     const page = rows.slice(0, limit);

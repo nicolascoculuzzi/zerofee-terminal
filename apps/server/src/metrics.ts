@@ -351,19 +351,54 @@ export class Metrics implements MetricsEndpoint {
       "Notifications the decode queue dropped (each is re-read by signature or counted lost).",
       cap((c) => c.queueDropped),
     );
-    e.add("zerofee_capture_recovered_total", "counter", "Dropped notifications re-read and applied.", cap((c) => c.recovered));
-    e.add("zerofee_capture_lost_total", "counter", "Transactions that could not be recovered (reported as gaps).", cap((c) => c.lost));
-    e.add("zerofee_capture_truncated_total", "counter", "Notifications whose logs the RPC cut short.", cap((c) => c.truncated));
+    e.add(
+      "zerofee_capture_recovered_total",
+      "counter",
+      "Dropped notifications re-read and applied.",
+      cap((c) => c.recovered),
+    );
+    e.add(
+      "zerofee_capture_lost_total",
+      "counter",
+      "Transactions that could not be recovered (reported as gaps).",
+      cap((c) => c.lost),
+    );
+    e.add(
+      "zerofee_capture_truncated_total",
+      "counter",
+      "Notifications whose logs the RPC cut short.",
+      cap((c) => c.truncated),
+    );
     e.add(
       "zerofee_capture_incomplete_total",
       "counter",
       "Notifications with fewer trade events than trade instructions, or an undecodable event.",
       cap((c) => c.incomplete),
     );
-    e.add("zerofee_capture_refetched_total", "counter", "Transactions re-read because their logs were incomplete or dropped.", cap((c) => c.refetched));
-    e.add("zerofee_capture_partial_total", "counter", "Incomplete logs applied as they were (re-read failed).", cap((c) => c.partial));
-    e.add("zerofee_capture_gaps_total", "counter", "Feed gaps reported to the history service.", cap((c) => c.gaps));
-    e.add("zerofee_capture_down_seconds_total", "counter", "Time the source was disconnected.", cap((c) => c.downMs / 1000));
+    e.add(
+      "zerofee_capture_refetched_total",
+      "counter",
+      "Transactions re-read because their logs were incomplete or dropped.",
+      cap((c) => c.refetched),
+    );
+    e.add(
+      "zerofee_capture_partial_total",
+      "counter",
+      "Incomplete logs applied as they were (re-read failed).",
+      cap((c) => c.partial),
+    );
+    e.add(
+      "zerofee_capture_gaps_total",
+      "counter",
+      "Feed gaps reported to the history service.",
+      cap((c) => c.gaps),
+    );
+    e.add(
+      "zerofee_capture_down_seconds_total",
+      "counter",
+      "Time the source was disconnected.",
+      cap((c) => c.downMs / 1000),
+    );
     const hist = d.history?.();
     if (hist) {
       e.add("zerofee_history_queued", "gauge", "Coins waiting for a trade-history backfill, by priority.", [
