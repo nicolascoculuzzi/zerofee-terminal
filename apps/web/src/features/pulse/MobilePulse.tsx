@@ -9,8 +9,9 @@ import { useSettings } from "../../state/settings";
 import { ActiveFilters } from "./ActiveFilters";
 import { EmptyColumn, NewBar, SkeletonCards } from "./ColumnStates";
 import { cardView } from "./cardView";
+import { RISK_ICON } from "./icons";
 import { MobileRow } from "./MobileRow";
-import { RiskLegend } from "./RiskChips";
+import { RISK_CHIPS } from "./RiskChips";
 import { usePulseUi } from "./store";
 import { useTrackedHolding } from "./tracked";
 import { useColumnList, useIncoming } from "./useColumnList";
@@ -30,16 +31,17 @@ function TabCount({ column }: { column: PulseColumnId }) {
 }
 
 /**
- * Column switch for phones (DESIGN.md 5.8): a 36 px band with 12 px gutters holding
- * "New 214 | Final 38 | Migrated 61", each segment with a 44 px hit area. While no filter is
- * active the band also carries the Filters button (the filter row carries it otherwise).
+ * Column switch for phones (DESIGN.md 5.8): "New 214 | Final 38 | Migrated 61" as one segmented
+ * control with 12 px gutters. The band is 44 px so every segment's hit area reaches 44 px without
+ * reaching into the header above or the rows below; counts stay out until the first snapshot. While
+ * no filter is active the band also carries the Filters button (the filter row carries it otherwise).
  * New / Finalizing / Migrated tabs after Binance Meme Rush: https://mobbin.com/screens/972c602f-95aa-44ba-9cd3-1f869d9a58c3
  */
 function MobileTabs({ column }: { column: PulseColumnId }) {
   const setColumn = usePulseUi((s) => s.setMobileColumn);
   const filtered = useSettings((s) => activeFilterCount(s.columns[column].filters[s.columns[column].activeFilter]) > 0);
   return (
-    <div className="flex h-9 shrink-0 items-center gap-2 border-b border-hairline px-3">
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline px-3">
       <div
         role="tablist"
         aria-label="Pulse column"
@@ -56,8 +58,8 @@ function MobileTabs({ column }: { column: PulseColumnId }) {
               tabIndex={active ? 0 : -1}
               onClick={() => setColumn(c)}
               className={cn(
-                "focus-inset relative flex h-full flex-1 items-center justify-center gap-1 rounded-xs text-data font-medium transition-colors after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']",
-                active ? "bg-surface-3 text-fg-1" : "text-fg-3",
+                "focus-inset relative flex h-full flex-1 items-center justify-center gap-1.5 rounded-xs text-data font-medium transition-colors after:absolute after:inset-x-0 after:-inset-y-[9px] after:content-['']",
+                active ? "bg-surface-3 text-fg-1" : "text-fg-3 hover:text-fg-2",
               )}
             >
               {TAB_LABEL[c]}
@@ -71,11 +73,50 @@ function MobileTabs({ column }: { column: PulseColumnId }) {
           type="button"
           aria-label="Filters"
           onClick={() => usePulseUi.getState().openFilters(column)}
-          className="relative flex size-8 shrink-0 items-center justify-center rounded-sm text-fg-2 after:absolute after:-inset-1.5 after:content-['']"
+          className="relative flex size-8 shrink-0 items-center justify-center rounded-sm border border-hairline-strong text-fg-2 transition-colors after:absolute after:-inset-1.5 after:content-[''] hover:text-fg-1 active:bg-surface-2"
         >
           <SlidersHorizontal className="icon-md" />
         </button>
       )}
+    </div>
+  );
+}
+
+const SHORT: Record<(typeof RISK_CHIPS)[number]["key"], string> = {
+  top10: "T10",
+  dev: "Dev",
+  snipers: "Snp",
+  insiders: "Ins",
+  bundlers: "Bnd",
+};
+
+/**
+ * Under 382 px a row's risk slots drop their glyphs to fit (RiskChips: values alone in 2.8em
+ * slots), so the list gets a column header instead of a loose legend: the same 36 px avatar track
+ * and 8 px gap as the rows, then one 2.8em cell per slot in the slots' own type size, so each glyph
+ * and short name sits directly over its value column. A list column header like Binance Meme
+ * Rush's "Age / Holders / Top 10": https://mobbin.com/screens/f9b4eff0-8083-4e54-913c-51177e462d1d
+ */
+function RiskColumnHeader() {
+  return (
+    <div
+      aria-hidden="true"
+      className="grid h-6 shrink-0 grid-cols-[36px_minmax(0,1fr)] items-center gap-x-2 border-b border-hairline px-3 min-[382px]:hidden"
+    >
+      <span />
+      <div className="flex min-w-0 items-center gap-1 text-label">
+        {RISK_CHIPS.map(({ key }) => {
+          const Icon = RISK_ICON[key];
+          return (
+            <span key={key} className="min-w-[2.8em] shrink-0">
+              <span className="inline-flex items-center gap-0.5 text-micro font-medium text-fg-3">
+                <Icon className="icon-xs" />
+                {SHORT[key]}
+              </span>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -168,8 +209,7 @@ export function MobilePulse() {
     <div className="flex min-h-0 flex-1 flex-col bg-surface-1">
       <MobileTabs column={column} />
       <ActiveFilters column={column} mobile />
-      {/* Phones under 382 px show risk values without their icons (RiskChips): name them here. */}
-      <RiskLegend className="border-b border-hairline min-[382px]:hidden" />
+      <RiskColumnHeader />
       <MobileList key={column} column={column} />
     </div>
   );
