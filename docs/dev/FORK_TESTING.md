@@ -27,9 +27,10 @@ bun run fork:stop
 | Command | What it does |
 |---|---|
 | `bun run fork:start` | Picks coins from recent on-chain activity, clones them, starts the validator |
-| `bun run fork:start <mint> ...` | Uses these coins instead (active curve or migrated PumpSwap coins) |
+| `bun run fork:start <mint> ...` | Uses these coins instead (active curve or migrated PumpSwap coins). A required kind you leave out (Token-2022 curve coin, PumpSwap pool) is still discovered |
 | `bun run fork:start --reuse` | Re-forks the previous run's coins with fresh mainnet state |
 | `bun run fork:start --no-feature-set` | Keeps the test validator's default features instead of cloning mainnet's |
+| `bun run fork:start --allow-missing` | Starts even when no Token-2022 curve coin or PumpSwap pool was found; the e2e cases that need it are skipped, with the reason in the test name |
 | `bun run fork:accounts [mint ...]` | Prints the chosen coins and the full clone list as JSON; starts nothing |
 | `bun run e2e [-t pattern]` | Runs `packages/core/e2e/*.e2e.ts` (armed orders and trades), then prints a CU / size / fee / latency table with each transaction's result. Extra args go to `bun test` |
 | `bun run fork:stop [--keep-ledger]` | Stops the validator and deletes the ledger. `fork.json` is kept for `--reuse` |
@@ -40,6 +41,7 @@ bun run fork:stop
 | `FORK_RPC_PORT` | `18899` (websocket +1) | Away from the usual 8899, so other validators can run alongside |
 | `FORK_CLONE_URL` | `https://api.mainnet-beta.solana.com` | Read-only mainnet RPC for discovery and cloning. It appears on the validator's command line, so avoid keyed URLs on shared machines |
 | `FORK_START_TIMEOUT_MS` | `240000` | Health-check deadline |
+| `FORK_DISCOVERY_TIMEOUT_MS` | `180000` | Time budget for finding coins from recent activity |
 | `FORK_RPC_URL`, `FORK_WS_URL` | from `fork.json` | e2e overrides; loopback only |
 
 The e2e files are named `*.e2e.ts`, which `bun test` doesn't pick up, so the default test run and CI stay offline.
@@ -48,7 +50,7 @@ The armed suite's migration case buys out the `migration` coin's curve and migra
 
 ## How it works
 
-1. **Coins.** `accounts.ts` reads recent pump trades to find an active Token-2022 (`create_v2`) curve coin, plus a second one as the `migration` coin, which only the armed suite uses because it completes and migrates it. It finds a mayhem coin through recent Mayhem-program activity. It also picks a canonical wSOL PumpSwap pool: it prefers an SPL Token base for 6 transactions, then takes any eligible pool, up to 15. A legacy SPL Token curve coin is used only if one shows up along the way, since they're rare after `create_v2`. The public endpoint allows about 5 `getTransaction` calls per 10 s, so discovery stops as soon as each kind is found (usually about 10 transactions in total) and logs why it rejected coins and pools. The pump scan may read up to 30 transactions (the migration coin is worth 20 of them), because at times most recent curve coins are ineligible: one run found no curve coin in 12. Explicit mints and `--reuse` give the second Token-2022 curve coin the `migration` kind.
+1. **Coins.** `accounts.ts` reads recent pump trades to find an active Token-2022 (`create_v2`) curve coin, plus a second one as the `migration` coin, which only the armed suite uses because it completes and migrates it. It finds a mayhem coin through recent Mayhem-program activity. It also picks a canonical wSOL PumpSwap pool: it prefers an SPL Token base for 6 transactions, then takes any eligible pool, up to 15. A legacy SPL Token curve coin is used only if one shows up along the way, since they're rare after `create_v2`. The public endpoint allows about 5 `getTransaction` calls per 10 s, so discovery stops as soon as each kind is found and logs why it rejected coins and pools. It reads `getSignaturesForAddress` pages (100 signatures each, up to 4 for pump), spreads its picks across slots (at most 3 per slot, newest first) so one busy slot cannot use up the budget, and fetches the transactions in JSON-RPC batches of 5 with `maxSupportedTransactionVersion: 1`: v1 transactions are live on mainnet, and asking for version 0 made every one of them an error. Rate-limited calls are retried with backoff (honoring `Retry-After`). A required kind (the Token-2022 curve coin, the PumpSwap pool) gets up to 3 rounds of up to 40 (pump) or 15 (PumpSwap) transactions, 5 s and 10 s apart, each reading newer activity, all within `FORK_DISCOVERY_TIMEOUT_MS`. If one is still missing, `fork:start` fails fast and says how to pass mints (or `--allow-missing` starts anyway). Explicit mints and `--reuse` give the second Token-2022 curve coin the `migration` kind.
 2. **Clone list.** Every account the trades touch is resolved with `packages/core`'s own PDA and state helpers, from live mainnet state:
 
    | Group | Accounts | Flag |
