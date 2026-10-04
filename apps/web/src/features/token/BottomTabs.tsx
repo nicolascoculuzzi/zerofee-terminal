@@ -47,6 +47,7 @@ export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; 
     positions,
     orders,
     holders: detail.summary.holders ?? undefined,
+    traders: detail.topTraders.length,
   };
 
   // The Info tab only exists at 1024–1279 px; fall back when the layout drops it.
@@ -103,7 +104,7 @@ export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; 
               )}
             >
               {LABEL[t]}
-              {count !== undefined && count > 0 && <span className="zf-num text-fg-3">{fmtCount(count)}</span>}
+              {count !== undefined && count > 0 && <span className="zf-num font-normal text-fg-3">{fmtCount(count)}</span>}
               {active && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
             </button>
           );

@@ -13,7 +13,7 @@ import { useAlertWatcher } from "./alerts";
 import { BottomTabs, TAB_ORDER } from "./BottomTabs";
 import { CancelOrderDialog } from "./CancelOrderDialog";
 import { crosshair } from "./chart/crosshair";
-import { MobileToken } from "./MobileToken";
+import { MobileToken, MobileTokenSkeleton } from "./MobileToken";
 import { Splitter } from "./Splitter";
 import { TokenHeader } from "./TokenHeader";
 import { TokenInfo } from "./TokenInfo";
@@ -193,7 +193,7 @@ export default function TokenPage() {
       </div>
     );
   }
-  if (!ready) return tablet ? <TokenPageSkeleton /> : <div className="p-3 text-data text-fg-3">Loading token…</div>;
+  if (!ready) return tablet ? <TokenPageSkeleton /> : <MobileTokenSkeleton />;
 
   if (!tablet) return <MobileToken key={mint} detail={ready} />;
 

@@ -10,9 +10,14 @@
 const PROXY_PATH = "/api/img";
 const SIZES = [32, 48, 64, 96, 128, 256] as const;
 
-/** Size bucket for a box of `cssPx`, at most 2x the display size (DESIGN.md 8: images). */
-export function proxySize(cssPx: number, dpr = 1): number {
-  const px = cssPx * Math.min(2, Math.max(1, dpr || 1));
+/**
+ * Size bucket for a box of `cssPx` (DESIGN.md 8: images): the smallest proxy size that covers the
+ * box at the screen's pixel ratio, with the ratio capped at 2 (images are at most 2x their display
+ * size, the proxy contract). `minDpr` floors the ratio for boxes that must stay sharp whatever the
+ * screen reports: the Pulse card tile passes 2, so its 54 px box asks for 128 even at 1x.
+ */
+export function proxySize(cssPx: number, dpr = 1, minDpr = 1): number {
+  const px = cssPx * Math.min(2, Math.max(1, minDpr, dpr || 1));
   for (const s of SIZES) if (s >= px) return s;
   return SIZES[SIZES.length - 1] as number;
 }
@@ -28,14 +33,15 @@ export function imageVersion(image: string): string {
 }
 
 /**
- * The <img src> for a token's image at a display size, or null (draw the monogram).
+ * The <img src> for a token's image at a display size (`dpr`, `minDpr`: as in proxySize), or null
+ * (draw the monogram).
  *  - an already proxied URL (TokenSummary.imageProxied, "/api/img?...") gets its size set;
  *  - a metadata URL (TokenSummary.image, http(s)) becomes the proxy URL for that mint;
  *  - anything else (data:, blob:, javascript:, other origins' paths) is never loaded.
  */
-export function tokenImageSrc(mint: string, image: string | null | undefined, cssPx: number, dpr = 1): string | null {
+export function tokenImageSrc(mint: string, image: string | null | undefined, cssPx: number, dpr = 1, minDpr = 1): string | null {
   if (!image || !mint) return null;
-  const s = proxySize(cssPx, dpr);
+  const s = proxySize(cssPx, dpr, minDpr);
   if (image.startsWith(`${PROXY_PATH}?`)) {
     const u = new URL(image, "http://self.invalid");
     if (u.pathname !== PROXY_PATH || u.searchParams.get("mint") !== mint) return null;
@@ -44,4 +50,33 @@ export function tokenImageSrc(mint: string, image: string | null | undefined, cs
   }
   if (!/^https?:\/\//i.test(image)) return null;
   return `${PROXY_PATH}?mint=${encodeURIComponent(mint)}&v=${imageVersion(image)}&s=${s}`;
+}
+
+/**
+ * What the proxy says about an image that did not load (an <img> error carries no status, so the avatar
+ * asks with a HEAD of the same URL): `x-zf-image: pending` (being fetched, look again after Retry-After),
+ * `failed` / `none` (keep the monogram, don't ask again), `ok` (it is there now).
+ */
+export type ImageProbe = { state: "ok" | "pending" | "failed"; retryAfterMs: number };
+
+export async function probeImage(src: string, fetchFn: typeof fetch = fetch): Promise<ImageProbe> {
+  try {
+    const r = await fetchFn(src, { method: "HEAD", cache: "no-store" });
+    if (r.ok) return { state: "ok", retryAfterMs: 0 };
+    const retry = Number(r.headers.get("retry-after"));
+    const retryAfterMs = Number.isFinite(retry) && retry > 0 ? retry * 1000 : 0;
+    const state = r.headers.get("x-zf-image");
+    // 429 (our own rate limit) and 503 (busy) are about us, not the image: try again later
+    if (state === "pending" || r.status === 429 || r.status === 503) return { state: "pending", retryAfterMs };
+    return { state: "failed", retryAfterMs: 0 };
+  } catch {
+    return { state: "pending", retryAfterMs: 0 }; // offline for a moment
+  }
+}
+
+/** Back-off between looks at a pending image: 3 s doubling to 2 min, never sooner than the server asked. */
+export const IMAGE_RETRY_LIMIT = 12;
+export function imageRetryDelay(attempt: number, retryAfterMs: number): number | null {
+  if (attempt >= IMAGE_RETRY_LIMIT) return null;
+  return Math.max(retryAfterMs, Math.min(120_000, 3_000 * 2 ** attempt));
 }

@@ -8,8 +8,6 @@ import { errorMessage } from "../settings/format";
 
 export const STEP_TITLE_ID = "zf-onboarding-step-title";
 
-export const PROVIDER_NAME = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" } as const;
-
 /** Copy for the current step, passed from the page to each step. */
 export interface StepFrame {
   title: string;

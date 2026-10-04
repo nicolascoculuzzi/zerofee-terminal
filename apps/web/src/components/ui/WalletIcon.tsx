@@ -37,7 +37,13 @@ export function WalletIcon({
         height={64}
         draggable={false}
         decoding="async"
-        className={cn(BOX[size], "shrink-0", logo.plate ? cn("object-contain", PLATE_PAD[size]) : "object-cover", className)}
+        className={cn(
+          BOX[size],
+          "shrink-0",
+          logo.plate ? cn("object-contain", PLATE_PAD[size]) : "object-cover",
+          logo.edge && "outline-1 -outline-offset-1 outline-hairline-strong",
+          className,
+        )}
       />
     );
   }

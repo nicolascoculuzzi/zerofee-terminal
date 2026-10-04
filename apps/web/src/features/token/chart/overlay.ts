@@ -36,6 +36,16 @@ export interface LineSpec {
   axis?: { text: string; bg: string; fg: string; border?: string };
 }
 
+/** A vertical marker at a bar (the curve-to-pool migration). */
+export interface TimeLineSpec {
+  id: string;
+  /** Bar time, Unix seconds (an existing bar, so the line sits on it). */
+  time: number;
+  label: string;
+  color: string;
+  textColor: string;
+}
+
 export type MarkerKind = "you" | "dev" | "tracked" | "sniper" | "cluster";
 
 export interface MarkerSpec {
@@ -72,6 +82,7 @@ export class ChartOverlay implements ISeriesPrimitive<Time> {
   private series: ISeriesApi<SeriesType, Time> | null = null;
   private requestUpdate: (() => void) | null = null;
   lines: LineSpec[] = [];
+  timeLines: TimeLineSpec[] = [];
   groups: MarkerGroup[] = [];
   outline: number | null = null;
   extents = new Map<number, BarExtent>();
@@ -177,8 +188,40 @@ export class ChartOverlay implements ISeriesPrimitive<Time> {
       }
     });
     // biome-ignore lint/correctness/useHookAtTopLevel: fancy-canvas rendering scope, not a React hook
-    target.useMediaCoordinateSpace(({ context: ctx }) => {
+    target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
       const ts = chart.timeScale();
+      for (const l of this.timeLines) {
+        const x = ts.timeToCoordinate(l.time as Time);
+        if (x === null) continue;
+        const width = Math.max(1, Math.floor(hpr));
+        const xb = Math.round(x * hpr) + (width % 2 ? 0.5 : 0);
+        ctx.save();
+        ctx.strokeStyle = l.color;
+        ctx.lineWidth = width;
+        ctx.setLineDash([1 * vpr, 3 * vpr]);
+        ctx.beginPath();
+        ctx.moveTo(xb, 0);
+        ctx.lineTo(xb, bitmapSize.height);
+        ctx.stroke();
+        ctx.restore();
+      }
+    });
+    // biome-ignore lint/correctness/useHookAtTopLevel: fancy-canvas rendering scope, not a React hook
+    target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+      const ts = chart.timeScale();
+      for (const l of this.timeLines) {
+        const x = ts.timeToCoordinate(l.time as Time);
+        if (x === null) continue;
+        ctx.save();
+        ctx.font = `500 10px ${FONT}`;
+        ctx.textBaseline = "top";
+        const w = ctx.measureText(l.label).width;
+        const left = Math.min(Math.round(x) + 4, mediaSize.width - w - 4);
+        ctx.fillStyle = l.textColor;
+        // Under the legend rows.
+        ctx.fillText(l.label, left, 44);
+        ctx.restore();
+      }
       if (this.outline !== null) {
         const x = ts.timeToCoordinate(this.outline as Time);
         const bar = this.extents.get(this.outline);

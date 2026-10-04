@@ -27,7 +27,7 @@ type Key = "token" | "bought" | "sold" | "holding" | "entry" | "pnl" | "actions"
 function cols(quote: "USD" | "SOL"): Col<Key>[] {
   const u = quoteUnit(quote);
   return [
-    { key: "token", label: "Token", width: flex(14) },
+    { key: "token", label: "Token", width: flex(20) },
     { key: "bought", label: `Bought ${u}`, width: ch(9), align: "right" },
     { key: "sold", label: `Sold ${u}`, width: ch(9), align: "right" },
     { key: "holding", label: "Holding", width: ch(15), align: "right" },
@@ -84,7 +84,7 @@ function positionCell(p: Position, key: Key): ReactNode {
       return (
         <Link to={`/t/${p.mint}`} className="group flex min-w-0 items-center gap-2" title={`${p.name} (${p.symbol})`}>
           <TokenAvatar mint={p.mint} symbol={p.symbol} imageUri={p.imageUri} size="xs" />
-          <span className="max-w-[10ch] truncate font-medium text-fg-1 group-hover:underline">{p.symbol}</span>
+          <span className="max-w-[12ch] shrink-0 truncate font-medium text-fg-1 group-hover:underline">{p.symbol}</span>
           <span className="truncate text-fg-3">{p.name}</span>
         </Link>
       );

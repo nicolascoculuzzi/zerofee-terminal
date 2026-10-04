@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { type ReactNode, type RefObject, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactNode, type RefObject, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/cn";
 import { pushOverlay } from "../../lib/overlayStack";
@@ -61,7 +61,7 @@ function CloseButton({ onClose }: { onClose: () => void }) {
       onClick={onClose}
       aria-label="Close"
       title="Close (Esc)"
-      className="flex size-7 shrink-0 items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1 active:bg-surface-3-hover"
+      className="relative flex size-7 shrink-0 items-center justify-center rounded-sm text-fg-3 transition-colors after:absolute after:-inset-2 after:content-[''] hover:bg-surface-3 hover:text-fg-1 active:bg-surface-3-hover"
     >
       <X className="icon-md" />
     </button>
@@ -87,6 +87,20 @@ export interface ModalProps {
   layer?: "modal" | "palette";
   /** Distance from the top: 10vh for dialogs, 12vh for the palette. */
   top?: "dialog" | "palette";
+  /** Leading mark in the header, vertically centred on the title block (a wallet or token logo). */
+  icon?: ReactNode;
+  /**
+   * "center" (default) for our own dialogs. "top-end" anchors the panel under the top-right corner, where a
+   * browser wallet's extension popup opens; used by the simulated wallet approval so it never covers the dialog
+   * that asked for it.
+   */
+  placement?: "center" | "top-end";
+  /**
+   * Below 640 px, dock the panel to the bottom edge as a full-width sheet (8 px top radius, safe-area
+   * padding, 16 px rise) instead of floating it; from 640 px up `placement` applies unchanged. For
+   * confirm-style dialogs a phone user answers with a thumb (the simulated wallet approval).
+   */
+  sheetOnPhone?: boolean;
 }
 
 export function Modal({
@@ -103,6 +117,9 @@ export function Modal({
   label,
   layer = "modal",
   top = "dialog",
+  icon,
+  placement = "center",
+  sheetOnPhone = false,
 }: ModalProps) {
   const panel = useRef<HTMLDivElement>(null);
   useOverlayBehaviour(open, onClose, panel);
@@ -112,8 +129,11 @@ export function Modal({
     <LayerContext.Provider value={z}>
       <div
         className={cn(
-          "zf-in-fade fixed inset-0 flex items-start justify-center overflow-y-auto bg-scrim p-3 sm:p-6",
-          top === "palette" ? "pt-[12vh] sm:pt-[12vh]" : "pt-[8vh] sm:pt-[10vh]",
+          "zf-in-fade fixed inset-0 flex items-start overflow-y-auto bg-scrim p-3 sm:p-6",
+          placement === "top-end"
+            ? "justify-center pt-12 sm:justify-end sm:pt-12 sm:pr-3"
+            : cn("justify-center", top === "palette" ? "pt-[12vh] sm:pt-[12vh]" : "pt-[8vh] sm:pt-[10vh]"),
+          sheetOnPhone && "max-sm:items-end max-sm:p-0",
         )}
         style={{ zIndex: z }}
       >
@@ -124,14 +144,17 @@ export function Modal({
           aria-modal="true"
           aria-label={label ?? (typeof title === "string" ? title : undefined)}
           tabIndex={-1}
-          style={{ maxWidth: width }}
+          style={sheetOnPhone ? ({ "--zf-modal-w": `${width}px` } as CSSProperties) : { maxWidth: width }}
           className={cn(
             "zf-in-modal relative flex max-h-[84vh] w-full flex-col rounded-lg border border-hairline-strong bg-floating shadow-e2 outline-none",
+            sheetOnPhone &&
+              "max-w-(--zf-modal-w) max-sm:max-h-[88dvh] max-sm:max-w-none max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:[animation-name:zf-in-up16]",
             className,
           )}
         >
           {!bare && (
             <div className={cn("flex shrink-0 items-center gap-3 border-b border-hairline pr-2 pl-4", description ? "h-15" : "h-11")}>
+              {icon}
               <div className="min-w-0 flex-1">
                 <div className="truncate text-heading font-semibold text-fg-1">{title}</div>
                 {description && <div className="truncate text-data text-fg-3">{description}</div>}

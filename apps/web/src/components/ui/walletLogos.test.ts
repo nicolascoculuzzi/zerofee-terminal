@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { providerFromName, WALLET_BRANDS, walletLogoSrc } from "./walletLogos";
+import { KNOWN_WALLETS } from "../../services/walletService";
+import { providerFromName, WALLET_BRANDS, walletBrand, walletLogoSrc } from "./walletLogos";
 
 const PUBLIC = join(import.meta.dir, "..", "..", "..", "public");
 
@@ -28,6 +29,16 @@ describe("wallet logos", () => {
   test("names map to providers", () => {
     expect(providerFromName("Backpack Wallet")).toBe("backpack");
     expect(providerFromName("SOLFLARE")).toBe("solflare");
+    expect(providerFromName("Coinbase Wallet")).toBe("coinbase");
+    expect(providerFromName("OKX Wallet")).toBe("okx");
+    expect(providerFromName("Trust")).toBe("trust");
+    expect(providerFromName("Trustee")).toBeNull();
     expect(providerFromName("Glow")).toBeNull();
+  });
+
+  test("every known wallet has a brand; other Wallet Standard wallets have none", () => {
+    for (const id of KNOWN_WALLETS) expect(walletBrand(id)).not.toBeNull();
+    expect(walletBrand("std:Glow")).toBeNull();
+    expect(walletLogoSrc(null, "Glow", "std:Glow")).toBeNull();
   });
 });
