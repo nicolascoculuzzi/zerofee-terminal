@@ -24,6 +24,18 @@ export interface WriterOptions {
   pruneBatch?: number;
 }
 
+/** A wallet's first incoming SOL transfer (Helius funded-by); funder null = none found. */
+export interface WalletFunderRow {
+  wallet: string;
+  funder: string | null;
+  funderName: string | null;
+  funderType: string | null;
+  amountLamports: string | null;
+  fundedAt: number | null;
+  slot: number | null;
+  fetchedAt: number;
+}
+
 export class StorageWriter implements StorageSink {
   private trades: unknown[][] = [];
   private tradeDeletes: string[] = [];
@@ -31,10 +43,11 @@ export class StorageWriter implements StorageSink {
   private readonly tokens = new Map<string, unknown[]>();
   private readonly pools = new Map<string, unknown[]>();
   private readonly meta = new Map<string, unknown[]>();
+  private readonly funders = new Map<string, unknown[]>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   readonly stats = { flushes: 0, rows: 0, errors: 0, lastFlushMs: null as number | null, maxFlushMs: 0, pruned: 0 };
-  private readonly st: Record<"trade" | "delTrade" | "candle" | "token" | "pool" | "meta", Statement>;
+  private readonly st: Record<"trade" | "delTrade" | "candle" | "token" | "pool" | "meta" | "funder", Statement>;
 
   constructor(
     private readonly db: Database,
@@ -51,9 +64,10 @@ export class StorageWriter implements StorageSink {
          ON CONFLICT(mint, tf, t) DO UPDATE SET o = excluded.o, h = excluded.h, l = excluded.l, c = excluded.c, v = excluded.v, n = excluded.n, sol_usd = excluded.sol_usd`,
       ),
       token: db.prepare(
-        `INSERT INTO tokens (mint, name, symbol, launchpad, created_at, migrated_at, updated_at, summary, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO tokens (mint, name, symbol, launchpad, created_at, migrated_at, updated_at, summary, state, creator, migrated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(mint) DO UPDATE SET name = excluded.name, symbol = excluded.symbol, launchpad = excluded.launchpad, created_at = excluded.created_at,
-           migrated_at = excluded.migrated_at, updated_at = excluded.updated_at, summary = excluded.summary, state = excluded.state`,
+           migrated_at = excluded.migrated_at, updated_at = excluded.updated_at, summary = excluded.summary, state = excluded.state,
+           creator = excluded.creator, migrated = excluded.migrated`,
       ),
       pool: db.prepare(
         `INSERT INTO pools (pool, base_mint, quote_mint, info, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -62,6 +76,11 @@ export class StorageWriter implements StorageSink {
       meta: db.prepare(
         `INSERT INTO metadata_cache (key, json, ok, fetched_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET json = excluded.json, ok = excluded.ok, fetched_at = excluded.fetched_at`,
+      ),
+      funder: db.prepare(
+        `INSERT INTO wallet_funders (wallet, funder, funder_name, funder_type, amount_lamports, funded_at, slot, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(wallet) DO UPDATE SET funder = excluded.funder, funder_name = excluded.funder_name, funder_type = excluded.funder_type,
+           amount_lamports = excluded.amount_lamports, funded_at = excluded.funded_at, slot = excluded.slot, fetched_at = excluded.fetched_at`,
       ),
     };
   }
@@ -80,7 +99,15 @@ export class StorageWriter implements StorageSink {
   }
 
   get pending(): number {
-    return this.trades.length + this.tradeDeletes.length + this.candles.size + this.tokens.size + this.pools.size + this.meta.size;
+    return (
+      this.trades.length +
+      this.tradeDeletes.length +
+      this.candles.size +
+      this.tokens.size +
+      this.pools.size +
+      this.meta.size +
+      this.funders.size
+    );
   }
 
   trade(t: Trade, evIndex: number): void {
@@ -123,7 +150,14 @@ export class StorageWriter implements StorageSink {
       rec.updatedAt,
       JSON.stringify(summary),
       serializeRecord(rec),
+      // dev history keys on the creator recorded at creation (the live one can be rewritten by fee sharing)
+      rec.creatorAtCreate ?? rec.creator,
+      rec.migrated ? 1 : 0,
     ]);
+  }
+
+  walletFunder(r: WalletFunderRow): void {
+    this.funders.set(r.wallet, [r.wallet, r.funder, r.funderName, r.funderType, r.amountLamports, r.fundedAt, r.slot, r.fetchedAt]);
   }
 
   pool(info: PoolInfo): void {
@@ -145,10 +179,12 @@ export class StorageWriter implements StorageSink {
     const tokens = [...this.tokens.values()];
     const pools = [...this.pools.values()];
     const meta = [...this.meta.values()];
+    const funders = [...this.funders.values()];
     this.candles.clear();
     this.tokens.clear();
     this.pools.clear();
     this.meta.clear();
+    this.funders.clear();
     try {
       this.db.transaction(() => {
         for (const r of trades) this.st.trade.run(...(r as never[]));
@@ -161,9 +197,10 @@ export class StorageWriter implements StorageSink {
         for (const r of tokens) this.st.token.run(...(r as never[]));
         for (const r of pools) this.st.pool.run(...(r as never[]));
         for (const r of meta) this.st.meta.run(...(r as never[]));
+        for (const r of funders) this.st.funder.run(...(r as never[]));
       })();
       this.stats.flushes++;
-      this.stats.rows += trades.length + deletes.length + candles.length + tokens.length + pools.length + meta.length;
+      this.stats.rows += trades.length + deletes.length + candles.length + tokens.length + pools.length + meta.length + funders.length;
       const ms = performance.now() - t0;
       this.stats.lastFlushMs = Math.round(ms * 100) / 100;
       if (ms > this.stats.maxFlushMs) this.stats.maxFlushMs = Math.round(ms);

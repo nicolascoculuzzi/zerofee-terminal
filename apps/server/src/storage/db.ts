@@ -1,8 +1,8 @@
 /**
- * SQLite (bun:sqlite) for shared market data: tokens, trades (rolling retention), candles, the PumpSwap
- * pool registry and the metadata cache. One writer (the batched StorageWriter); WAL lets the REST
- * readers run alongside it. Schema migrations are plain SQL, applied in order and tracked with
- * PRAGMA user_version.
+ * SQLite (bun:sqlite) for shared market data: tokens (with their creator, for dev history), trades
+ * (rolling retention), candles, the PumpSwap pool registry, the metadata cache and the wallet funding
+ * cache. One writer (the batched StorageWriter); WAL lets the REST readers run alongside it. Schema
+ * migrations are plain SQL, applied in order and tracked with PRAGMA user_version.
  */
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
@@ -77,6 +77,28 @@ export const MIGRATIONS: readonly string[] = [
     ok INTEGER NOT NULL,
     fetched_at INTEGER NOT NULL
   );
+  `,
+  // v2: dev history (launches per creator) and the wallet funding cache (Helius funded-by, kept forever:
+  // a wallet's first incoming SOL transfer never changes; funder NULL = none found).
+  `
+  ALTER TABLE tokens ADD COLUMN creator TEXT;
+  ALTER TABLE tokens ADD COLUMN migrated INTEGER NOT NULL DEFAULT 0;
+  UPDATE tokens SET
+    creator = COALESCE(json_extract(state, '$.creatorAtCreate'), json_extract(state, '$.creator')),
+    migrated = CASE WHEN json_extract(state, '$.migrated') THEN 1 ELSE 0 END;
+  CREATE INDEX tokens_creator ON tokens(creator, created_at);
+
+  CREATE TABLE wallet_funders (
+    wallet TEXT PRIMARY KEY,
+    funder TEXT,
+    funder_name TEXT,
+    funder_type TEXT,
+    amount_lamports TEXT,
+    funded_at INTEGER,
+    slot INTEGER,
+    fetched_at INTEGER NOT NULL
+  ) WITHOUT ROWID;
+  CREATE INDEX wallet_funders_funder ON wallet_funders(funder);
   `,
 ];
 

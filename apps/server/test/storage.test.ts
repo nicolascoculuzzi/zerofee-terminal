@@ -1,4 +1,5 @@
 /** SQLite storage: migrations, batched writes, queries, retention, record codec and restore. */
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { MarketState } from "../src/market/state";
 import { newTokenRecord } from "../src/market/token";
@@ -26,7 +27,23 @@ describe("schema", () => {
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map(
       (r) => r.name,
     );
-    expect(tables).toEqual(["candles", "metadata_cache", "pools", "tokens", "trades"]);
+    expect(tables).toEqual(["candles", "metadata_cache", "pools", "tokens", "trades", "wallet_funders"]);
+  });
+
+  test("v2 backfills creator / migrated of rows written before it", () => {
+    const db = new Database(":memory:");
+    db.exec(MIGRATIONS[0] as string);
+    db.exec("PRAGMA user_version = 1");
+    const state = (o: Record<string, unknown>) => JSON.stringify({ mint: "M", ...o });
+    db.run("INSERT INTO tokens (mint, launchpad, updated_at, summary, state) VALUES ('A', 'pump', 1, '{}', ?), ('B', 'pump', 1, '{}', ?)", [
+      state({ creatorAtCreate: "DEV", creator: "LIVE", migrated: true }),
+      state({ creatorAtCreate: null, creator: "LIVE2", migrated: false }),
+    ]);
+    db.exec(MIGRATIONS[1] as string);
+    expect(db.query("SELECT mint, creator, migrated FROM tokens ORDER BY mint").all()).toEqual([
+      { mint: "A", creator: "DEV", migrated: 1 },
+      { mint: "B", creator: "LIVE2", migrated: 0 },
+    ]);
   });
 });
 

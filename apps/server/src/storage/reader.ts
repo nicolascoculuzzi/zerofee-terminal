@@ -3,6 +3,14 @@ import type { Database } from "bun:sqlite";
 import type { Candle, Timeframe, TokenSummary, Trade } from "@zerofee/protocol";
 import type { PoolInfo } from "../accounts/resolver";
 import type { MetadataStore } from "../feeds/metadata";
+import type { WalletFunderRow } from "./writer";
+
+/** One launch of a creator: when (creation time, else first sighting) and whether it migrated. */
+export interface LaunchRow {
+  mint: string;
+  t: number;
+  migrated: boolean;
+}
 
 export interface TradeRow {
   id: string;
@@ -89,6 +97,28 @@ export class StorageReader {
 
   pools(): PoolInfo[] {
     return (this.db.query("SELECT info FROM pools").all() as { info: string }[]).map((r) => JSON.parse(r.info) as PoolInfo);
+  }
+
+  /** A creator's launches we recorded (most recent `limit`). Indexed by (creator, created_at). */
+  launchesBy(creator: string, limit = 5_000): LaunchRow[] {
+    const rows = this.db
+      .query(
+        `SELECT mint, COALESCE(created_at, json_extract(state, '$.firstSeenAt'), updated_at) AS t, migrated
+         FROM tokens WHERE creator = ? ORDER BY t DESC LIMIT ?`,
+      )
+      .all(creator, limit) as { mint: string; t: number; migrated: number }[];
+    return rows.map((r) => ({ mint: r.mint, t: r.t, migrated: r.migrated === 1 }));
+  }
+
+  /** Cached funding of a wallet (undefined = never looked up). */
+  walletFunder(wallet: string): WalletFunderRow | undefined {
+    const r = this.db
+      .query(
+        `SELECT wallet, funder, funder_name AS funderName, funder_type AS funderType, amount_lamports AS amountLamports,
+           funded_at AS fundedAt, slot, fetched_at AS fetchedAt FROM wallet_funders WHERE wallet = ?`,
+      )
+      .get(wallet) as WalletFunderRow | null;
+    return r ?? undefined;
   }
 
   /** Metadata cache adapter (reads here, writes through the batched writer). */
