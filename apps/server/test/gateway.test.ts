@@ -4,7 +4,14 @@
  * POST /api/tx in dry-run.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { HealthResponse, SearchResponse, SourceHealth, TokenResponse, TxSubmitResponse } from "@zerofee/protocol";
+import type {
+  HealthResponse,
+  LookupTablesResponse,
+  SearchResponse,
+  SourceHealth,
+  TokenResponse,
+  TxSubmitResponse,
+} from "@zerofee/protocol";
 import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
@@ -218,6 +225,19 @@ describe("REST", () => {
     expect((await get("zzzz-no-such-token")).body.tokens).toEqual([]);
     expect((await get("", "&limit=5")).body.tokens).toEqual([]);
     expect((await get("x".repeat(65))).status).toBe(400);
+  });
+
+  test("GET /api/lookup-tables: chain reads (none exist on the mock RPC), bad input", async () => {
+    const t1 = addr("alt-1");
+    const t2 = addr("alt-2");
+    const r = await fetch(`${base}/api/lookup-tables?addresses=${t1},${t2}`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as LookupTablesResponse;
+    expect(body.tables).toEqual({ [t1]: null, [t2]: null });
+    expect((await fetch(`${base}/api/lookup-tables`)).status).toBe(400);
+    expect((await fetch(`${base}/api/lookup-tables?addresses=nope`)).status).toBe(400);
+    const nine = Array.from({ length: 9 }, (_, i) => addr(`alt-${i}`)).join(",");
+    expect((await fetch(`${base}/api/lookup-tables?addresses=${nine}`)).status).toBe(400);
   });
 
   test("GET /api/candles merges stored and in-memory candles", async () => {

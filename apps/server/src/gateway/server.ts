@@ -7,7 +7,7 @@
  * rolled-back events go out as `correction` messages. Slow clients that exceed the backpressure limit
  * are disconnected (they reconnect and resnapshot).
  *
- * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts; POST /api/tx;
+ * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts, /api/lookup-tables; POST /api/tx;
  * GET /debug; GET /metrics (Prometheus, token or loopback only: src/metrics.ts). Per-IP token-bucket
  * rate limits; an AuthProvider seam for SIWS sessions.
  *
@@ -42,6 +42,7 @@ import type { Server, ServerWebSocket } from "bun";
 import { apiError, json } from "../api/http";
 import type { ServerConfig } from "../config";
 import type { ChainPublisher } from "../feeds/chain";
+import { type LookupTableReader, MAX_LOOKUP_TABLES_PER_REQUEST } from "../feeds/lookupTables";
 import type { ProgramAccountsCache } from "../feeds/programAccounts";
 import { logger } from "../log";
 import { COLUMNS, diffSummary, type PulseBoard } from "../market/pulse";
@@ -109,6 +110,8 @@ export interface GatewayDeps {
   chain: ChainPublisher;
   reader: StorageReader | null;
   programAccounts: ProgramAccountsCache | null;
+  /** GET /api/lookup-tables (chain reads); absent = 503. */
+  lookupTables?: LookupTableReader | null;
   auth: AuthProvider;
   tx: TxHandler;
   health(): HealthResponse;
@@ -322,6 +325,7 @@ export class Gateway {
         const v = this.d.programAccounts?.get();
         return v ? json(v) : apiError(503, "unavailable", "program accounts not loaded yet");
       }
+      if (req.method === "GET" && url.pathname === "/api/lookup-tables") return await this.lookupTables(url);
       if (url.pathname === "/api/tx") {
         if (req.method !== "POST") return apiError(405, "bad_request", "POST only");
         if (!this.txLimiter.allow(ip)) return apiError(429, "rate_limited", "slow down");
@@ -371,6 +375,20 @@ export class Gateway {
     } else tokens = this.d.market.search(q, limit);
     const body: SearchResponse = { tokens };
     return json(body);
+  }
+
+  private async lookupTables(url: URL): Promise<Response> {
+    const list = (url.searchParams.get("addresses") ?? "").split(",").filter((a) => a.length > 0);
+    if (list.length === 0 || list.length > MAX_LOOKUP_TABLES_PER_REQUEST) {
+      return apiError(400, "bad_request", `addresses must list 1-${MAX_LOOKUP_TABLES_PER_REQUEST} lookup tables`);
+    }
+    if (!list.every(isAddressLike)) return apiError(400, "bad_request", "invalid address");
+    if (!this.d.lookupTables) return apiError(503, "unavailable", "lookup tables are not served here");
+    try {
+      return json(await this.d.lookupTables.read(list));
+    } catch (e) {
+      return apiError(503, "unavailable", `lookup tables unavailable: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   private getCandles(url: URL): Response {

@@ -10,6 +10,7 @@ import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
 import { Enricher, watchedMints } from "./enrich";
 import { ChainPublisher } from "./feeds/chain";
+import { LookupTableReader } from "./feeds/lookupTables";
 import { MetadataFetcher } from "./feeds/metadata";
 import { ProgramAccountsCache } from "./feeds/programAccounts";
 import { SolUsdFeed } from "./feeds/solUsd";
@@ -335,6 +336,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     chain,
     reader,
     programAccounts,
+    lookupTables: new LookupTableReader(rpc),
     auth: o.auth ?? user?.sessions ?? new AnonymousAuth(),
     tx,
     health,
