@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 keypair*.json
 *keypair*.json
 id.json
@@ -17,6 +18,8 @@ keystore/
 *.db-shm
 *.sqlite
 *.sqlite3
+# PGlite user-state directory (dev): PGLITE_DIR, default data/pglite
+pglite/
 
 # Dependencies and builds
 node_modules/
@@ -29,7 +32,16 @@ coverage/
 *.log
 logs/
 
+# Local mainnet-fork validator state (fork:start defaults to the OS temp dir; these cover FORK_DIR=.fork
+# and solana-test-validator's own default ledger when run by hand)
+.fork/
+test-ledger/
+fork-ledger/
+
 # OS and editor
 .DS_Store
 .idea/
 .vscode/
+
+# Agent worktrees and local tool state
+.claude/

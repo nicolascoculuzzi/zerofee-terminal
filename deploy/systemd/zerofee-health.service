@@ -1,0 +1,12 @@
+[Unit]
+Description=zerofee health ping (feed, blockhash, containers, disk) to healthchecks.io
+Documentation=file:///opt/zerofee/app/docs/ops/RUNBOOK.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+Environment=ZEROFEE_HOME=/opt/zerofee
+ExecStart=/opt/zerofee/app/deploy/monitoring/health-ping.sh
+TimeoutStartSec=50s

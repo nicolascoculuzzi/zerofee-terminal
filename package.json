@@ -2,13 +2,21 @@
   "name": "zerofee-terminal",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc -p packages/core --noEmit && tsc -p apps/cli --noEmit",
+    "test:validator": "ZF_VALIDATOR_TESTS=1 bun test packages/core/test/integration",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/core/tsconfig.e2e.json --noEmit && tsc -p packages/protocol --noEmit && tsc -p apps/cli --noEmit && tsc -p apps/server --noEmit && tsc -p packages/auth --noEmit && tsc -p packages/signer --noEmit && tsc -p packages/auth/tsconfig.test.json --noEmit && tsc -p packages/signer/tsconfig.test.json --noEmit && tsc -p deploy --noEmit && tsc -p apps/web --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "trade": "bun run apps/cli/src/index.ts"
+    "trade": "bun run apps/cli/src/index.ts",
+    "fork:start": "bun run packages/core/scripts/fork/start.ts",
+    "fork:stop": "bun run packages/core/scripts/fork/stop.ts",
+    "fork:accounts": "bun run packages/core/scripts/fork/accounts.ts",
+    "e2e": "bun run packages/core/e2e/run.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

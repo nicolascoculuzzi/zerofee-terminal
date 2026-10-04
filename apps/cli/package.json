@@ -1,0 +1,13 @@
+{
+  "name": "@zerofee/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "trade": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@zerofee/core": "workspace:*",
+    "@solana/kit": "^8.4.0"
+  }
+}

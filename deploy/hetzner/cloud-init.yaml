@@ -1,0 +1,245 @@
+#cloud-config
+# zerofee-terminal host bootstrap: Hetzner CCX33 (8 dedicated vCPU, 32 GB RAM, x86) in Falkenstein
+# (fsn1), Ubuntu 24.04 LTS. Step-by-step use: deploy/hetzner/README.md.
+#
+# BEFORE USE replace REPLACE_WITH_YOUR_SSH_PUBLIC_KEY below with your public key (one line). A
+# hardware key (sk-ssh-ed25519@openssh.com ...) is best. With root login disabled, a wrong key locks
+# you out and the server has to be rebuilt.
+#
+# Never put secrets in this file. Any process on the server can read user-data back from the
+# metadata service. Containers are blocked from it (zerofee-metadata-block.service below).
+#
+# What it sets up:
+#   - a deploy user with SSH keys only: no root login, no passwords, deploy is the only SSH user
+#   - UFW allowing only 22 (rate limited), 80 and 443 (TCP and UDP for HTTP/3); fail2ban for SSH
+#   - unattended security upgrades (no automatic reboot); chrony against Hetzner's NTP servers
+#   - Docker CE from Docker's apt repository (release key pinned by fingerprint), log rotation for
+#     Docker, journald and /var/log/zerofee
+#   - a 4 GB swap file, network and kernel sysctls, and the /opt/zerofee layout
+# Reboots once at the end if the upgrades need it.
+
+hostname: zerofee-1
+timezone: Etc/UTC
+locale: C.UTF-8
+
+groups:
+  - docker
+
+users:
+  - name: deploy
+    gecos: zerofee deploy
+    shell: /bin/bash
+    groups: [sudo, docker]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - REPLACE_WITH_YOUR_SSH_PUBLIC_KEY
+
+disable_root: true
+ssh_pwauth: false
+
+swap:
+  filename: /swapfile
+  size: 4G
+  maxsize: 4G
+
+package_update: true
+package_upgrade: true
+
+apt:
+  sources:
+    docker.list:
+      source: "deb [arch=amd64 signed-by=$KEY_FILE] https://download.docker.com/linux/ubuntu $RELEASE stable"
+      # Docker's release key. cloud-init fetches it and checks this fingerprint.
+      keyid: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - jq
+  - zstd
+  - age
+  - rclone
+  - ufw
+  - fail2ban
+  - python3-systemd
+  - unattended-upgrades
+  - apt-listchanges
+  - chrony
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-zerofee.conf
+    permissions: "0644"
+    content: |
+      # zerofee: keys only, no root, deploy user only. Local forwarding stays on for SSH tunnels to
+      # the Uptime Kuma UI and the server's /debug page (ssh -L 3001:127.0.0.1:3001 deploy@host).
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      AuthenticationMethods publickey
+      PermitEmptyPasswords no
+      AllowUsers deploy
+      MaxAuthTries 3
+      LoginGraceTime 20
+      X11Forwarding no
+      AllowAgentForwarding no
+      AllowTcpForwarding local
+      PermitTunnel no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "local",
+        "log-opts": { "max-size": "20m", "max-file": "5" },
+        "live-restore": true,
+        "no-new-privileges": true,
+        "icc": false
+      }
+
+  - path: /etc/fail2ban/jail.d/zerofee.local
+    permissions: "0644"
+    content: |
+      [DEFAULT]
+      backend = systemd
+      bantime = 1h
+      bantime.increment = true
+      bantime.maxtime = 1w
+      findtime = 10m
+      maxretry = 5
+
+      [sshd]
+      enabled = true
+      mode = aggressive
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /etc/apt/apt.conf.d/52zerofee-unattended-upgrades
+    permissions: "0644"
+    content: |
+      // Security updates install automatically from Ubuntu's default origins. Docker's repository is
+      // not an allowed origin: Docker is upgraded by hand (docs/ops/RUNBOOK.md). No automatic
+      // reboot, because a reboot interrupts trading. Reboots are scheduled instead: check
+      // /var/run/reboot-required weekly; the health ping reports it.
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::SyslogEnable "true";
+
+  - path: /etc/chrony/sources.d/hetzner.sources
+    permissions: "0644"
+    content: |
+      # Hetzner's NTP servers (close to FSN1). Ubuntu's pool stays configured as a fallback.
+      server ntp1.hetzner.de iburst
+      server ntp2.hetzner.com iburst
+      server ntp3.hetzner.net iburst
+
+  - path: /etc/sysctl.d/60-zerofee.conf
+    permissions: "0644"
+    content: |
+      # Swap only under real memory pressure (it exists to avoid OOM kills, not for paging).
+      vm.swappiness = 10
+      # Many concurrent WebSocket clients behind Caddy.
+      net.core.somaxconn = 4096
+      net.ipv4.tcp_max_syn_backlog = 8192
+      # BBR: better throughput and latency for far-away users.
+      net.core.default_qdisc = fq
+      net.ipv4.tcp_congestion_control = bbr
+      # No ICMP redirects in or out.
+      net.ipv4.conf.all.accept_redirects = 0
+      net.ipv4.conf.default.accept_redirects = 0
+      net.ipv6.conf.all.accept_redirects = 0
+      net.ipv6.conf.default.accept_redirects = 0
+      net.ipv4.conf.all.send_redirects = 0
+      net.ipv4.conf.default.send_redirects = 0
+      # Hide kernel pointers and the kernel log from unprivileged users.
+      kernel.kptr_restrict = 2
+      kernel.dmesg_restrict = 1
+
+  - path: /etc/systemd/journald.conf.d/zerofee.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=1G
+      MaxRetentionSec=1month
+
+  - path: /etc/logrotate.d/zerofee
+    permissions: "0644"
+    content: |
+      /var/log/zerofee/*.log {
+          weekly
+          rotate 12
+          compress
+          delaycompress
+          missingok
+          notifempty
+          create 0640 deploy deploy
+      }
+
+  - path: /etc/systemd/system/zerofee-metadata-block.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Block containers from the cloud metadata service (169.254.169.254)
+      After=docker.service
+      Requires=docker.service
+      PartOf=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/bin/sh -c 'iptables -C DOCKER-USER -d 169.254.169.254/32 -j REJECT 2>/dev/null || iptables -I DOCKER-USER -d 169.254.169.254/32 -j REJECT'
+      ExecStop=/bin/sh -c 'iptables -D DOCKER-USER -d 169.254.169.254/32 -j REJECT 2>/dev/null || true'
+
+      [Install]
+      WantedBy=docker.service
+
+  - path: /etc/profile.d/zerofee.sh
+    permissions: "0644"
+    content: |
+      # zerofee ops shortcuts: `dc ps`, `dc logs -f server`, ...
+      export ZEROFEE_HOME=/opt/zerofee
+      alias dc='/opt/zerofee/app/deploy/scripts/dc'
+
+runcmd:
+  - [sh, -c, "sshd -t && systemctl restart ssh"]
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+  - [ufw, limit, 22/tcp, comment, "SSH"]
+  - [ufw, allow, 80/tcp, comment, "HTTP (ACME, redirect to HTTPS)"]
+  - [ufw, allow, 443/tcp, comment, "HTTPS"]
+  - [ufw, allow, 443/udp, comment, "HTTP/3"]
+  - [ufw, --force, enable]
+  - [sysctl, --system]
+  - [systemctl, restart, systemd-journald]
+  - [chronyc, reload, sources]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, docker, fail2ban, chrony, unattended-upgrades, zerofee-metadata-block.service]
+  - [usermod, -aG, docker, deploy]
+  # web and flags are read by containers (Caddy, uid 10001) as "other": public assets and empty
+  # marker files only. backups stays private to deploy.
+  - [install, -d, -o, deploy, -g, deploy, -m, "0755", /opt/zerofee, /opt/zerofee/web, /opt/zerofee/web/releases, /opt/zerofee/flags]
+  - [install, -d, -o, deploy, -g, deploy, -m, "0700", /opt/zerofee/backups]
+  - [install, -d, -o, deploy, -g, deploy, -m, "0755", /var/log/zerofee]
+
+power_state:
+  mode: reboot
+  delay: now
+  message: "zerofee bootstrap finished; rebooting to complete upgrades"
+  condition: test -f /var/run/reboot-required
+
+final_message: "zerofee host ready after $UPTIME s. Next: deploy/hetzner/README.md step 4 (ssh deploy@<server-ip>)."
