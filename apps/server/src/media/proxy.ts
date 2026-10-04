@@ -764,7 +764,8 @@ export class ImageProxy {
     } catch (e) {
       const f = e instanceof FetchFailure ? e : new FetchFailure("failed", false);
       if (f.reason !== "aborted") {
-        this.stats.upstreamFailed++;
+        // waiting out a paused host never reached the upstream
+        if (f.reason !== "host_paused" && f.reason !== "busy") this.stats.upstreamFailed++;
         this.fail(f.reason);
         bump(this.stats.hostFailures, `${c.host} ${f.reason}`);
         if (f.reason === "content_type" && this.badMagicLogged < 50) {

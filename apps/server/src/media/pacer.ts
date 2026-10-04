@@ -88,6 +88,8 @@ export interface PacerOptions {
   maxPauseMs?: number;
   /** Waiters per host beyond which new low-priority requests are refused at once. */
   maxQueue?: number;
+  /** Longest a request waits for a slot before giving up as "host_paused" (default 30 s). */
+  maxWaitMs?: number;
 }
 
 export class HostPacer {
@@ -98,6 +100,7 @@ export class HostPacer {
   private readonly random: () => number;
   private readonly maxPauseMs: number;
   private readonly maxQueue: number;
+  private readonly maxWaitMs: number;
 
   constructor(o: PacerOptions = {}) {
     this.limits = o.limits ?? DEFAULT_HOST_LIMITS;
@@ -106,31 +109,49 @@ export class HostPacer {
     this.random = o.random ?? Math.random;
     this.maxPauseMs = o.maxPauseMs ?? 120_000;
     this.maxQueue = o.maxQueue ?? 2_000;
+    this.maxWaitMs = o.maxWaitMs ?? 30_000;
   }
 
   limitFor(host: string): HostLimit {
     return this.limits[host] ?? this.fallback;
   }
 
-  /** Waits for a slot on `host` at `prio`; resolves with the release function (call it exactly once). */
-  acquire(host: string, prio: Priority, signal?: AbortSignal): Promise<() => void> {
+  /**
+   * Waits for a slot on `host` at `prio`; resolves with the release function (call it exactly once).
+   * Rejects with a transient "host_paused" failure when the host is paused for longer than `maxWaitMs`, or
+   * the wait runs past it (the caller retries later instead of holding a race open).
+   */
+  acquire(host: string, prio: Priority, signal?: AbortSignal, maxWaitMs = this.maxWaitMs): Promise<() => void> {
     if (signal?.aborted) return Promise.reject(new FetchFailure("aborted", false));
     const h = this.state(host);
     const t = this.now();
     if (!h.lanes[0].length && !h.lanes[1].length && !h.lanes[2].length && this.ready(h, t)) return Promise.resolve(this.take(h, t));
+    if (h.pausedUntil - t > maxWaitMs) return Promise.reject(new FetchFailure("host_paused", false, 0, h.pausedUntil - t));
     if (this.queued(h) >= this.maxQueue && prio > 0) return Promise.reject(new FetchFailure("busy", false));
     return new Promise((resolve, reject) => {
       const w: Waiter = { prio, resolve, reject, signal };
       const queuedAt = t;
+      const leave = () => {
+        const lane = h.lanes[w.prio];
+        const i = lane.indexOf(w);
+        if (i >= 0) lane.splice(i, 1);
+        return i >= 0;
+      };
+      const timer = setTimeout(() => {
+        if (!leave()) return;
+        if (signal && w.onAbort) signal.removeEventListener("abort", w.onAbort);
+        reject(new FetchFailure("host_paused", false, 0, Math.max(0, h.pausedUntil - this.now())));
+      }, maxWaitMs);
+      (timer as { unref?: () => void }).unref?.();
       w.resolve = (release) => {
+        clearTimeout(timer);
         h.stats.waitedMs += this.now() - queuedAt;
         resolve(release);
       };
       if (signal) {
         w.onAbort = () => {
-          const lane = h.lanes[w.prio];
-          const i = lane.indexOf(w);
-          if (i >= 0) lane.splice(i, 1);
+          clearTimeout(timer);
+          leave();
           reject(new FetchFailure("aborted", false));
         };
         signal.addEventListener("abort", w.onAbort, { once: true });

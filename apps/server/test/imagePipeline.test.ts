@@ -138,7 +138,7 @@ describe("host pacing", () => {
   });
 
   test("Retry-After: 0 (block pages) falls back to an exponential back-off with jitter", () => {
-    const pacer = new HostPacer({ random: () => 0.5 });
+    const pacer = new HostPacer({ random: () => 0.5, now: () => 1_000 });
     pacer.throttled("x.test", 0);
     expect(pacer.pausedFor("x.test")).toBe(2_000);
     pacer.throttled("x.test", null);
