@@ -15,7 +15,7 @@ import { ConnectStep } from "./ConnectStep";
 import { DoneStep } from "./DoneStep";
 import { type FundResult, FundStep } from "./FundStep";
 import { LimitsStep } from "./LimitsStep";
-import { PROVIDER_NAME, STEP_TITLE_ID, type StepFrame } from "./parts";
+import { STEP_TITLE_ID, type StepFrame } from "./parts";
 import { SignInStep } from "./SignInStep";
 import { StepProgress, Stepper } from "./Stepper";
 import { WalletStep } from "./WalletStep";
@@ -124,7 +124,7 @@ export default function OnboardingPage() {
   const onBusyChange = useCallback((b: boolean) => setBusy(b), []);
 
   const sublabels = [
-    connected ? `${PROVIDER_NAME[connected.provider]} · ${shortAddr(connected.address)}` : null,
+    connected ? `${connected.name} · ${shortAddr(connected.address)}` : null,
     session ? `Session until ${fmtClock(session.expiresAt, false)}` : null,
     created ? `${created.label} · ${created.unlockMethod === "passkey" ? "passkey" : "passphrase"}` : null,
     backedUp ? "Verified" : null,

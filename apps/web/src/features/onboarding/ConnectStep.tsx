@@ -1,17 +1,15 @@
 import { ArrowRight, ArrowUpRight, Check, ChevronRight, Lock } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
 import { WalletBadge, WalletIcon } from "../../components/ui/WalletIcon";
-import { WALLET_BRANDS } from "../../components/ui/walletLogos";
+import { walletBrand } from "../../components/ui/walletLogos";
 import { cn } from "../../lib/cn";
 import { shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { ConnectedWallet, ProviderInfo, WalletProvider } from "../../services/walletService";
 import { Tag } from "../settings/ui";
-import { InlineError, Panel, PanelRow, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
-
-const PROVIDERS: WalletProvider[] = ["phantom", "solflare", "backpack"];
+import { InlineError, Panel, PanelRow, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
 /*
  * Connect wallet (DESIGN.md 4.19 step 1). A grouped list like OpenSea's and Axiom's connect modals
@@ -46,13 +44,11 @@ export function ConnectStep({
     }, 1_000);
     return () => clearInterval(t);
   }, []);
-  const known = new Set(providers.map((p) => p.provider));
-  const rows: ProviderInfo[] = [
-    ...providers,
-    ...PROVIDERS.filter((id) => !known.has(id)).map((id) => ({ provider: id, name: PROVIDER_NAME[id], icon: null, installed: false })),
-  ];
-  // Installed first, otherwise in the service's order.
+  // Installed first, otherwise in the service's order. A wallet that isn't installed is listed only when we
+  // can link to it (the known wallets).
+  const rows: ProviderInfo[] = providers.filter((p) => p.installed || walletBrand(p.provider));
   rows.sort((a, b) => Number(b.installed) - Number(a.installed));
+  const firstMissing = rows.findIndex((r) => !r.installed);
 
   const connect = async (provider: WalletProvider) => {
     setPending(provider);
@@ -66,13 +62,14 @@ export function ConnectStep({
       <StepHeader frame={frame} />
       <Panel>
         <ul className="divide-y divide-hairline">
-          {rows.map((p) => {
+          {rows.map((p, i) => {
             const id = p.provider;
-            const brand = WALLET_BRANDS[id];
+            const brand = walletBrand(id);
             const isConnected = connected?.provider === id;
             const logo = <WalletIcon icon={p.icon} name={p.name} provider={id} size="lg" />;
             if (!p.installed) {
-              return (
+              if (!brand) return null;
+              const row = (
                 <li key={id} className="flex h-14 items-center gap-3 px-3">
                   {logo}
                   <span className="min-w-0 flex-1">
@@ -89,6 +86,13 @@ export function ConnectStep({
                     Install <ArrowUpRight className="icon-xs text-fg-3" />
                   </a>
                 </li>
+              );
+              if (i !== firstMissing || i === 0) return row;
+              return (
+                <Fragment key={id}>
+                  <li className="flex h-8 items-center bg-surface-2 px-3 text-label font-medium text-fg-3">More wallets</li>
+                  {row}
+                </Fragment>
               );
             }
             return (

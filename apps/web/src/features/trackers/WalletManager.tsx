@@ -38,13 +38,14 @@ const COL = {
   name: "min-w-0 flex-1",
   addr: "w-[calc(9ch+24px)] @max-[340px]:hidden",
   alerts: "w-5 justify-center",
-  // Wide enough for the sortable header ("Added", "Last" plus its 12 px arrow) without truncation.
-  added: "w-14 justify-end",
-  last: "w-12 justify-end",
+  // Exactly the sortable header ("Added" / "Last" plus its 12 px arrow), so the name keeps the slack.
+  added: "w-12.5 justify-end",
+  last: "w-10 justify-end",
   menu: "w-5 justify-end",
 } as const;
 
-const ROW = "flex items-center gap-2 px-2";
+// 6 px gaps (not the table's 8) so "Diamond hands"-length names read in full in the 400 px pane.
+const ROW = "flex items-center gap-1.5 px-2";
 
 /** Removes wallets in one store write and offers Undo (a toast with an action is allowed, DESIGN.md 4.13). */
 export function removeWallets(addresses: readonly string[]): void {

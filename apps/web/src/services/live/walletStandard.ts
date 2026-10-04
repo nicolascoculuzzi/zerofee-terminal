@@ -8,7 +8,7 @@
  */
 import { getWallets } from "@wallet-standard/app";
 import type { Wallet, WalletAccount } from "@wallet-standard/base";
-import type { WalletProvider } from "../walletService";
+import { KNOWN_WALLETS, type KnownWallet, type WalletProvider } from "../walletService";
 
 export const SOLANA_MAINNET = "solana:mainnet";
 
@@ -61,17 +61,31 @@ const F = {
   signTransaction: "solana:signTransaction",
 } as const;
 
-export const PROVIDERS: readonly WalletProvider[] = ["phantom", "solflare", "backpack"];
+export const PROVIDERS: readonly KnownWallet[] = KNOWN_WALLETS;
 
-function providerOf(w: Wallet): WalletProvider | null {
-  const name = w.name.toLowerCase();
-  return PROVIDERS.find((p) => name.includes(p)) ?? null;
+/** Registered names of the known wallets ("Coinbase Wallet", "OKX Wallet", "Trust"). */
+const KNOWN_MATCH: readonly [KnownWallet, RegExp][] = [
+  ["phantom", /phantom/i],
+  ["solflare", /solflare/i],
+  ["backpack", /backpack/i],
+  ["coinbase", /coinbase/i],
+  ["okx", /\bokx\b/i],
+  ["trust", /\btrust\b/i],
+];
+
+/** The provider id for a registered wallet: a known wallet by name, otherwise "std:" plus its name. */
+export function providerOf(name: string): WalletProvider {
+  return KNOWN_MATCH.find(([, re]) => re.test(name))?.[0] ?? `std:${name}`;
 }
 
-/** A wallet we can sign in with: connect plus Solana transaction signing and a way to sign the SIWS message. */
-function usable(w: Wallet): boolean {
+/**
+ * A wallet we can sign in with: it lists a Solana chain, connects, signs Solana transactions and has a way
+ * to sign the SIWS message (solana:signIn or solana:signMessage). The sign-in flow is the same for all.
+ */
+export function usable(w: Pick<Wallet, "chains" | "features">): boolean {
   const f = w.features as Record<string, unknown>;
-  return !!f[F.connect] && !!f[F.signTransaction] && (!!f[F.signIn] || !!f[F.signMessage]);
+  const solana = w.chains.some((c) => c.startsWith("solana:"));
+  return solana && !!f[F.connect] && !!f[F.signTransaction] && (!!f[F.signIn] || !!f[F.signMessage]);
 }
 
 export interface DetectedWallet {
@@ -82,15 +96,21 @@ export interface DetectedWallet {
   wallet: Wallet;
 }
 
-/** Installed wallets we support, by provider (first registration wins). */
-export function detectWallets(): DetectedWallet[] {
+/** Usable wallets among `wallets`, one per provider (first registration wins), in registration order. */
+export function detectFrom(wallets: readonly Wallet[]): DetectedWallet[] {
   const out = new Map<WalletProvider, DetectedWallet>();
-  for (const w of getWallets().get()) {
-    const provider = providerOf(w);
-    if (!provider || out.has(provider) || !usable(w)) continue;
+  for (const w of wallets) {
+    if (!usable(w)) continue;
+    const provider = providerOf(w.name);
+    if (out.has(provider)) continue;
     out.set(provider, { provider, name: w.name, icon: w.icon, wallet: w });
   }
   return [...out.values()];
+}
+
+/** Installed wallets we can sign in with. */
+export function detectWallets(): DetectedWallet[] {
+  return detectFrom(getWallets().get());
 }
 
 /** Fires when a wallet extension registers or unregisters (they can load after the page). */

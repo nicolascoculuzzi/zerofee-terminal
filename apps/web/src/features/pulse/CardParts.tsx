@@ -267,8 +267,9 @@ export function MetricsCell({ view, stale }: { view: CardView; stale: boolean })
 /**
  * Wide+ second metrics column: fees paid in SOL and net buy (signed, in the global quote). As
  * tall as the first metrics column, so F and NB line up with MC and V. A value the feed doesn't
- * report is left out, label and all: the column keeps its width, so nothing else moves, and a
- * live feed without fee data shows an empty column rather than a stack of "F –" / "NB –".
+ * report is left out, label and all, and the column keeps its width so nothing else moves. When
+ * no card on screen reports either value (the live feed has no fee data), the column drops the
+ * track altogether (PulseColumn decides per column, so all its cards keep the same grid).
  */
 const NB_TONE: Record<CardView["nbTone"], string> = { buy: "text-buy", sell: "text-sell", zero: "text-fg-3", unknown: "text-fg-4" };
 

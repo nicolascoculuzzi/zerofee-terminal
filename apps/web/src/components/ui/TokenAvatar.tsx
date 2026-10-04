@@ -32,8 +32,17 @@ const BOX: Record<AvatarSize, string> = {
   card: "size-card-avatar",
 };
 
-/** Box size in CSS px for the image request. The card tile is 46 / 54 px; 48 keeps it in the 96 px bucket at 2x. */
-const PX: Record<AvatarSize, number> = { "2xs": 16, xs: 20, sm: 28, md: 32, row: 36, lg: 40, xl: 48, card: 48 };
+/**
+ * Box size in CSS px for the image request. The Pulse card passes its tile's real size (`imagePx`:
+ * 46 / 54 px wide, 38 / 46 px narrow, by density); 46, the compact tile, is the fallback.
+ */
+const PX: Record<AvatarSize, number> = { "2xs": 16, xs: 20, sm: 28, md: 32, row: 36, lg: 40, xl: 48, card: 46 };
+/**
+ * Card tiles are always requested at 2x (DESIGN.md 8: images), so they stay sharp on any screen:
+ * a 46 px tile asks for 96, the size the server prefetches for new launches (a cache hit for the
+ * first viewer), and the 54 px comfortable tile asks for 128.
+ */
+const CARD_MIN_DPR = 2;
 
 /** loading -> loaded; or failed (asking the server / waiting to look again) -> loading ... or gone (keep the monogram). */
 type ImgState = { base: string | null; attempt: number; state: "loading" | "loaded" | "failed" | "gone" };
@@ -84,6 +93,8 @@ export interface TokenAvatarProps {
   migrated?: boolean;
   /** Show the launchpad letter badge (cards and headers). */
   badge?: boolean;
+  /** CSS px of the image box when the size class can't tell (the Pulse card tile varies with density). */
+  imagePx?: number;
   className?: string;
 }
 
@@ -96,6 +107,7 @@ export const TokenAvatar = memo(function TokenAvatar({
   progress = null,
   migrated,
   badge = true,
+  imagePx,
   className,
 }: TokenAvatarProps) {
   const s = toSize(size);
@@ -108,7 +120,8 @@ export const TokenAvatar = memo(function TokenAvatar({
   // the tile), so the column's avatar track is exactly the box. Other sizes draw it outside.
   const framed = ring && s === "card";
   const p = migrated ? 1 : Math.max(0, Math.min(1, progress ?? 0));
-  const base = tokenImageSrc(mint, imageUri, PX[s], typeof window === "undefined" ? 1 : window.devicePixelRatio);
+  const dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio;
+  const base = tokenImageSrc(mint, imageUri, imagePx ?? PX[s], dpr, s === "card" ? CARD_MIN_DPR : 1);
   const [stored, setImg] = useState<ImgState>({ base, attempt: 0, state: "loading" });
   const img: ImgState = stored.base === base ? stored : { base, attempt: 0, state: "loading" };
   useEffect(() => {

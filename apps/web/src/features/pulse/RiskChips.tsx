@@ -6,6 +6,7 @@ import { fmtRiskPct } from "../../lib/format";
 import { bandsText, RISK_LETTER, type RiskKey, type RiskThresholds, riskTone, TONE_CHIP, TONE_TEXT, type Tone } from "../../lib/metrics";
 import type { TokenRisk } from "../../protocol";
 import { useSettings } from "../../state/settings";
+import { ICON, MASK, RISK_ICON } from "./icons";
 
 export const RISK_CHIPS: { key: RiskKey; field: keyof TokenRisk; spoken: string }[] = [
   { key: "top10", field: "top10Pct", spoken: "Top 10 holders" },
@@ -56,16 +57,35 @@ export function RiskTip({ chip, thresholds, updated }: { chip: RiskChipModel; th
 }
 
 /**
- * Five holder-risk chips T D S I B (DESIGN.md 4.5, bands per 3.11): 16px tall, min-width 40px,
- * letter in text-3, value in the band colour. Low is unfilled, mid warn-tint, high sell-tint with
- * a sell-edge border. "DS" when the dev sold everything; "–" before the metric is computed.
- * Letters replace Axiom's icon metaphors; severity tints after Railway:
- * https://mobbin.com/screens/ea8d53dc-8270-430d-bbdd-1df73b4ca531
+ * Pulse slot tones (DESIGN.md 4.5): the band lives in the value's colour alone, like Axiom's and
+ * Binance Meme Rush's icon rows. High adds a faint tint behind the slot (no border), as on
+ * Binance Meme Rank: https://mobbin.com/screens/55442959-3968-4340-9c27-3efe6dfffeb5
+ */
+const SLOT_TONE: Record<Tone, string> = {
+  good: "text-risk-low",
+  warn: "text-risk-mid",
+  bad: "bg-[color-mix(in_srgb,var(--zf-risk-high)_8%,transparent)] text-risk-high",
+  neutral: "text-fg-2",
+  unknown: "text-fg-4",
+};
+
+/**
+ * The five holder-risk metrics (DESIGN.md 4.5, bands per 3.11): top 10, dev, snipers, insiders,
+ * bundlers, always in that order.
  *
- * `letters`: "auto" hides them in containers under 424px (the column shows a legend row
- * instead), "never" always hides them. `tips="delegate"` renders one node per chip, with the
- * letter as a pseudo-element and `data-tip="risk:<key>"` for the page's tooltip layer (Pulse
- * cards, DESIGN.md 8: at most 45 nodes per card); "own" wraps each chip in a Tooltip.
+ * `tips="delegate"` is the Pulse slot (cards and phone rows): one node per metric, the lucide
+ * glyph (icons.tsx RISK_ICON) as a 12 px ::before mask in text-3, then the value; the band
+ * colours the value only, and 0% reads dim in text-3, never as an alert. Each slot has a fixed
+ * minimum width so slots line up from card to card; a metric the server hasn't computed keeps
+ * its slot but draws nothing. `data-tip="risk:<key>"` opens the full name, value and bands from
+ * the page's tooltip layer (DESIGN.md 8: at most 45 nodes per card).
+ *
+ * `tips="own"` (token page, trackers) keeps the lettered chip T D S I B, wrapped in a Tooltip.
+ *
+ * `letters`: whether the identifier (icon on Pulse, letter elsewhere) shows: "always", "never"
+ * (narrow columns, where the legend row names them), or "auto" (hidden in containers under 424 px;
+ * on Pulse, in a strip under 22.4em). "always" on Pulse also drops the icons in a strip under
+ * 20.5em (226 px at the 11 px label size).
  */
 export const RiskChips = memo(function RiskChips({
   risk,
@@ -81,9 +101,9 @@ export const RiskChips = memo(function RiskChips({
   letters?: "always" | "auto" | "never";
   tips?: "own" | "delegate";
   /**
-   * Chips the server hasn't computed yet: "dash" shows "–" (token page, trackers); "quiet" keeps
-   * the chip's slot so the row stays aligned but shows only its letter in text-4, and drops the
-   * chips altogether while none of the five is known (Pulse cards: no wall of dashes).
+   * Metrics the server hasn't computed yet: "dash" shows "–" (token page, trackers); "quiet" keeps
+   * the slot's width so the row stays aligned but leaves it empty, and drops the row's content
+   * altogether while none of the five is known (Pulse cards: no wall of dashes, no stray letters).
    */
   pending?: "dash" | "quiet";
   className?: string;
@@ -95,37 +115,47 @@ export const RiskChips = memo(function RiskChips({
   const quiet = pending === "quiet";
   const none = quiet && chips.every((c) => c.unknown);
   return (
-    <div className={cn("flex min-w-0 items-center gap-1", className)}>
+    <div className={cn("flex min-w-0 items-center gap-1", tips === "delegate" && "text-label @container/risk", className)}>
       {!none &&
         chips.map((chip) => {
           const key = chip.key;
-          const tone = colored ? TONE_CHIP[chip.tone] : "border-transparent bg-surface-3 text-fg-2";
-          // 44 px fits every common value ("T 0.4%", "D 14%") so chips line up card to card; only the
-          // rare "<0.1%" and "100%" grow (DESIGN.md 4.5). 34 px without the letter.
-          const width = letters === "always" ? "min-w-11" : letters === "never" ? "min-w-[34px]" : "min-w-[34px] @min-[424px]:min-w-11";
           if (tips === "delegate") {
-            const hush = quiet && chip.unknown;
+            // A Pulse slot never shows a dash: an uncomputed metric keeps its width and draws nothing.
+            const empty = chip.unknown;
+            const tone = chip.text === "0%" ? "text-fg-3" : colored ? SLOT_TONE[chip.tone] : "text-fg-2";
             return (
               <span
                 key={key}
                 role="img"
                 aria-label={chip.aria}
                 data-tip={`risk:${key}`}
-                data-l={RISK_LETTER[key]}
                 className={cn(
-                  "zf-num inline-flex h-4 shrink-0 items-center justify-between gap-0.5 rounded-xs border px-[3px] text-label font-medium",
-                  "before:text-micro before:font-medium before:content-[attr(data-l)]",
-                  hush ? "before:text-fg-4" : "before:text-fg-3",
-                  letters === "never" && "before:hidden",
-                  letters === "auto" && "before:hidden @min-[424px]:before:inline",
-                  width,
-                  tone,
+                  // Sizes are in em of the label type (11 px compact, 12 px comfortable and touch),
+                  // so they follow the numerals. 4.2em (46 px) holds the icon and any value up to
+                  // "100%", so slots line up card to card; only "<0.1%" grows. Strips too short
+                  // for five of those (wide columns near 424 px, phones) step down and stay
+                  // aligned: 3.8em slots from 20.5em, then the value alone in 2.8em slots (the
+                  // column shows its legend row there).
+                  "zf-num inline-flex h-4 shrink-0 items-center gap-0.5 rounded-xs px-0.5 text-label font-medium",
+                  ICON,
+                  MASK[key],
+                  "before:text-fg-3",
+                  letters === "always" &&
+                    "min-w-[4.2em] @max-[22.35em]/risk:min-w-[3.8em] @max-[22.35em]/risk:px-0 @max-[20.45em]/risk:min-w-[2.8em] @max-[20.45em]/risk:before:hidden",
+                  letters === "never" && "min-w-[2.8em] before:hidden",
+                  letters === "auto" && "min-w-[2.8em] before:hidden @min-[22.4em]/risk:min-w-[4.2em] @min-[22.4em]/risk:before:block",
+                  empty && "before:hidden",
+                  !empty && tone,
                 )}
               >
-                {hush ? null : chip.text}
+                {empty ? null : chip.text}
               </span>
             );
           }
+          const tone = colored ? TONE_CHIP[chip.tone] : "border-transparent bg-surface-3 text-fg-2";
+          // 44 px fits every common value ("T 0.4%", "D 14%") so chips line up card to card; only the
+          // rare "<0.1%" and "100%" grow (DESIGN.md 4.5). 34 px without the letter.
+          const width = letters === "always" ? "min-w-11" : letters === "never" ? "min-w-[34px]" : "min-w-[34px] @min-[424px]:min-w-11";
           return (
             <Tooltip key={key} content={<RiskTip chip={chip} thresholds={thresholds} />}>
               <span
@@ -152,11 +182,24 @@ export const RiskChips = memo(function RiskChips({
   );
 });
 
-/** Legend row for narrow cards (DESIGN.md 4.3): "T Top 10 · D Dev · S Snipers · I Insiders · B Bundlers". */
+const LEGEND: Record<RiskKey, string> = { top10: "Top 10", dev: "Dev", snipers: "Snipers", insiders: "Insiders", bundlers: "Bundlers" };
+
+/**
+ * Legend row (DESIGN.md 4.3), forced on for narrow cards, whose slots show values only: each
+ * metric's glyph and short name in order, micro type in text-3.
+ */
 export function RiskLegend({ className }: { className?: string }) {
   return (
-    <div className={cn("flex h-5 shrink-0 items-center gap-1 truncate px-2 text-micro font-medium text-fg-3", className)}>
-      T Top 10 · D Dev · S Snipers · I Insiders · B Bundlers
+    <div className={cn("flex h-5 shrink-0 items-center gap-2.5 overflow-hidden px-2 text-micro font-medium text-fg-3", className)}>
+      {RISK_CHIPS.map(({ key }) => {
+        const Icon = RISK_ICON[key];
+        return (
+          <span key={key} className="inline-flex shrink-0 items-center gap-1">
+            <Icon aria-hidden="true" className="icon-xs" strokeWidth={1.5} absoluteStrokeWidth />
+            {LEGEND[key]}
+          </span>
+        );
+      })}
     </div>
   );
 }

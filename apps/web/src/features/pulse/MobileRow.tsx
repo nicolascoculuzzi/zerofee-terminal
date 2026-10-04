@@ -28,7 +28,7 @@ export interface MobileRowProps {
 /**
  * Phone Pulse row (DESIGN.md 5.8): 64 px, 10 px top and bottom, 12 px sides. Line 1 (20 px):
  * ticker 14/600, age 12 text-2, volume 12 text-3, MC 13/600 on the right. Line 2 (24 px): the
- * five risk chips with letters, and the quick-buy pill (24 px visual, 44 px hit area). A tap on
+ * five risk slots (icon and value), and the quick-buy pill (24 px visual, 44 px hit area). A tap on
  * the row opens the token; a tap on the pill buys (tradeActions shows the touch review first). Two-line rows
  * with MC and volume on the right after Binance Meme Rush: https://mobbin.com/screens/972c602f-95aa-44ba-9cd3-1f869d9a58c3
  */
@@ -80,7 +80,7 @@ export const MobileRow = memo(function MobileRow(props: MobileRowProps) {
         </span>
       </Cell>
       <Cell className="flex min-w-0 items-center gap-2">
-        <RiskChips risk={props.risk} colored={props.colored} tips="delegate" pending="quiet" className="min-w-0 overflow-x-clip" />
+        <RiskChips risk={props.risk} colored={props.colored} tips="delegate" pending="quiet" className="min-w-0 flex-1 overflow-x-clip" />
         <span className="ml-auto flex shrink-0">
           <QuickBuyPill mint={view.mint} symbol={view.symbol} sol={props.quickBuySol} preset={props.preset} touch />
         </span>

@@ -22,6 +22,17 @@ describe("token image URLs (mirror of packages/protocol media.ts)", () => {
     expect(proxySize(500, 2)).toBe(256);
   });
 
+  test("minDpr floors the ratio (Pulse card tiles always ask for 2x), still capped at 2", () => {
+    // The 54 px comfortable card tile needs 108 device px on a retina screen: the 128 bucket.
+    expect(proxySize(54, 2)).toBe(128);
+    // Floored to 2x on a 1x screen too, so the tile is never upscaled or soft.
+    expect(proxySize(54, 1, 2)).toBe(128);
+    expect(proxySize(46, 1, 2)).toBe(96);
+    // The floor never lifts the 2x cap.
+    expect(proxySize(54, 3, 3)).toBe(128);
+    expect(tokenImageSrc(MINT, "https://a.example/x.png", 54, 1, 2)).toBe(`/api/img?mint=${MINT}&v=1q7q8zf&s=128`);
+  });
+
   test("metadata URLs become same-origin proxy URLs; proxied URLs get their size", () => {
     expect(tokenImageSrc(MINT, "https://a.example/x.png", 40, 2)).toBe(`/api/img?mint=${MINT}&v=1q7q8zf&s=96`);
     expect(tokenImageSrc(MINT, `/api/img?mint=${MINT}&v=1q7q8zf`, 20, 1)).toBe(`/api/img?mint=${MINT}&v=1q7q8zf&s=32`);
@@ -62,12 +73,19 @@ describe("TokenAvatar fallback (server-rendered markup)", () => {
   test("with an image: the monogram stays drawn and the proxied image loads over it, lazily and async", () => {
     const html = render({ size: "card", imageUri: "https://a.example/x.png" });
     expect(html).toContain(">WI<");
-    expect(html).toMatch(/<img[^>]+src="\/api\/img\?mint=6Frw[^"]+&amp;v=1q7q8zf&amp;s=(48|96)"/);
+    // Pulse card tiles are requested at 2x even when rendered at 1x (no window here): the 46 px
+    // compact tile asks for 96, the size the server prefetches. This used to be 48 at 1x.
+    expect(html).toMatch(/<img[^>]+src="\/api\/img\?mint=6Frw[^"]+&amp;v=1q7q8zf&amp;s=96"/);
     expect(html).toContain('loading="lazy"');
     expect(html).toContain('decoding="async"');
     expect(html).toContain("object-cover");
     expect(html).toContain("opacity-0"); // fades in on load, inside the same box
     expect(html).toContain("size-card-avatar");
+  });
+
+  test("the comfortable card tile (54 px, passed as imagePx) asks for the 128 bucket", () => {
+    const html = render({ size: "card", imagePx: 54, imageUri: "https://a.example/x.png" });
+    expect(html).toContain("&amp;s=128");
   });
 
   test("an unsafe image URL is never put in the markup", () => {
