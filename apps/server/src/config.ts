@@ -74,6 +74,10 @@ export interface ServerConfig {
   walletFeed: { refreshMs: number; afterFillMs: number };
   metadataGateways: string[];
   metadataTimeoutMs: number;
+  /** Attempts per metadata URI on transient failures (429, 5xx, timeouts) before giving up. */
+  metadataRetryMax: number;
+  /** Startup refetch of restored tokens' metadata: jobs started per second. */
+  metadataBackgroundRps: number;
   /** Image proxy (GET /api/img): media/config.ts. */
   media: MediaConfig;
 
@@ -349,6 +353,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     },
     metadataGateways: list(env, "METADATA_GATEWAYS", DEFAULT_IPFS_GATEWAYS),
     metadataTimeoutMs: int(env, "METADATA_TIMEOUT_MS", 6_000, 100, 60_000),
+    metadataRetryMax: int(env, "METADATA_RETRY_MAX", 12, 1, 100),
+    metadataBackgroundRps: int(env, "METADATA_BACKGROUND_RPS", 2, 1, 1_000),
     media: loadMediaConfig(env, str(env, "DB_PATH", "data/market.db")),
     // DRY_RUN is true unless explicitly set to false: POST /api/tx simulates instead of sending.
     dryRun: bool(env, "DRY_RUN", true),

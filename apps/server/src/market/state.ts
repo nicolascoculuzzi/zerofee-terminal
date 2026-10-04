@@ -80,7 +80,8 @@ export interface StorageSink {
 export interface MarketDeps {
   resolver: ResolverLike;
   solUsd(): number | null;
-  requestMetadata?(mint: string, uri: string): void;
+  /** Fetch a token's metadata JSON; `restore` (startup refetch) runs at background priority. */
+  requestMetadata?(mint: string, uri: string, origin?: "launch" | "restore"): void;
   storage?: StorageSink;
   now?(): number;
   /** Cached funder of a wallet (non-exchange), for the shared-funder bundle rule; null when unknown. */
@@ -1037,6 +1038,19 @@ export class MarketState {
     this.persist(rec, true);
   }
 
+  /**
+   * An image to show while the metadata can't be had (pump.fun's CDN for a pump coin). Only when the token
+   * has no image and its metadata isn't in; real metadata replaces it. True when it was applied.
+   */
+  setFallbackImage(mint: string, image: string): boolean {
+    const rec = this.tokens.get(mint);
+    if (!rec || rec.image || rec.metadataState === "ok") return false;
+    rec.image = image;
+    this.touch(rec);
+    this.persist(rec, true);
+    return true;
+  }
+
   private applyOnchainMetadata(rec: TokenRecord, md: OnchainTokenMetadata): void {
     if (!rec.name) rec.name = md.name;
     if (!rec.symbol) rec.symbol = md.symbol;
@@ -1254,7 +1268,7 @@ export class MarketState {
     // Metadata that failed (e.g. on a since-retired IPFS gateway) or was in flight at shutdown: fetch it again.
     if (rec.uri && rec.metadataState !== "ok") {
       rec.metadataState = "requested";
-      this.deps.requestMetadata?.(rec.mint, rec.uri);
+      this.deps.requestMetadata?.(rec.mint, rec.uri, "restore");
     }
   }
 }
