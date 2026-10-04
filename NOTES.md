@@ -2,6 +2,37 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: Jupiter `/build` long-tail fallback dry runs (public RPC, keyless Jupiter, laptop)
+
+Setup: `https://api.mainnet-beta.solana.com`, keyless `https://api.jup.ag/swap/v2/build` (0.5 requests/s), `DRY_RUN=true`, unsigned simulation (`SIMULATE_AS`, read-only wallets that hold SOL or the token), `SLIPPAGE_BPS=1500`. Two tools:
+- `bun run trade`: `LANDING_MODE=standard`, CU limit sized by a pre-simulation.
+- `packages/core/scripts/jupiter-live-check.ts`: the same build through the shipped signer firewall, fed the lookup tables as they are on chain, in all three landing modes.
+
+Slots ~453,130,650–453,133,400. None of these tokens has a pump curve, canonical PumpSwap pool or LaunchLab pair, so core resolved each to the Jupiter fallback.
+
+| Run (standard mode) | Route | CU used / limit | Size | Accounts | Fill vs quote |
+|---|---|---|---|---|---|
+| Buy 0.01 SOL of 6Vsnb… (SPL, Meteora DAMM v2), wallet already holds it | `route_v2`, 1 hop | 42,348 / 50,818 | 731 B | 13 static + 6 from 1 table | exact; the ATA was credited exactly the quote |
+| Sell 50% of the same | `route_v2` | 34,092 / 40,911 | 699 B | 13 + 6 from 1 table | exact |
+| Sell 100% (+ close the token account) | `route_v2` | 34,210 / 41,052 | 706 B | 13 + 6 from 1 table | exact |
+| Buy 0.01 SOL of 3XhUN… (Meteora Dynamic Bonding Curve, SPL), fresh ATA | `route_v2` | 56,462 / 67,755 | 916 B | 20 static, no table | exact |
+| Sell a holder's balance of the DBC coin | `route_v2` | 50,067 / 60,081 | 891 B | 20 static, no table | simulated OK |
+| Buy 0.01 SOL of 4Vn9m… (Token-2022, DAMM v2), fresh ATA | `route_v2` | 48,716 / 58,460 | 856 B | 17 + 3 from 1 table | exact |
+| Buy 0.01 SOL of BONK (split Invariant 9% / BisonFi 91%, then TesseraV), re-quoted at `maxAccounts=48` | `shared_accounts_route_v2` | 247,218 / 296,662 | 1,074 B | 20 + 18 from 3 tables | +0.001% (state moved) |
+| Sell 0.01% of a BONK holding (TesseraV > BisonFi) | `shared_accounts_route_v2` | 144,623 / 186,802 | 983 B | 2 tables | simulated OK |
+
+Firewall: every one of these, in every landing mode, passed `createSignerPolicy` with Jupiter's quote as the expectation (the 6Vsnb… buy and full sell, the DBC buy and sell, and the BONK buy and sell went through the live check). Turbo is 49 B smaller than standard (one Sender tip instead of two tips). Protected is 16 B smaller (one Jito tip plus the jitodontfront marker).
+
+What these numbers mean:
+
+- Single-hop long-tail routes are small. The DBC route uses no lookup table at all. Multi-hop routes need the tables: the captured two-hop BONK sell is 1,392 B without them and 995 B with them. Keeping the firewall's static keys out of the tables (user side, mints, token programs, tips, every System/Token/ATA account) costs 60–120 B over unrestricted compression.
+- One BONK buy quote came back at 1,243 B once our two tips were added. `buildTrade` now checks each route against the largest budget-and-tip layout of any mode. If it doesn't fit, it drops the no-op creation of an ATA that already exists, then re-quotes with `maxAccounts` 48, 32, 24 (Jupiter's documented remedy). Later BONK buys needed 48 or 24, and the quote records which. Each re-quote is another `/build` call; keyless callers hit 429s, which the client retries after `Retry-After`.
+- CU varies too much for a static limit: 34–57k for long-tail single hops, 145–250k for multi-hop BONK routes. The CLI sizes the limit with an unsigned simulation at 1.4M CU (limit = simulated × 1.2). The shipped firewall cap is 400k, so a route needing more than ~333k simulated CU would be refused.
+- Latency (one run each): `stateLoaded` 570–790 ms (one batch plus the quote mint). `quoted` +300–550 ms: the `/build` call from a laptop, keyless. `built` +255–280 ms, including the CU-sizing simulation. In the browser, state is streamed, but the `/build` round trip and the sizing simulation remain, which is why Jupiter is only the fallback.
+- A DAMM v2 route loads about 5.3 MB of account data (the Jupiter and DAMM programs), well inside the 64 MB default.
+- Jupiter's `otherAmountThreshold` rounds the minimum up. The firewall reports floor(quoted out × (1 − slippage)), one base unit lower and never above what Jupiter enforces.
+- Found on the way: BONK's would-be pump curve PDA holds 1.12 SOL as a System account. Venue resolution read it as a complete curve ("migration pending?"). Venue PDAs now count only when their program owns them.
+
 ## 2026-10-03: wallet tracker matcher and copy-trade detection (Bun 1.3.14, Apple M3 laptop)
 
 **Offline benchmark** (`bun run --cwd apps/server tracker-bench`, synthetic flat-string addresses, clean process). The full match path is index lookup, balance / first-buy detection, rows for owners with an open socket, the alert hook and the feed flush.
