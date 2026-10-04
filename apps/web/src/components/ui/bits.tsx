@@ -120,15 +120,24 @@ export function EmptyState({
   body,
   action,
   className,
+  fill,
 }: {
   icon?: ReactNode;
   title: string;
   body?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /** Centre in the whole parent (flex-1, full height) instead of the panel's first 240 px. */
+  fill?: boolean;
 }) {
   return (
-    <div className={cn("flex max-h-60 min-h-30 flex-col items-center justify-center px-4 py-6 text-center", className)}>
+    <div
+      className={cn(
+        "flex flex-col items-center justify-center px-4 py-6 text-center",
+        fill ? "h-full min-h-30 flex-1" : "max-h-60 min-h-30",
+        className,
+      )}
+    >
       <div className="flex max-w-80 flex-col items-center gap-1">
         {icon && <span className="mb-1 text-fg-3 [&_svg]:size-4">{icon}</span>}
         <span className="text-body font-medium text-fg-2">{title}</span>
@@ -136,6 +145,41 @@ export function EmptyState({
         {action && <span className="mt-2">{action}</span>}
       </div>
     </div>
+  );
+}
+
+/**
+ * Loading placeholder (DESIGN.md 4.18): a static surface-3 shape, no shimmer and no pulse.
+ * "bar" is an 8 px text bar with a 2 px radius (pass a width: 60% of the column for text, 40%
+ * right-aligned for numbers); "square" is an avatar (4 px radius) and "circle" a wallet avatar,
+ * both sized with `size` (px). Decorative: wrap the loading region in aria-busy instead.
+ */
+export function Skeleton({
+  shape = "bar",
+  width,
+  size,
+  className,
+}: {
+  shape?: "bar" | "square" | "circle";
+  /** Bar width: px number or any CSS length ("60%"). Defaults to the full width. */
+  width?: number | string;
+  /** Square/circle edge in px. */
+  size?: number;
+  className?: string;
+}) {
+  const style = shape === "bar" ? { width: width ?? "100%" } : { width: size ?? 16, height: size ?? 16 };
+  return (
+    <span
+      aria-hidden="true"
+      style={style}
+      className={cn(
+        "block shrink-0 bg-surface-3",
+        shape === "bar" && "h-2 rounded-xs",
+        shape === "square" && "rounded-sm",
+        shape === "circle" && "rounded-full",
+        className,
+      )}
+    />
   );
 }
 

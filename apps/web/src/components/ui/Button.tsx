@@ -81,8 +81,10 @@ export function IconButton({ label, size = "sm", active, className, children, ty
       title={title ?? label}
       aria-pressed={active}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-sm transition-colors disabled:text-fg-4",
-        active ? "bg-surface-3 text-fg-1" : "text-fg-3 hover:bg-surface-3 hover:text-fg-1",
+        "inline-flex shrink-0 items-center justify-center rounded-sm transition-colors disabled:cursor-not-allowed disabled:bg-transparent disabled:text-fg-4",
+        active
+          ? "bg-surface-3 text-fg-1 hover:bg-surface-3-hover"
+          : "text-fg-3 hover:bg-surface-3 hover:text-fg-1 active:bg-surface-3-hover",
         ICON_SIZES[size],
         className,
       )}

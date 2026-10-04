@@ -61,7 +61,7 @@ function CloseButton({ onClose }: { onClose: () => void }) {
       onClick={onClose}
       aria-label="Close"
       title="Close (Esc)"
-      className="flex size-7 shrink-0 items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1"
+      className="flex size-7 shrink-0 items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1 active:bg-surface-3-hover"
     >
       <X className="icon-md" />
     </button>

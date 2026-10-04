@@ -1,4 +1,4 @@
-import { ArrowBigUp, Check, Command, Copy, Minus, Option } from "lucide-react";
+import { ArrowBigUp, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Command, Copy, Minus, Option } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
@@ -76,7 +76,7 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
             className={cn(
               "focus-inset flex h-full flex-1 items-center justify-center rounded-xs px-2 font-medium whitespace-nowrap transition-colors",
               size === "xs" ? "text-micro" : size === "side" ? "text-data" : "text-label",
-              !active && "text-fg-3 hover:text-fg-1",
+              !active && "text-fg-3 hover:bg-surface-2 hover:text-fg-1",
               t === "neutral" && "bg-surface-3 text-fg-1",
               t === "buy" && "bg-buy-tint text-buy",
               t === "sell" && "bg-sell-tint text-sell",
@@ -166,6 +166,7 @@ export function NumberInput({
         "flex items-center gap-1 rounded-sm border bg-surface-2 px-2 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus",
         size === "amount" ? "h-8 text-amount font-medium in-data-[density=comfortable]:h-9 max-md:h-11" : "h-control text-data",
         invalid ? "border-sell" : "border-hairline-strong",
+        !invalid && !disabled && "hover:border-fg-4",
         disabled && "bg-surface-1 text-fg-4",
         className,
       )}
@@ -243,14 +244,16 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors disabled:opacity-50",
-        checked ? "border-accent bg-accent" : "border-hairline-strong bg-surface-3",
+        "group relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        checked
+          ? "border-accent bg-accent enabled:hover:border-accent-hover enabled:hover:bg-accent-hover"
+          : "border-hairline-strong bg-surface-3 enabled:hover:border-fg-4 enabled:hover:bg-surface-3-hover",
       )}
     >
       <span
         className={cn(
           "inline-block size-3 rounded-full transition-transform duration-(--zf-dur-2)",
-          checked ? "translate-x-3 bg-ink" : "translate-x-px bg-fg-3",
+          checked ? "translate-x-3 bg-ink" : "translate-x-px bg-fg-3 group-hover:bg-fg-2",
         )}
       />
     </button>
@@ -297,7 +300,7 @@ export function Checkbox({
       className={cn(
         "flex size-3.5 shrink-0 items-center justify-center rounded-xs border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus",
         !hideLabel && "mt-0.5",
-        on ? "border-accent bg-accent text-ink" : "border-hairline-strong bg-surface-2",
+        on ? "border-accent bg-accent text-ink" : "border-hairline-strong bg-surface-2 peer-enabled:group-hover/cb:border-fg-4",
       )}
     >
       {indeterminate ? <Minus className="icon-xs" /> : checked ? <Check className="icon-xs" /> : null}
@@ -307,7 +310,7 @@ export function Checkbox({
     return (
       <label
         className={cn(
-          "relative flex shrink-0 cursor-pointer items-center justify-center before:absolute before:content-['']",
+          "group/cb relative flex shrink-0 cursor-pointer items-center justify-center before:absolute before:content-['']",
           touch ? "size-11" : "size-5 before:-inset-0.5",
           disabled && "cursor-not-allowed",
           className,
@@ -328,7 +331,9 @@ export function Checkbox({
     );
   }
   return (
-    <label className={cn("flex cursor-pointer items-start gap-2 text-data", disabled && "cursor-not-allowed text-fg-4", className)}>
+    <label
+      className={cn("group/cb flex cursor-pointer items-start gap-2 text-data", disabled && "cursor-not-allowed text-fg-4", className)}
+    >
       <input
         ref={ref}
         type="checkbox"
@@ -368,9 +373,21 @@ const MAC_ICON: Record<string, ReactNode> = {
   Option: <Option />,
 };
 
-/** One key: macOS modifiers as lucide icons, words elsewhere ("Ctrl", "Shift", "Alt"). */
+/** Arrow keys read as icons on every platform ("ArrowLeft" is too long for a keycap). */
+const ARROW_ICON: Record<string, { icon: ReactNode; label: string }> = {
+  ArrowUp: { icon: <ArrowUp />, label: "Up arrow" },
+  ArrowDown: { icon: <ArrowDown />, label: "Down arrow" },
+  ArrowLeft: { icon: <ArrowLeft />, label: "Left arrow" },
+  ArrowRight: { icon: <ArrowRight />, label: "Right arrow" },
+  "\u2191": { icon: <ArrowUp />, label: "Up arrow" },
+  "\u2193": { icon: <ArrowDown />, label: "Down arrow" },
+};
+
+/** One key: macOS modifiers as lucide icons, words elsewhere ("Ctrl", "Shift", "Alt"); arrows as icons. */
 export function KeyCap({ k }: { k: string }) {
   if (IS_MAC && MAC_ICON[k]) return <Kbd label={k}>{MAC_ICON[k]}</Kbd>;
+  const arrow = ARROW_ICON[k];
+  if (arrow) return <Kbd label={arrow.label}>{arrow.icon}</Kbd>;
   return <Kbd>{k}</Kbd>;
 }
 
