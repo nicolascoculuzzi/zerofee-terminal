@@ -764,7 +764,11 @@ describe("trigger engine on Raydium markets", () => {
       clock: { epoch: SNAPSHOT_EPOCH, unixTimestamp: 0n },
     } as unknown as TokenState;
     expect(liveMarketFromState(state)).toEqual(ll);
-    expect(() => liveMarketFromState({ venue: "jupiter" } as unknown as TokenState)).toThrow("venue jupiter");
+    // Jupiter fallback states are not armable (a /build route is a live quote).
+    const jupiter = { venue: "jupiter", mint: pool.baseMint } as unknown as TokenState;
+    expect(() => liveMarketFromState(jupiter)).toThrow(ArmingError);
+    expect(() => liveMarketFromState(jupiter)).toThrow("Jupiter routes");
+    expect(() => liveMarketFromState({ venue: "meteora" } as unknown as TokenState)).toThrow("venue meteora");
   });
 
   test("market-cap targets: LaunchLab curve and CPMM reserves move along their constant product", () => {

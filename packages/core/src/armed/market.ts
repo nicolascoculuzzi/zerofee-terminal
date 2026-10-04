@@ -1,10 +1,12 @@
 /**
  * The trigger engine's market view (LiveMarketState) from the state loadTokenState returns, so the browser
- * arms with exactly the inputs the server's trigger engine quotes with.
+ * arms with exactly the inputs the server's trigger engine quotes with. Jupiter fallback states are refused
+ * (ArmingError): armed orders exist for pump.fun, PumpSwap, Raydium LaunchLab and Raydium CPMM only.
  */
 import { cpmmFeeRates } from "../raydium/cpmm/math";
 import { launchLabTradeParams } from "../raydium/launchlab/math";
 import type { TokenState } from "../state";
+import { ArmingError } from "./builders";
 import type { LiveMarketState } from "./trigger";
 
 export function liveMarketFromState(s: TokenState): LiveMarketState {
@@ -50,7 +52,10 @@ export function liveMarketFromState(s: TokenState): LiveMarketState {
         unixTimestamp: s.clock.unixTimestamp,
         baseMintSupply: s.mintInfo.supply,
       };
+    case "jupiter":
+      // A /build route is a live quote with its own accounts and lookup tables: it cannot be pre-signed.
+      throw new ArmingError(`armed orders do not support Jupiter routes (${s.mint} has no pump.fun, PumpSwap or Raydium venue)`);
     default:
-      throw new Error(`armed orders do not support venue ${(s as { venue: string }).venue}`);
+      throw new ArmingError(`armed orders do not support venue ${(s as { venue: string }).venue}`);
   }
 }

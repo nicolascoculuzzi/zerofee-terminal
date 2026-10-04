@@ -22,6 +22,7 @@ import {
   BASE_FEE_LAMPORTS_PER_SIGNATURE,
   COMPUTE_BUDGET_PROGRAM,
   JITO_DONT_FRONT_PREFIX,
+  JUPITER_PROGRAM,
   MAX_COMPUTE_UNIT_LIMIT,
   PACKET_DATA_SIZE,
   PUMP_AMM_PROGRAM,
@@ -34,6 +35,17 @@ import {
   USDC_MINT,
   WSOL_MINT,
 } from "../src/firewall/programs";
+import { findJupiterEventAuthority, findJupiterProgramAuthority } from "../src/firewall/rules/jupiter";
+import {
+  JUPITER_PROGRAM_AUTHORITY_COUNT,
+  JUPITER_REVIEWED_HOPS,
+  JUPITER_ROUTE_INSTRUCTIONS,
+  JUPITER_ROUTE_V2_LAYOUT,
+  JUPITER_SEEDS,
+  JUPITER_SHARED_ROUTE_V2_LAYOUT,
+  JUPITER_STATIC_POSITIONS,
+  JUPITER_SWAP_VARIANTS,
+} from "../src/firewall/rules/jupiter-idl";
 import { findCanonicalPumpPool } from "../src/firewall/rules/pump";
 import {
   PUMP_AMM_EXTEND_ACCOUNT,
@@ -106,6 +118,7 @@ describe("addresses and runtime constants equal core's", () => {
     ["PumpSwap program", PUMP_AMM_PROGRAM, core.PUMP_AMM_PROGRAM_ID],
     ["Raydium LaunchLab program", RAYDIUM_LAUNCHLAB_PROGRAM, core.RAYDIUM_LAUNCHLAB_PROGRAM_ID],
     ["Raydium CPMM program", RAYDIUM_CPMM_PROGRAM, core.RAYDIUM_CPMM_PROGRAM_ID],
+    ["Jupiter v6 program", JUPITER_PROGRAM, core.JUPITER_PROGRAM_ID],
   ])("%s", (_name, signer, fromCore) => {
     expect(signer).toBe(fromCore);
   });
@@ -149,7 +162,58 @@ describe("addresses and runtime constants equal core's", () => {
         core.PUMP_AMM_PROGRAM_ID,
         core.RAYDIUM_LAUNCHLAB_PROGRAM_ID,
         core.RAYDIUM_CPMM_PROGRAM_ID,
+        core.JUPITER_PROGRAM_ID,
       ].sort(),
+    );
+  });
+
+  test("Jupiter: the event authority, program authority seed and id range, and the route layouts equal core's", async () => {
+    expect(await findJupiterEventAuthority(JUPITER_PROGRAM)).toBe(core.JUPITER_EVENT_AUTHORITY);
+    expect(core.JUPITER_EVENT_AUTHORITY).toBe(address("D8cy77BBepLMngZx6ZukaTff5hCt1HrWyKk3Hnd9oitf"));
+    expect(JUPITER_SEEDS.programAuthority).toBe(core.JUPITER_AUTHORITY_SEED);
+    expect(JUPITER_SEEDS.eventAuthority).toBe(core.SEEDS.eventAuthority);
+    expect(JUPITER_PROGRAM_AUTHORITY_COUNT).toBe(core.JUPITER_AUTHORITY_COUNT);
+    expect({ ...JUPITER_STATIC_POSITIONS }).toEqual({ ...core.JUPITER_STATIC_POSITIONS });
+    expect({ ...JUPITER_ROUTE_V2_LAYOUT }).toEqual({ ...core.JUPITER_ROUTE_LAYOUTS.route_v2 });
+    expect({ ...JUPITER_SHARED_ROUTE_V2_LAYOUT }).toEqual({ ...core.JUPITER_ROUTE_LAYOUTS.shared_accounts_route_v2 });
+    // The fixed-argument offsets core decodes with agree with the signer's (route_v2 and shared, id 3).
+    for (const def of JUPITER_ROUTE_INSTRUCTIONS) {
+      const data = new Uint8Array(def.routePlanOffset + 4);
+      data.set(def.discriminator, 0);
+      if (def.idOffset !== undefined) data[def.idOffset] = 3;
+      const v = new DataView(data.buffer);
+      v.setBigUint64(def.inAmountOffset, 11n, true);
+      v.setBigUint64(def.quotedOutOffset, 22n, true);
+      v.setUint16(def.slippageOffset, 33, true);
+      v.setUint16(def.platformFeeOffset, 44, true);
+      v.setUint16(def.positiveSlippageOffset, 55, true);
+      expect(core.decodeJupiterRouteArgs(data)).toEqual({
+        instruction: def.name,
+        ...(def.idOffset !== undefined ? { id: 3 } : {}),
+        inAmount: 11n,
+        quotedOutAmount: 22n,
+        slippageBps: 33,
+        platformFeeBps: 44,
+        positiveSlippageBps: 55,
+      });
+    }
+    expect(await findJupiterProgramAuthority(JUPITER_PROGRAM, 0)).not.toBe(await findJupiterProgramAuthority(JUPITER_PROGRAM, 1));
+  });
+
+  test("Jupiter: the reviewed route_v2 hops equal core's (variant, venue program, layout slots)", () => {
+    const fromCore = Object.entries(core.JUPITER_REVIEWED_HOPS).map(([variant, h]) => {
+      const { name, label: _label, ...layout } = h;
+      expect(JUPITER_SWAP_VARIANTS[Number(variant)]![0]).toBe(name);
+      return [name, layout] as const;
+    });
+    expect(Object.fromEntries(fromCore) as Record<string, unknown>).toEqual({ ...JUPITER_REVIEWED_HOPS });
+    // The venue programs are the ones Jupiter's own label map names for these venues.
+    expect(new Set(Object.values(JUPITER_REVIEWED_HOPS).map((h) => h.program))).toEqual(
+      new Set([
+        "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN",
+        "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",
+        "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      ]),
     );
   });
 });
@@ -203,6 +267,8 @@ describe("discriminators equal core's", () => {
     ["LaunchLab sell_exact_out", launchLabDef("sell_exact_out"), core.RAYDIUM_LAUNCHLAB_IX.sellExactOut],
     ["CPMM swap_base_input", cpmmDef("swap_base_input"), core.RAYDIUM_CPMM_IX.swapBaseInput],
     ["CPMM swap_base_output", cpmmDef("swap_base_output"), core.RAYDIUM_CPMM_IX.swapBaseOutput],
+    ["Jupiter route_v2", JUPITER_ROUTE_INSTRUCTIONS[0]!, core.JUPITER_IX.routeV2],
+    ["Jupiter shared_accounts_route_v2", JUPITER_ROUTE_INSTRUCTIONS[1]!, core.JUPITER_IX.sharedAccountsRouteV2],
   ])("%s", (_name, signer, fromCore) => {
     expect(toHex(Uint8Array.from(signer.discriminator))).toBe(toHex(fromCore));
   });
