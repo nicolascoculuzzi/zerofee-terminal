@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
 import { Checkbox, NumberInput, Segmented } from "../../components/ui/controls";
+import { PlatformName } from "../../components/ui/Logo";
 import { BottomSheet } from "../../components/ui/Modal";
 import { MenuItem, MenuSeparator, Popover } from "../../components/ui/Popover";
 import { copyText } from "../../lib/clipboard";
@@ -70,7 +71,7 @@ function LaunchpadMenu() {
               onSelect={() => toggle(l.id)}
               icon={<Check className={selected.includes(l.id) ? "text-fg-1" : "opacity-0"} />}
             >
-              {l.label}
+              <PlatformName id={l.id} label={l.label} />
             </MenuItem>
           ))}
         </MenuList>
@@ -230,7 +231,7 @@ function MobileTradeFilters({ count, paused }: { count: number; paused: boolean 
                   key={l.id}
                   checked={f.launchpads.includes(l.id)}
                   onChange={() => toggle(l.id)}
-                  label={l.label}
+                  label={<PlatformName id={l.id} label={l.label} />}
                   className="py-3.5"
                 />
               ))}

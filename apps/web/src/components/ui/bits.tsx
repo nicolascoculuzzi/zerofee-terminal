@@ -1,10 +1,12 @@
-import { ArrowUpRight, Check, Globe, Send } from "lucide-react";
+import { ArrowUpRight, Check } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { METRICS, type MetricKey, TAG_LABEL, TAG_STYLE } from "../../lib/metrics";
 import type { TokenSocials, WalletTag } from "../../protocol";
 import { getServices } from "../../services";
+import { BrandIcon, LinkIconView } from "./Logo";
+import { type SafeLink, socialLink, tokenLinks } from "./socials";
 import { Tooltip } from "./Tooltip";
 
 /** Wallet tag (DESIGN.md 4.5): 16px, micro 10/600 uppercase. YOU by contrast, risk tags tinted. */
@@ -137,23 +139,14 @@ export function EmptyState({
   );
 }
 
-/** SOL glyph as SVG (the U+25CE character isn't in our fonts). Only where a unit word doesn't fit. */
+/** The Solana mark (simple-icons) in currentColor, as the SOL unit where a unit word doesn't fit. */
 export function SolGlyph({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 12 12" className={cn("inline-block size-3 shrink-0", className)} role="img" aria-label="SOL">
-      <circle cx="6" cy="6" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-      <circle cx="6" cy="6" r="2" fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
+  return <BrandIcon name="solana" label="SOL" className={className} />;
 }
 
-/** X links show the letter "X" in Plex Sans 600 (no brand logos, no U+1D54F fallback glyph). */
+/** The X mark (simple-icons) in currentColor, 12 px. */
 export function XGlyph({ className }: { className?: string }) {
-  return (
-    <span aria-hidden="true" className={cn("inline-flex w-3 justify-center text-label font-semibold leading-none", className)}>
-      X
-    </span>
-  );
+  return <BrandIcon name="x" className={className} />;
 }
 
 function useFlag(ms = 1200): [boolean, () => void] {
@@ -166,53 +159,62 @@ function useFlag(ms = 1200): [boolean, () => void] {
   return [on, () => setOn(true)];
 }
 
-function SocialButton({ label, url, icon }: { label: string; url: string; icon: ReactNode }) {
+function SocialAnchor({ link }: { link: SafeLink }) {
   const [copied, flash] = useFlag();
   const simulated = getServices().simulated;
   return (
-    <Tooltip content={copied ? "Copied" : `${label}${simulated ? " · simulated, click copies the link" : ""}`}>
-      <button
-        type="button"
-        aria-label={copied ? "Copied" : label}
+    <Tooltip content={copied ? "Copied" : `${link.label}${simulated ? " · simulated, click copies the link" : ""}`}>
+      <a
+        href={link.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={copied ? "Copied" : link.label}
         onClick={(e) => {
           e.stopPropagation();
+          if (!simulated) return;
           e.preventDefault();
-          void copyText(url).then((ok) => ok && flash());
+          void copyText(link.href).then((ok) => ok && flash());
         }}
+        onAuxClick={(e) => e.stopPropagation()}
         className="inline-flex size-4 items-center justify-center text-fg-3 transition-colors hover:text-fg-1 [&_svg]:size-3"
       >
-        {copied ? <Check /> : icon}
-      </button>
+        {copied ? <Check /> : <LinkIconView icon={link.icon} />}
+      </a>
     </Tooltip>
   );
 }
 
 /**
- * Social links: X letter, Globe, Send, 12px in 16px hit areas. With simulated data the handles
- * are fictional, so clicking copies the link (no network calls from the app). The icon swaps to a
- * check instead of toasting (DESIGN.md 4.13 "never toast").
+ * Social links (DESIGN.md 2.11): the X, Telegram and Discord marks, a globe for other websites, and with
+ * `mint` the token's pump.fun page and DexScreener chart, each 12 px in a 16 px hit area, opening in a new
+ * tab (rel="noopener noreferrer"). Only safe https links render (socials.ts). With simulated data the
+ * handles are fictional, so a click copies the link instead (no network calls from the app); the icon
+ * swaps to a check instead of toasting (DESIGN.md 4.13 "never toast").
  */
-export function SocialLinks({ socials, className }: { socials: TokenSocials; size?: number; className?: string }) {
-  const items: { key: string; url: string; icon: ReactNode; label: string }[] = [];
-  if (socials.x) {
-    items.push({
-      key: "x",
-      url: `https://x.com/${socials.x}`,
-      icon: <XGlyph />,
-      label: socials.x.includes("/status/") ? "Tweet" : `@${socials.x}`,
-    });
-  }
-  if (socials.website) {
-    items.push({ key: "web", url: `https://${socials.website}`, icon: <Globe />, label: socials.website });
-  }
-  if (socials.telegram) {
-    items.push({ key: "tg", url: `https://t.me/${socials.telegram}`, icon: <Send />, label: `t.me/${socials.telegram}` });
-  }
+export function SocialLinks({
+  socials,
+  mint,
+  pump = false,
+  className,
+}: {
+  socials: TokenSocials;
+  /** Adds the pump.fun (when `pump`) and DexScreener links for this token. */
+  mint?: string;
+  pump?: boolean;
+  size?: number;
+  className?: string;
+}) {
+  const items = [
+    socialLink("x", socials.x),
+    socialLink("website", socials.website),
+    socialLink("telegram", socials.telegram),
+    ...(mint ? tokenLinks(mint, { pump }) : []),
+  ].filter((l): l is SafeLink => l !== null);
   if (items.length === 0) return null;
   return (
     <span className={cn("inline-flex items-center gap-1", className)}>
       {items.map((it) => (
-        <SocialButton key={it.key} label={it.label} url={it.url} icon={it.icon} />
+        <SocialAnchor key={it.href} link={it} />
       ))}
     </span>
   );
