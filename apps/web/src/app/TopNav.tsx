@@ -325,8 +325,8 @@ function MobileHeader() {
   const openSettings = useUi((s) => s.openSettings);
   if (pathname.startsWith("/t/")) return null;
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline bg-surface-1 px-3 pt-[env(safe-area-inset-top)] md:hidden">
-      <Link to="/pulse" aria-label="zerofee home" className="shrink-0">
+    <header className="flex h-[calc(44px+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-hairline bg-surface-1 px-3 pt-[env(safe-area-inset-top)] md:hidden">
+      <Link to="/pulse" aria-label="zerofee home" className="-ml-3 flex size-11 shrink-0 items-center justify-center">
         <Logo compact />
       </Link>
       <button

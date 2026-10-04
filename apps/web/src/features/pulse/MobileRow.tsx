@@ -3,6 +3,7 @@ import { Age } from "../../components/ui/Age";
 import { SolGlyph } from "../../components/ui/bits";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { cn } from "../../lib/cn";
+import { DASH } from "../../lib/format";
 import { useYoungerThan } from "../../lib/useNow";
 import type { PulseColumnId, TokenRisk } from "../../protocol";
 import type { PresetId } from "../../state/settings";
@@ -31,6 +32,7 @@ export interface MobileRowProps {
  * five risk slots (icon and value), and the quick-buy pill (24 px visual, 44 px hit area). A tap on
  * the row opens the token; a tap on the pill buys (tradeActions shows the touch review first). Two-line rows
  * with MC and volume on the right after Binance Meme Rush: https://mobbin.com/screens/972c602f-95aa-44ba-9cd3-1f869d9a58c3
+ * A volume or market cap the feed hasn't reported yet is left out, never drawn as "V –" / "MC –".
  */
 export const MobileRow = memo(function MobileRow(props: MobileRowProps) {
   const { view, column } = props;
@@ -70,14 +72,18 @@ export const MobileRow = memo(function MobileRow(props: MobileRowProps) {
           {view.symbol.length > 10 ? `${view.symbol.slice(0, 9)}…` : view.symbol}
         </span>
         <Age ts={view.createdAt} className="shrink-0 text-data" />
-        <span className="zf-num flex min-w-0 items-center truncate text-data text-fg-3">
-          V&nbsp;{view.sol && <SolGlyph className="mr-px" />}
-          {view.v}
-        </span>
-        <span className="zf-num ml-auto flex shrink-0 items-center pl-1 text-body font-semibold text-fg-1 before:mr-1 before:text-micro before:font-medium before:text-fg-3 before:content-['MC']">
-          {view.sol && <SolGlyph className="mr-px" />}
-          {view.mc}
-        </span>
+        {view.v !== DASH && (
+          <span className="zf-num flex min-w-0 items-center truncate text-data text-fg-3">
+            V&nbsp;{view.sol && <SolGlyph className="mr-px" />}
+            {view.v}
+          </span>
+        )}
+        {view.mc !== DASH && (
+          <span className="zf-num ml-auto flex shrink-0 items-center pl-1 text-body font-semibold text-fg-1 before:mr-1 before:text-micro before:font-medium before:text-fg-3 before:content-['MC']">
+            {view.sol && <SolGlyph className="mr-px" />}
+            {view.mc}
+          </span>
+        )}
       </Cell>
       <Cell className="flex min-w-0 items-center gap-2">
         <RiskChips risk={props.risk} colored={props.colored} tips="delegate" pending="quiet" className="min-w-0 flex-1 overflow-x-clip" />
