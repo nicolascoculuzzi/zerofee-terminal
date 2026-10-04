@@ -11,6 +11,7 @@ import { useSettings } from "../../state/settings";
 import { useToasts } from "../../state/toasts";
 import { type FundTab, useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
+import { QrCode } from "../onboarding/QrCode";
 import { PresetChips, solStep } from "./AmountField";
 
 /*
@@ -115,17 +116,20 @@ function FundFromConnected({ address }: { address: string }) {
   );
 }
 
-function Deposit({ address }: { address: string }) {
+function Deposit({ address, label }: { address: string; label: string }) {
   return (
-    <div className="space-y-3">
-      <div className="space-y-1">
-        <div className="zf-label">Trading wallet address</div>
-        <div className="flex items-start gap-1 rounded-sm border border-hairline bg-surface-2 p-2 font-mono text-data break-all text-fg-1">
-          {address}
-          <CopyButton text={address} label="Copy address" />
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <QrCode value={address} label={`QR code for ${label}'s address`} />
+      <div className="min-w-0 flex-1 space-y-3">
+        <div className="space-y-1">
+          <div className="zf-label">{label} · trading wallet address</div>
+          <div className="flex items-start gap-1 rounded-sm border border-hairline bg-surface-2 p-2 font-mono text-data break-all text-fg-1">
+            {address}
+            <CopyButton text={address} label="Copy address" />
+          </div>
         </div>
+        <p className="text-body text-fg-2">Send SOL on Solana only. The balance updates when the transfer lands; no memo is needed.</p>
       </div>
-      <p className="text-body text-fg-2">Send SOL on Solana only. The balance updates when the transfer lands; no memo is needed.</p>
     </div>
   );
 }
@@ -271,8 +275,10 @@ export function FundModal() {
   const tab = useUi((s) => s.fundTab);
   const openFund = useUi((s) => s.openFund);
   const close = useUi((s) => s.closeFund);
-  const address = useWallet((s) => s.activeAddress);
-  const label = useWallet((s) => s.service.tradingWallets.find((w) => w.address === s.activeAddress)?.label);
+  const fundAddress = useUi((s) => s.fundAddress);
+  const activeAddress = useWallet((s) => s.activeAddress);
+  const address = fundAddress ?? activeAddress;
+  const label = useWallet((s) => s.service.tradingWallets.find((w) => w.address === address)?.label);
   return (
     <Modal
       open={open}
@@ -287,7 +293,7 @@ export function FundModal() {
         <div className="space-y-4">
           <Segmented<FundTab>
             value={tab}
-            onChange={(t) => openFund(t)}
+            onChange={(t) => openFund(t, fundAddress)}
             className="w-full"
             options={[
               { value: "fund", label: "From wallet" },
@@ -297,7 +303,7 @@ export function FundModal() {
             label="Funding method"
           />
           {tab === "fund" && <FundFromConnected address={address} />}
-          {tab === "deposit" && <Deposit address={address} />}
+          {tab === "deposit" && <Deposit address={address} label={label ?? "Trading wallet"} />}
           {tab === "withdraw" && <Withdraw address={address} />}
         </div>
       )}

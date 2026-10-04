@@ -5,9 +5,9 @@ import { type SettingsTab, useUi } from "../../state/ui";
  * Settings sections (DESIGN.md 5.5): Trading (Presets, Landing, Limits, Blacklists), Hotkeys,
  * Display, Wallets and security, Alerts, Metrics, About.
  *
- * `useUi().settingsTab` predates this layout and has no Landing, Alerts or Metrics entry, so the
- * drawer keeps its own section state: store tabs map onto sections below, and `openSettingsAt`
- * (palette, cross-links) can target any section and row anchor.
+ * `useUi().settingsTab` names a section (Limits is still "trading" and withdrawal destinations
+ * "withdrawals" for older call sites); the drawer keeps its own section state, store tabs map
+ * onto sections below, and `openSettingsAt` (palette, cross-links) can also target a row anchor.
  */
 export type SectionId =
   | "presets"
@@ -59,6 +59,7 @@ export const SECTIONS: SectionMeta[] = [
     id: "landing",
     label: "Landing",
     group: "Trading",
+    tab: "landing",
     terms: [t("Landing route"), t("Reduced"), t("Secure"), t("Fast"), t("Jito"), t("Helius Sender"), t("MEV"), t("Sandwich")],
   },
   {
@@ -143,6 +144,7 @@ export const SECTIONS: SectionMeta[] = [
   {
     id: "alerts",
     label: "Alerts",
+    tab: "alerts",
     terms: [
       t("Notifications"),
       t("Web Push", "channels"),
@@ -154,6 +156,7 @@ export const SECTIONS: SectionMeta[] = [
   {
     id: "metrics",
     label: "Metrics",
+    tab: "metrics",
     terms: [t("Metric definitions"), t("Top 10 holders"), t("Snipers"), t("Insiders"), t("Bundlers"), t("Methodology")],
   },
   {
@@ -174,12 +177,15 @@ export interface SettingsTarget {
 /** Where each legacy `settingsTab` value lands. */
 export const TARGET_FOR_TAB: Record<SettingsTab, SettingsTarget> = {
   presets: { section: "presets" },
+  landing: { section: "landing" },
   trading: { section: "limits" },
   blacklists: { section: "blacklists" },
   hotkeys: { section: "hotkeys" },
   display: { section: "display" },
   security: { section: "security" },
   withdrawals: { section: "security", anchor: "withdrawals" },
+  alerts: { section: "alerts" },
+  metrics: { section: "metrics" },
   about: { section: "about" },
 };
 

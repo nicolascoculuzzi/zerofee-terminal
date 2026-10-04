@@ -1,7 +1,19 @@
 import { create } from "zustand";
 import type { ApprovalRequest } from "../services/walletService";
+import type { PresetId } from "./settings";
 
-export type SettingsTab = "presets" | "hotkeys" | "display" | "trading" | "security" | "withdrawals" | "blacklists" | "about";
+export type SettingsTab =
+  | "presets"
+  | "landing"
+  | "hotkeys"
+  | "display"
+  | "trading"
+  | "security"
+  | "withdrawals"
+  | "blacklists"
+  | "alerts"
+  | "metrics"
+  | "about";
 
 export type FundTab = "fund" | "deposit" | "withdraw";
 
@@ -13,18 +25,29 @@ export interface RiskConfirmRequest {
   reasons: string[];
 }
 
+/** A buy waiting on the touch review sheet (DESIGN.md 5.8 "Confirm on touch"). */
+export interface TradeReviewRequest {
+  symbol: string;
+  sol: number;
+  /** Preset whose execution settings the buy uses. */
+  preset: PresetId;
+}
+
 export interface UiState {
   searchOpen: boolean;
   settingsOpen: boolean;
   settingsTab: SettingsTab;
   fundOpen: boolean;
   fundTab: FundTab;
+  /** Trading wallet the fund dialog acts on; null = the active wallet. */
+  fundAddress: string | null;
   hotkeysHelpOpen: boolean;
   /** Global Panic confirm (hold-to-confirm). */
   panicOpen: boolean;
   unlock: { open: boolean; reason: string; onUnlocked: (() => void) | null };
   approval: { request: ApprovalRequest; resolve: (ok: boolean) => void } | null;
   riskConfirm: { request: RiskConfirmRequest; resolve: (ok: boolean) => void } | null;
+  tradeReview: { request: TradeReviewRequest; resolve: (ok: boolean) => void } | null;
   /** Token under the cursor on Pulse (target for Space+1..4 buys). */
   hoverMint: string | null;
   /** Token page currently open, or the last one viewed (Instant Trade target). */
@@ -34,7 +57,8 @@ export interface UiState {
   openSearch(open?: boolean): void;
   openSettings(tab?: SettingsTab): void;
   closeSettings(): void;
-  openFund(tab?: FundTab): void;
+  /** Opens Fund on a tab, for `address` (another trading wallet) or the active one. */
+  openFund(tab?: FundTab, address?: string | null): void;
   closeFund(): void;
   setHotkeysHelp(open: boolean): void;
   openPanic(): void;
@@ -43,6 +67,7 @@ export interface UiState {
   closeUnlock(): void;
   setApproval(approval: UiState["approval"]): void;
   setRiskConfirm(riskConfirm: UiState["riskConfirm"]): void;
+  setTradeReview(tradeReview: UiState["tradeReview"]): void;
   setHoverMint(mint: string | null): void;
   setFocusedMint(mint: string | null): void;
   setMobileTradeOpen(open: boolean): void;
@@ -56,11 +81,13 @@ export const useUi = create<UiState>()((set, get) => ({
   settingsTab: "presets",
   fundOpen: false,
   fundTab: "fund",
+  fundAddress: null,
   hotkeysHelpOpen: false,
   panicOpen: false,
   unlock: { open: false, reason: "", onUnlocked: null },
   approval: null,
   riskConfirm: null,
+  tradeReview: null,
   hoverMint: null,
   focusedMint: null,
   mobileTradeOpen: false,
@@ -68,7 +95,7 @@ export const useUi = create<UiState>()((set, get) => ({
   openSearch: (open = true) => set({ searchOpen: open }),
   openSettings: (tab) => set((s) => ({ settingsOpen: true, settingsTab: tab ?? s.settingsTab })),
   closeSettings: () => set({ settingsOpen: false }),
-  openFund: (tab = "fund") => set({ fundOpen: true, fundTab: tab }),
+  openFund: (tab = "fund", address = null) => set({ fundOpen: true, fundTab: tab, fundAddress: address }),
   closeFund: () => set({ fundOpen: false }),
   setHotkeysHelp: (open) => set({ hotkeysHelpOpen: open }),
   openPanic: () => set({ panicOpen: true }),
@@ -77,6 +104,7 @@ export const useUi = create<UiState>()((set, get) => ({
   closeUnlock: () => set({ unlock: { open: false, reason: "", onUnlocked: null } }),
   setApproval: (approval) => set({ approval }),
   setRiskConfirm: (riskConfirm) => set({ riskConfirm }),
+  setTradeReview: (tradeReview) => set({ tradeReview }),
   setHoverMint: (mint) => {
     if (get().hoverMint !== mint) set({ hoverMint: mint });
   },
@@ -87,6 +115,11 @@ export const useUi = create<UiState>()((set, get) => ({
     if (s.riskConfirm) {
       s.riskConfirm.resolve(false);
       set({ riskConfirm: null });
+      return true;
+    }
+    if (s.tradeReview) {
+      s.tradeReview.resolve(false);
+      set({ tradeReview: null });
       return true;
     }
     if (s.approval) {

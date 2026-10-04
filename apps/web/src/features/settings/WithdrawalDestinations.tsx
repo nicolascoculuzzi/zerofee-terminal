@@ -33,7 +33,6 @@ export function WithdrawalDestinations() {
   const [address, setAddress] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
   const [saved, setSaved] = useTransient<string>(6000);
   const [removed, setRemoved] = useTransient<WithdrawalDestination>(6000);
 
@@ -78,8 +77,6 @@ export function WithdrawalDestinations() {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
-      // HoldButton latches after a completed hold; a fresh one for the next attempt.
-      setAttempt((n) => n + 1);
     }
   };
 
@@ -199,7 +196,7 @@ export function WithdrawalDestinations() {
                 ? "Hold to confirm, then sign in your wallet (not a transaction). New addresses wait 24 hours, so an intruder can't add one and drain the wallet before you notice."
                 : "Connect a wallet first: it signs new destinations."}
             </span>
-            <HoldButton key={attempt} tone="primary" disabled={!canAdd} onConfirm={() => void add()} className="max-md:h-11">
+            <HoldButton tone="primary" disabled={!canAdd} onConfirm={add} className="max-md:h-11">
               {busy ? "Waiting for wallet…" : "Hold to add destination"}
             </HoldButton>
           </div>

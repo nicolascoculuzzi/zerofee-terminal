@@ -72,12 +72,9 @@ function ExportKey({ wallet, onClose }: { wallet: TradingWallet; onClose: () => 
   const balance = useWallet((s) => s.status[wallet.address]?.solBalance ?? null);
   const simulated = getServices().simulated;
   const [stage, setStage] = useState<"confirm" | "reveal">("confirm");
-  // HoldButton latches after a completed hold; a cancelled unlock needs a fresh one.
-  const [attempt, setAttempt] = useState(0);
 
   const confirmed = () => {
     if (useWallet.getState().service.locked) {
-      setAttempt((n) => n + 1);
       requestUnlock(`Unlock to export ${wallet.label}'s key.`, () => setStage("reveal"));
       return;
     }
@@ -106,7 +103,7 @@ function ExportKey({ wallet, onClose }: { wallet: TradingWallet; onClose: () => 
         <Button size="md" variant="secondary" onClick={onClose} className="max-md:h-11">
           Keep it hidden
         </Button>
-        <HoldButton key={attempt} onConfirm={confirmed} className="max-md:h-11">
+        <HoldButton onConfirm={confirmed} className="max-md:h-11">
           Hold to export key
         </HoldButton>
       </div>
