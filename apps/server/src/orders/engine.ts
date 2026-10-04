@@ -160,6 +160,8 @@ export class OrderEngine {
   private tableStates: Record<string, LookupTableState | null> | null = null;
   private lastSlot: number | null = null;
   private tablesRetryAt = 0;
+  /** Every configured operator table was found at the last refresh. */
+  private tablesComplete = false;
   private timers: ReturnType<typeof setInterval>[] = [];
   /** Queued transitions and background sends (settle() waits for them). */
   private readonly work = new Set<Promise<unknown>>();
@@ -577,9 +579,8 @@ export class OrderEngine {
   async sweep(): Promise<void> {
     const now = this.now();
     for (const t of [...this.orders.values()]) if (t.order.status === "armed") this.evaluate(t, undefined, now);
-    // Intake needs the operator tables: retry soon while they have not loaded.
-    if (!this.tables && this.d.cfg.lookupTables.length && now >= this.tablesRetryAt) {
-      this.tablesRetryAt = now + 5_000;
+    // Intake needs the operator tables: retry soon while any has not loaded.
+    if (!this.d.lookupTables && !this.tablesComplete && this.d.cfg.lookupTables.length && now >= this.tablesRetryAt) {
       void this.background(this.refreshLookupTables());
     }
     await this.flushStates(false);
@@ -956,13 +957,18 @@ export class OrderEngine {
   // staleness
   // -------------------------------------------------------------------------------------------
 
+  /**
+   * Operator tables are read at FINALIZED commitment: Agave's scheduler resolves lookups against the
+   * root bank, so entries added in the last ~32 slots make every transaction using them drop silently at
+   * sanitization (measured on the mainnet fork). Intake only accepts contents transactions can use.
+   */
   private async refreshLookupTables(): Promise<void> {
     const addrs = this.d.cfg.lookupTables;
     if (this.d.lookupTables || addrs.length === 0 || this.busy.tables) return;
     this.busy.tables = true;
+    this.tablesRetryAt = this.now() + 5_000;
     try {
-      const res = await this.d.chain.accounts(addrs);
-      this.observeSlot(res.slot);
+      const res = await this.d.chain.accounts(addrs, "finalized");
       const contents: AddressesByLookupTableAddress = {};
       const states: Record<string, LookupTableState | null> = {};
       addrs.forEach((a, i) => {
@@ -972,6 +978,8 @@ export class OrderEngine {
       });
       this.tables = contents;
       this.tableStates = states;
+      this.tablesComplete = addrs.every((a) => states[a]);
+      if (!this.tablesComplete) log.warn(`operator lookup table(s) not found (finalized): ${addrs.filter((a) => !states[a]).join(", ")}`);
     } catch (e) {
       log.warn(`operator lookup tables not loaded: ${errText(e)}`);
     } finally {

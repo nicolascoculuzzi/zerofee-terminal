@@ -37,8 +37,11 @@ export interface Simulation {
 }
 
 export interface ChainReader {
-  /** Raw accounts (null = missing) and the context slot of the read. */
-  accounts(addresses: readonly string[]): Promise<{ slot: number; accounts: (RpcAccount | null)[] }>;
+  /** Raw accounts (null = missing) and the context slot of the read (default commitment: confirmed). */
+  accounts(
+    addresses: readonly string[],
+    commitment?: "confirmed" | "finalized",
+  ): Promise<{ slot: number; accounts: (RpcAccount | null)[] }>;
   signatureStatuses(signatures: readonly string[]): Promise<(SignatureStatus | null)[]>;
   /** Newest first. */
   signaturesForAddress(address: string, limit: number): Promise<AddressSignature[]>;
@@ -49,8 +52,8 @@ export interface ChainReader {
 export class RpcChainReader implements ChainReader {
   constructor(private readonly rpc: RpcClient) {}
 
-  accounts(addresses: readonly string[]) {
-    return this.rpc.getMultipleAccounts(addresses as Address[], "confirmed");
+  accounts(addresses: readonly string[], commitment: "confirmed" | "finalized" = "confirmed") {
+    return this.rpc.getMultipleAccounts(addresses as Address[], commitment);
   }
 
   async signatureStatuses(signatures: readonly string[]): Promise<(SignatureStatus | null)[]> {

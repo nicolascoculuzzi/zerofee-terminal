@@ -30,7 +30,7 @@ export class FakeChain implements ChainReader {
   readonly statuses = new Map<string, SignatureStatus>();
   readonly history = new Map<string, AddressSignature[]>();
   readonly simulations: string[] = [];
-  readonly calls: { method: string; arg: unknown }[] = [];
+  readonly calls: { method: string; arg: unknown; commitment?: string }[] = [];
   failAccounts = false;
   simulation: Simulation = { err: null, logs: ["Program log: ok"], unitsConsumed: 90_000, slot: 1_000 };
 
@@ -48,8 +48,8 @@ export class FakeChain implements ChainReader {
     }
   }
 
-  async accounts(addresses: readonly string[]): Promise<{ slot: number; accounts: (RpcAccount | null)[] }> {
-    this.calls.push({ method: "accounts", arg: [...addresses] });
+  async accounts(addresses: readonly string[], commitment = "confirmed"): Promise<{ slot: number; accounts: (RpcAccount | null)[] }> {
+    this.calls.push({ method: "accounts", arg: [...addresses], commitment });
     if (this.failAccounts) throw new Error("rpc down");
     return {
       slot: this.slot,

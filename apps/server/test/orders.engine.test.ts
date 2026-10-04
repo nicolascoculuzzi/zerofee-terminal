@@ -4,8 +4,14 @@
  * live-mode tests record submissions, DRY_RUN tests simulate against the fake chain.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Address } from "@solana/kit";
-import { type ArmedOrder, findAssociatedTokenAddress, type LiveMarketState, pickVariant } from "@zerofee/core";
+import { type Address, getAddressEncoder } from "@solana/kit";
+import {
+  ADDRESS_LOOKUP_TABLE_PROGRAM_ID,
+  type ArmedOrder,
+  findAssociatedTokenAddress,
+  type LiveMarketState,
+  pickVariant,
+} from "@zerofee/core";
 import type { OrdersDelta } from "@zerofee/protocol";
 import type { OrderEvent } from "../src/alerts/engine";
 import { UserStore } from "../src/db/pg";
@@ -530,6 +536,42 @@ describe("kill switches and user cancels", () => {
     env.halt.set(true, "db outage drill");
     await env.engine.settle();
     expect((env.submitter as RecordingSubmitter).cancels.map((c) => c.signature)).toEqual([cancelSig(o, 0)]);
+  });
+});
+
+describe("operator lookup tables", () => {
+  test("read at finalized commitment (lookups resolve against the root bank) and retried until every table exists", async () => {
+    const table = addr("op-table") as Address;
+    const env = await makeEnv({ cfg: { lookupTables: [table] }, start: false });
+    // makeEnv pins tables for the other tests; this engine must read them from chain.
+    const engine = new OrderEngine({
+      cfg: { ...loadOrdersConfig({}), lookupTables: [table] },
+      repo: env.repo,
+      market: env.market,
+      chain: env.chain,
+      submitter: env.submitter,
+      publish: () => {},
+      notify: () => {},
+      now: () => env.clock.t,
+    });
+    await engine.start({ timers: false });
+    expect(engine.lookupTables()).toEqual({});
+    expect(env.chain.calls.find((c) => c.method === "accounts")?.commitment).toBe("finalized");
+    const entries = [addr("e1"), addr("e2")] as Address[];
+    const data = new Uint8Array(56 + 32 * entries.length);
+    const view = new DataView(data.buffer);
+    view.setUint32(0, 1, true);
+    view.setBigUint64(4, (1n << 64n) - 1n, true);
+    entries.forEach((e, i) => data.set(getAddressEncoder().encode(e), 56 + 32 * i));
+    env.chain.raw.set(table, { address: table, owner: ADDRESS_LOOKUP_TABLE_PROGRAM_ID, lamports: 1n, data });
+    await engine.sweep(); // within the retry delay: no read yet
+    await engine.settle();
+    expect(engine.lookupTables()).toEqual({});
+    env.clock.t += 5_000;
+    await engine.sweep();
+    await engine.settle();
+    expect(engine.lookupTables()).toEqual({ [table]: entries });
+    await engine.stop();
   });
 });
 
