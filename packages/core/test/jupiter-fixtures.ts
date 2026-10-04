@@ -59,7 +59,7 @@ export interface StubFetch {
  * A fetch that answers /build with the captured response whose request matches (input, output, amount),
  * after `mutate` (to model a misbehaving API). Anything else gets HTTP 400 {"error":"No routes found"}.
  */
-export function jupiterFetch(mutate?: (body: Record<string, unknown>, label: JupiterCaseLabel) => void): StubFetch {
+export function jupiterFetch(mutate?: (body: Record<string, unknown>, label: JupiterCaseLabel, query: URLSearchParams) => void): StubFetch {
   const requests: StubFetch["requests"] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -73,7 +73,7 @@ export function jupiterFetch(mutate?: (body: Record<string, unknown>, label: Jup
     });
     if (!label) return new Response(JSON.stringify({ error: "No routes found" }), { status: 400 });
     const body = jupiterCase(label).response;
-    mutate?.(body, label);
+    mutate?.(body, label, q);
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
   return { fetch: fetchFn, requests };

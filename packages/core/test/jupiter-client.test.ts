@@ -3,10 +3,11 @@
  * against real `/build` responses captured on 2026-10-03 (test/fixtures/jupiter-build.json; no network).
  */
 import { describe, expect, test } from "bun:test";
-import { AccountRole, getBase64Encoder, getProgramDerivedAddress } from "@solana/kit";
+import { AccountRole, address, getBase58Encoder, getBase64Encoder, getProgramDerivedAddress } from "@solana/kit";
 import {
   COMPUTE_BUDGET_PROGRAM_ID,
   decodeJupiterRouteArgs,
+  decodeJupiterSwapEvents,
   fetchJupiterBuild,
   findAssociatedTokenAddress,
   JUPITER_EVENT_AUTHORITY,
@@ -96,6 +97,45 @@ describe("/build request", () => {
     expect(() => parseJupiterBuildResponse({ ...body, swapInstruction: { programId: JUPITER_PROGRAM_ID, accounts: [], data: 7 } })).toThrow(
       "swapInstruction.data",
     );
+  });
+
+  test("rate limits: waits for Retry-After and retries (twice by default), then reports the 429", async () => {
+    const answers = [429, 429, 200];
+    const urls: string[] = [];
+    const ok = jupiterFetch();
+    const flaky = (async (input: string | URL | Request, init?: RequestInit) => {
+      urls.push(String(input));
+      const status = answers.shift() ?? 429;
+      if (status === 429) return new Response("Too many requests", { status, headers: { "retry-after": "0.01" } });
+      return ok.fetch(input, init);
+    }) as typeof fetch;
+    const r = await fetchJupiterBuild(base, { fetchFn: flaky });
+    expect(r.inputMint).toBe(WSOL_MINT);
+    expect(urls).toHaveLength(3);
+    expect(new Set(urls).size).toBe(1);
+    const err = await fetchJupiterBuild(base, { fetchFn: flaky, rateLimitRetries: 1 }).catch((e) => e);
+    expect((err as JupiterApiError).status).toBe(429);
+  });
+});
+
+describe("Jupiter swap events", () => {
+  test("decodes the SwapsEvent Jupiter emitted (event CPI) in a mainnet simulation of a DAMM v2 buy", () => {
+    // Inner-instruction data of the JUP6 self-invoke, simulateTransaction at slot ~453,130,650 (2026-10-03):
+    // 0.01 SOL -> 6Vsnb… through Meteora DAMM v2, 10,495,161,908 base units credited to the buyer's ATA.
+    const data = getBase58Encoder().encode(
+      "3drYVtAcBYiMtM5fDAD2VT79gAoN6vD18v9Jn7pH7sLP26vfth5Vxkahuq6cwH9UADUkYXfefL9ZgwAAKUkgJZataSLM45UawcDFRaFg91XH7afgXBuSuGoMtmZgM69iLsiwnc7pnxoNcNxtY5PCUfbs19gu6RmVQPjdfPGvMhDBRiBbjKWmr",
+    );
+    expect(decodeJupiterSwapEvents(new Uint8Array(data))).toEqual([
+      {
+        amm: address("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"),
+        inputMint: WSOL_MINT,
+        inputAmount: 10_000_000n,
+        outputMint: address("6VsnbKz6erJRTPiiD34Msq7eWmmgZHDnh4Bxan4MpGjm"),
+        outputAmount: 10_495_161_908n,
+      },
+    ]);
+    expect(decodeJupiterSwapEvents(new Uint8Array(data).subarray(0, 40))).toBeNull();
+    expect(decodeJupiterSwapEvents(new Uint8Array(16))).toBeNull();
   });
 });
 

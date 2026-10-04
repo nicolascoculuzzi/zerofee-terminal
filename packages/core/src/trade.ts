@@ -10,10 +10,18 @@
  * Jupiter fee. Its compute budget and tips are ours (assembleTransaction), and it needs the route's
  * address lookup tables (BuiltTrade.lookupTables).
  */
-import type { Address, AddressesByLookupTableAddress, Instruction } from "@solana/kit";
-import { DEFAULT_CU_LIMITS, RAYDIUM_FEE_RATE_DENOMINATOR } from "./constants";
+import type { Address, AddressesByLookupTableAddress, Blockhash, Instruction } from "@solana/kit";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  DEFAULT_CU_LIMITS,
+  HELIUS_SENDER_TIP_ACCOUNTS,
+  JITO_TIP_ACCOUNTS_FALLBACK,
+  JUPITER_MAX_ACCOUNTS,
+  MAX_COMPUTE_UNIT_LIMIT,
+  RAYDIUM_FEE_RATE_DENOMINATOR,
+} from "./constants";
 import { fetchJupiterBuild, type JupiterBuildRequest, type JupiterClientOptions } from "./jupiter/client";
-import { type JupiterRouteInstruction, jupiterRouteFromBuild } from "./jupiter/route";
+import { type JupiterRoute, JupiterRouteError, type JupiterRouteInstruction, jupiterRouteFromBuild } from "./jupiter/route";
 import { curveFeeRates, quoteBuyExactQuoteIn, quoteSell } from "./pump/curve";
 import { buildPumpBuyInstructions, buildPumpSellInstructions } from "./pump/instructions";
 import { buildAmmBuyInstructions, buildAmmSellInstructions } from "./pumpswap/instructions";
@@ -24,6 +32,7 @@ import { buildLaunchLabBuyInstructions, buildLaunchLabSellInstructions } from ".
 import { launchLabTradeParams, quoteLaunchLabBuyExactIn, quoteLaunchLabSellExactIn } from "./raydium/launchlab/math";
 import type { CpmmState, JupiterState, LaunchLabState, TokenState } from "./state";
 import { assertSwappableMint, closeAccountInstruction } from "./token";
+import { assembleTransaction } from "./tx/assemble";
 import { minOutForTrade } from "./util/math";
 
 export interface TradeRequest {
@@ -59,7 +68,16 @@ export interface TradeQuote {
    * Jupiter fallback: Jupiter's quote and route. Venue fees along the route are inside `expectedOut`
    * (Jupiter does not itemize them), so feesQuote / feesBase / feePpm are all 0 here.
    */
-  jupiter?: { instruction: JupiterRouteInstruction; labels: string[]; ammKeys: Address[]; priceImpactPct: string | null };
+  jupiter?: {
+    instruction: JupiterRouteInstruction;
+    labels: string[];
+    ammKeys: Address[];
+    priceImpactPct: string | null;
+    /** The /build route-account budget the quote came from (undefined: Jupiter's default, 64). */
+    maxAccounts?: number;
+    /** Jupiter's creation of the (existing) token account was left out to fit one packet. */
+    droppedAtaCreate: boolean;
+  };
 }
 
 export interface BuiltTrade {
@@ -111,6 +129,43 @@ export async function buildTrade(state: TokenState, req: TradeRequest, opts: Bui
 const NO_QUOTE_FEES = { protocol: 0n, creator: 0n, lp: 0n, buyback: 0n, platform: 0n, fund: 0n, total: 0n };
 const NO_FEE_PPM = { protocol: 0n, platform: 0n, creator: 0n, lp: 0n, fund: 0n };
 
+/** /build route-account budgets to try: the caller's (or Jupiter's default 64), then smaller ones. */
+export function jupiterMaxAccountsSteps(start?: number): (number | undefined)[] {
+  const first = start ?? JUPITER_MAX_ACCOUNTS;
+  return [start, ...[48, 32, 24].filter((n) => n < first)];
+}
+
+/**
+ * The largest compute budget and tip layout any landing mode adds (CU limit and price, a Helius and a
+ * Jito tip, the jitodontfront marker), to check that a route fits one packet before choosing the mode.
+ */
+const SIZE_PROBE = {
+  blockhash: { blockhash: "11111111111111111111111111111111" as Blockhash, lastValidBlockHeight: 0n },
+  fees: {
+    cuLimit: MAX_COMPUTE_UNIT_LIMIT,
+    cuPriceMicroLamports: 1n,
+    tips: [
+      { lane: "helius" as const, lamports: 1n, tipAccount: HELIUS_SENDER_TIP_ACCOUNTS[0]! },
+      { lane: "jito" as const, lamports: 1n, tipAccount: JITO_TIP_ACCOUNTS_FALLBACK[0]! },
+    ],
+    jitoDontFront: true,
+  },
+};
+
+/** Whether a Jupiter trade fits one packet in every landing mode (largest budget and tip layout). */
+export function jupiterRouteFits(user: Address, instructions: Instruction[], lookupTables: AddressesByLookupTableAddress): boolean {
+  try {
+    assembleTransaction({ feePayer: user, instructions, lookupTables, ...SIZE_PROBE });
+    return true;
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("transaction too large")) return false;
+    throw e;
+  }
+}
+
+const createsAta = (ix: Instruction, ata: Address) =>
+  ix.programAddress === ASSOCIATED_TOKEN_PROGRAM_ID && ix.accounts?.[1]?.address === ata;
+
 /**
  * Long-tail fallback: Jupiter `/build` for quote -> token (buy) or token -> quote (sell), exact in, the
  * user's slippage. A full exit also closes the token account, like the local venues.
@@ -121,38 +176,63 @@ async function buildJupiterTrade(state: JupiterState, req: TradeRequest, opts: J
   const inputMint = isBuy ? state.quoteMint : state.mint;
   const outputMint = isBuy ? state.mint : state.quoteMint;
   const { maxAccounts, excludeDexes, forJitoBundle, mode, ...client } = opts;
-  const build = await fetchJupiterBuild(
-    {
+  const closeBase = !isBuy && closeOnExit(state, req);
+  const withClose = (ixs: Instruction[]) =>
+    closeBase
+      ? [
+          ...ixs,
+          closeAccountInstruction({
+            account: state.userBaseAta,
+            destination: state.user,
+            owner: state.user,
+            tokenProgram: state.mintInfo.tokenProgram,
+          }),
+        ]
+      : ixs;
+
+  // A route must fit one packet with our compute budget and tips, and with the firewall's static keys
+  // kept static. If it does not: drop the no-op creation of a token account that already exists, then
+  // ask /build for a route with fewer accounts (Jupiter's documented remedy; each step is a new quote).
+  let route: JupiterRoute | undefined;
+  let instructions: Instruction[] = [];
+  let budget: number | undefined;
+  let droppedAtaCreate = false;
+  for (const accounts of jupiterMaxAccountsSteps(maxAccounts)) {
+    budget = accounts;
+    const build = await fetchJupiterBuild(
+      {
+        inputMint,
+        outputMint,
+        amount: req.amount,
+        slippageBps: req.slippageBps,
+        taker: state.user,
+        maxAccounts: accounts,
+        excludeDexes,
+        forJitoBundle,
+        mode,
+      },
+      client,
+    );
+    route = await jupiterRouteFromBuild(build, {
+      user: state.user,
       inputMint,
       outputMint,
       amount: req.amount,
       slippageBps: req.slippageBps,
-      taker: state.user,
-      maxAccounts,
-      excludeDexes,
-      forJitoBundle,
-      mode,
-    },
-    client,
-  );
-  const route = await jupiterRouteFromBuild(build, {
-    user: state.user,
-    inputMint,
-    outputMint,
-    amount: req.amount,
-    slippageBps: req.slippageBps,
-  });
-  const instructions = [...route.instructions];
-  if (!isBuy && closeOnExit(state, req)) {
-    instructions.push(
-      closeAccountInstruction({
-        account: state.userBaseAta,
-        destination: state.user,
-        owner: state.user,
-        tokenProgram: state.mintInfo.tokenProgram,
-      }),
-    );
+    });
+    instructions = withClose(route.instructions);
+    if (jupiterRouteFits(state.user, instructions, route.lookupTables)) break;
+    if (isBuy && state.userBaseAtaExists) {
+      const trimmed = withClose(route.instructions.filter((ix) => !createsAta(ix, state.userBaseAta)));
+      if (jupiterRouteFits(state.user, trimmed, route.lookupTables)) {
+        instructions = trimmed;
+        droppedAtaCreate = true;
+        break;
+      }
+    }
+    route = undefined;
   }
+  if (!route) throw new JupiterRouteError("Jupiter /build: no route fits one transaction, even with fewer accounts");
   return {
     quote: {
       venue: "jupiter",
@@ -163,7 +243,14 @@ async function buildJupiterTrade(state: JupiterState, req: TradeRequest, opts: J
       feesQuote: NO_QUOTE_FEES,
       feesBase: NO_BASE_FEES,
       feePpm: NO_FEE_PPM,
-      jupiter: { instruction: route.instruction, labels: route.labels, ammKeys: route.ammKeys, priceImpactPct: route.priceImpactPct },
+      jupiter: {
+        instruction: route.instruction,
+        labels: route.labels,
+        ammKeys: route.ammKeys,
+        priceImpactPct: route.priceImpactPct,
+        ...(budget !== undefined ? { maxAccounts: budget } : {}),
+        droppedAtaCreate,
+      },
     },
     instructions,
     hotAccount: route.ammKeys[0] ?? state.mint,

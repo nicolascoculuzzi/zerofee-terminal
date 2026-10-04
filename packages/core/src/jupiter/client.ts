@@ -46,6 +46,20 @@ export interface JupiterClientOptions {
   signal?: AbortSignal;
   /** Default 10 s. */
   timeoutMs?: number;
+  /** Retries after HTTP 429 (default 2). */
+  rateLimitRetries?: number;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export interface JupiterAccountMeta {
@@ -152,7 +166,14 @@ export async function fetchJupiterBuild(req: JupiterBuildRequest, opts: JupiterC
   if (opts.apiKey) headers["x-api-key"] = opts.apiKey;
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? 10_000);
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
-  const res = await fetchFn(jupiterBuildUrl(req, opts.baseUrl), { headers, signal });
+  const url = jupiterBuildUrl(req, opts.baseUrl);
+  let res = await fetchFn(url, { headers, signal });
+  // Rate limited (keyless access is 0.5 RPS): wait as told (Retry-After, default 2 s), twice at most.
+  for (let retry = 0; res.status === 429 && retry < (opts.rateLimitRetries ?? 2); retry++) {
+    const seconds = Number(res.headers.get("retry-after"));
+    await sleep(Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 5) * 1000 : 2_000, signal);
+    res = await fetchFn(url, { headers, signal });
+  }
   const text = await res.text();
   if (!res.ok) {
     let message = text.slice(0, 300);

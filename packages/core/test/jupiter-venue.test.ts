@@ -26,6 +26,8 @@ import {
   JUPITER_STATIC_POSITIONS,
   JupiterRouteError,
   type JupiterState,
+  jupiterMaxAccountsSteps,
+  jupiterRouteFits,
   jupiterRouteFromBuild,
   loadTokenState,
   NoLocalVenueError,
@@ -207,6 +209,56 @@ describe("buildTrade on the Jupiter fallback", () => {
     await expect(
       buildTrade(await state(DBC_COIN), { side: "buy", amount: 10_000_000n, slippageBps: 1500 }, { jupiter: { fetchFn: stub.fetch } }),
     ).rejects.toThrow(JupiterRouteError);
+  });
+
+  const maxAccountsOf = (stub: ReturnType<typeof jupiterFetch>) => stub.requests.map((x) => new URL(x.url).searchParams.get("maxAccounts"));
+
+  test("a route too large for one packet is re-quoted with fewer accounts (Jupiter's remedy)", async () => {
+    // The captured two-hop BONK sell is 1,392 bytes without its lookup tables: serve it that way unless
+    // the request carries a smaller account budget.
+    const stub = jupiterFetch((body, _label, query) => {
+      if (!query.has("maxAccounts")) body.addressesByLookupTableAddress = null;
+    });
+    const r = jupiterCase("normalSell").request;
+    const ata = await findAssociatedTokenAddress(JUPITER_TAKER, BONK, TOKEN_PROGRAM_ID);
+    const s = await state(BONK, { [ata]: { owner: TOKEN_PROGRAM_ID, data: tokenAccountData(BONK, JUPITER_TAKER, r.amount * 2n) } });
+    const t = await buildTrade(s, { side: "sell", amount: r.amount, slippageBps: 1500 }, { jupiter: { fetchFn: stub.fetch } });
+    expect(maxAccountsOf(stub)).toEqual([null, "48"]);
+    expect(t.quote.jupiter).toMatchObject({ maxAccounts: 48, droppedAtaCreate: false });
+    expect(jupiterRouteFits(JUPITER_TAKER, t.instructions, t.lookupTables!)).toBe(true);
+    expect(jupiterMaxAccountsSteps()).toEqual([undefined, 48, 32, 24]);
+    expect(jupiterMaxAccountsSteps(40)).toEqual([40, 32, 24]);
+  });
+
+  test("an existing token account's no-op creation is left out when that alone makes the route fit", async () => {
+    // Pad the DBC buy's route data to the first size that no longer fits with Jupiter's ATA creation.
+    const route = await jupiterRouteFromBuild(parsed("longtailCurveBuy"), expectationOf("longtailCurveBuy"));
+    const swapAt = route.instructions.findIndex((ix) => ix.programAddress === JUPITER_PROGRAM_ID);
+    const padded = (k: number) =>
+      route.instructions.map((ix, i) => (i === swapAt ? { ...ix, data: Uint8Array.from([...ix.data!, ...new Array(k).fill(0)]) } : ix));
+    let k = 0;
+    while (jupiterRouteFits(JUPITER_TAKER, padded(k), {})) k++;
+    const pad = (body: Record<string, unknown>) => {
+      const ix = body.swapInstruction as { data: string };
+      ix.data = Buffer.from([...Buffer.from(ix.data, "base64"), ...new Array(k).fill(0)]).toString("base64");
+    };
+    const ata = await findAssociatedTokenAddress(JUPITER_TAKER, DBC_COIN, TOKEN_PROGRAM_ID);
+    const held = { [ata]: { owner: TOKEN_PROGRAM_ID, data: tokenAccountData(DBC_COIN, JUPITER_TAKER, 1n) } };
+    const stub = jupiterFetch(pad);
+    const t = await buildTrade(
+      await state(DBC_COIN, held),
+      { side: "buy", amount: 10_000_000n, slippageBps: 1500 },
+      { jupiter: { fetchFn: stub.fetch } },
+    );
+    expect(maxAccountsOf(stub)).toEqual([null]);
+    expect(t.quote.jupiter?.droppedAtaCreate).toBe(true);
+    expect(t.instructions.some((ix) => ix.accounts?.[1]?.address === ata && ix.programAddress.startsWith("AToken"))).toBe(false);
+    // Without the account to fall back on, every smaller budget is tried, then the trade is refused.
+    const fresh = jupiterFetch(pad);
+    await expect(
+      buildTrade(await state(DBC_COIN), { side: "buy", amount: 10_000_000n, slippageBps: 1500 }, { jupiter: { fetchFn: fresh.fetch } }),
+    ).rejects.toThrow("no route fits one transaction");
+    expect(maxAccountsOf(fresh)).toEqual([null, "48", "32", "24"]);
   });
 });
 
