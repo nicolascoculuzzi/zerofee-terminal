@@ -6,7 +6,7 @@
 import type { TokenRecord } from "../market/token";
 import { newTokenRecord } from "../market/token";
 
-const SKIP = new Set(["windows", "holders", "trades", "proTraders", "lastPersistAt", "bootstrapRequested", "history"]);
+const SKIP = new Set(["windows", "holders", "trades", "proTraders", "lastPersistAt", "bootstrapRequested", "history", "quotePrice"]);
 
 export function bigintReplacer(_k: string, v: unknown): unknown {
   return typeof v === "bigint" ? { $big: v.toString() } : v;

@@ -189,11 +189,20 @@ export interface TokenResponse {
  */
 export type TokenMissingReason = "not_a_token" | "no_venue";
 
+/**
+ * What a "not_a_token" address is, from the account the resolve read: "wallet" = owned by the System program (a
+ * wallet: open the wallet view instead), "none" = no account (never funded, or closed), "other" = any other
+ * program's account (a pool, a token account, a program ...).
+ */
+export type NotTokenAccount = "wallet" | "none" | "other";
+
 export interface TokenNotFoundBody extends ApiErrorBody {
   code: "not_found";
   reason: TokenMissingReason;
   /** The coin's mint when the address is one of its pools. */
   redirect?: string;
+  /** With "not_a_token": what the address is. Absent from servers that predate it. */
+  account?: NotTokenAccount;
 }
 
 /**

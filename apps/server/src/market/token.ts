@@ -147,6 +147,11 @@ export interface TokenRecord {
   poolState: PoolReserves | null;
   poolKey: OrderKey | null;
   poolSlot: number | null;
+  /**
+   * Jupiter-only coins (launchpad "other"): price from the latest Jupiter quote of a small SOL buy, and when it was
+   * taken (market/jupiterPrice.ts). Not persisted: a stale quote is never shown as the price. null otherwise.
+   */
+  quotePrice: { priceSol: number; at: number } | null;
   athMcSol: number;
   lastTradeAt: number | null;
   lastSlot: number | null;
@@ -218,6 +223,7 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
     poolState: null,
     poolKey: null,
     poolSlot: null,
+    quotePrice: null,
     athMcSol: 0,
     lastTradeAt: null,
     lastSlot: null,
@@ -241,6 +247,8 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
 
 /** Price in quote UI units per whole token from the active venue (0 when unknown). */
 export function priceQuote(rec: TokenRecord): number {
+  // no reserves the server reads: the Jupiter quote (SOL quoted) is the price
+  if (rec.launchpad === "other") return rec.quotePrice?.priceSol ?? 0;
   if (rec.quoteTokenProgram === null) return 0; // an exotic quote mint not resolved yet: its decimals are unknown
   if (rec.poolState && (rec.migrated || !rec.curve)) {
     const eff = rec.poolState.quoteVault + rec.poolState.virtualQuote;
@@ -299,7 +307,8 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
       : rec.curve
         ? ui(rec.curve.rQuote, rec.quoteDecimals)
         : 0;
-  const liquidity = rate !== null ? liqQuote * rate : null;
+  // a Jupiter-only coin's liquidity sits in pools the server does not read: unknown, not 0
+  const liquidity = rate !== null && rec.launchpad !== "other" ? liqQuote * rate : null;
   const w = rec.windows.totals(view.now);
   const m = rec.holders?.metrics(rec.supply, circulatingBound(rec)) ?? null;
   return {
@@ -356,6 +365,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     athMcSol: mcSol !== null ? Math.max(rec.athMcSol, mcSol) : rec.athMcSol > 0 ? rec.athMcSol : null,
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,
+    ...(rec.launchpad === "other" && rec.quotePrice ? { priceSource: "jupiter_quote" as const, priceAt: rec.quotePrice.at } : {}),
     ...(rec.history
       ? {
           history: rec.history,

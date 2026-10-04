@@ -1,5 +1,5 @@
 import { BadgeCheck, ChefHat, CircleDollarSign, Flame, type LucideIcon, Users } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { MetricLabel, Skeleton } from "../../components/ui/bits";
 import { CopyButton } from "../../components/ui/controls";
@@ -23,46 +23,11 @@ import { RISK_ICON } from "../pulse/icons";
  * without a border after Binance Meme Rank https://mobbin.com/screens/55442959-3968-4340-9c27-3efe6dfffeb5 ;
  * dotted labels that carry definitions after OKX https://mobbin.com/screens/f26041bc-ccc7-43f8-b492-2959191e63ae
  *
- * Unknown values: while the metric may still be computing (the first seconds on the page, or a
- * token younger than FRESH_MS) the tile shows a static skeleton; after that the tile is omitted
- * (Axiom omits null metrics) and one quiet text-4 line names what isn't computed, never a dash.
+ * Unknown values: while the server says the holder metrics are being computed (`holdersPending`: a
+ * history backfill runs; they arrive as a patch when it reaches the creation) their tiles show a
+ * static skeleton. Otherwise an unknown tile is omitted (Axiom omits null metrics) and one quiet
+ * text-4 line names what isn't computed, never a dash. No timers: the server's flag decides.
  */
-
-/** Tokens younger than this are still in their first slots: their metrics may not be computed. */
-const FRESH_MS = 20_000;
-/** First paint grace before an unknown metric reads as "unknown" rather than "loading". */
-const MOUNT_GRACE_MS = 2_500;
-
-/** When this session first showed each token, so remounting the Info tab doesn't restart the grace. */
-const firstSeen = new Map<string, number>();
-
-/** Milliseconds until an unknown metric of this token stops reading as "loading" (0 when it already has). */
-function settleIn(mint: string, createdAt: number): number {
-  const now = Date.now();
-  let seen = firstSeen.get(mint);
-  if (seen === undefined) {
-    seen = now;
-    if (firstSeen.size > 200) firstSeen.clear();
-    firstSeen.set(mint, seen);
-  }
-  const born = Number.isFinite(createdAt) && createdAt > 0 ? createdAt : Number.NEGATIVE_INFINITY;
-  return Math.max(0, Math.max(seen + MOUNT_GRACE_MS, born + FRESH_MS) - now);
-}
-
-/** True while an unknown metric is plausibly still on its way for this token. */
-function useSettling(mint: string, createdAt: number): boolean {
-  const [settledFor, setSettledFor] = useState<string | null>(() => (settleIn(mint, createdAt) === 0 ? mint : null));
-  useEffect(() => {
-    const wait = settleIn(mint, createdAt);
-    if (wait === 0) {
-      setSettledFor(mint);
-      return;
-    }
-    const t = setTimeout(() => setSettledFor(mint), wait);
-    return () => clearTimeout(t);
-  }, [mint, createdAt]);
-  return settledFor !== mint;
-}
 
 /** Value colours per band, as on the Pulse slots: the band lives in the value alone. */
 const VALUE_TONE: Record<Tone, string> = {
@@ -85,9 +50,11 @@ interface TileModel {
   bands?: string;
   /** A word rather than a number ("Curve", "Unpaid"): set at 500 so it never outweighs the figures. */
   word?: boolean;
+  /** A holder metric the server is still computing (`holdersPending`). */
+  holder?: boolean;
 }
 
-/** One metric tile. A null value renders the static skeleton (unknown tiles are only drawn while loading). */
+/** One metric tile. A null value renders the static skeleton (unknown tiles are only drawn while pending). */
 function Tile({ tile }: { tile: TileModel }) {
   const Icon = tile.icon;
   if (tile.value === null) {
@@ -201,7 +168,7 @@ export function TokenInfo({
   const removeWallet = useTrackers((s) => s.removeWallet);
   const t = detail.summary;
   const r = t.risk;
-  const loading = useSettling(t.mint, t.createdAt);
+  const pending = t.holdersPending === true;
   const danger = token2022Danger(t.token2022);
 
   const risk = (key: RiskKey, label: string, v: number | null): TileModel => {
@@ -217,11 +184,21 @@ export function TokenInfo({
       tone,
       high: colors && band === "bad" && text !== "0%",
       bands: bandsText(key, thresholds),
+      holder: true,
     };
   };
 
   const devTile: TileModel = r.devSold
-    ? { metric: "dev", label: "Dev", icon: RISK_ICON.dev, value: "DS", tone: "text-fg-2", word: true, bands: bandsText("dev", thresholds) }
+    ? {
+        metric: "dev",
+        label: "Dev",
+        icon: RISK_ICON.dev,
+        value: "DS",
+        tone: "text-fg-2",
+        word: true,
+        bands: bandsText("dev", thresholds),
+        holder: true,
+      }
     : risk("dev", "Dev", r.devPct);
 
   const lp = t.lpBurnedPct;
@@ -229,7 +206,8 @@ export function TokenInfo({
     metric: "lpBurned",
     label: "LP burned",
     icon: Flame,
-    value: lp !== null ? fmtRiskPct(lp) : t.migratedAt === null ? "Curve" : null,
+    // "Curve" only for a coin on its bonding curve; a Jupiter-routed coin's pools are not read (unknown)
+    value: lp !== null ? fmtRiskPct(lp) : t.migratedAt === null && t.venue !== "other" ? "Curve" : null,
     tone: lp === null ? "text-fg-2" : lp >= 100 ? "text-fg-1" : lp <= 0 ? "text-risk-high" : "text-risk-mid",
     high: lp !== null && lp <= 0,
     word: lp === null,
@@ -254,6 +232,7 @@ export function TokenInfo({
       icon: Users,
       value: t.holders === null ? null : fmtCount(t.holders),
       tone: "text-fg-1",
+      holder: true,
     },
     {
       metric: "proTraders",
@@ -272,9 +251,10 @@ export function TokenInfo({
     },
   ];
 
-  // Unknown after the settle window: hide the tile (no dash wall) and name it once, quietly, below.
-  const shown = loading ? tiles : tiles.filter((x) => x.value !== null);
-  const hidden = loading ? [] : tiles.filter((x) => x.value === null);
+  // Unknown and not coming: hide the tile (no dash wall) and name it once, quietly, below.
+  const coming = (x: TileModel) => pending && x.holder === true;
+  const shown = tiles.filter((x) => x.value !== null || coming(x));
+  const hidden = tiles.filter((x) => x.value === null && !coming(x));
 
   // Unknown dev history arrives as zeros: omit it rather than claim "0 launches".
   const knownHistory = detail.devLaunches > 0;
@@ -304,7 +284,7 @@ export function TokenInfo({
   }
 
   return (
-    <section aria-label="Token info" aria-busy={loading || undefined} className="border-t border-hairline">
+    <section aria-label="Token info" aria-busy={pending || undefined} className="border-t border-hairline">
       {header && (
         <div className="flex h-8 items-center justify-between px-3">
           <span className="text-data font-semibold text-fg-1">Token info</span>

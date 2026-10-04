@@ -81,6 +81,7 @@ import { BoundedSet, LruMap } from "../util/lru";
 import { RateCounter, SampleRing } from "../util/stats";
 import { CandleBook, type CandleTrade, type CandleUpdate, cmpKey, type OrderKey } from "./candles";
 import { HolderBook, type MetricsConfig, type SnapshotEntry } from "./holders";
+import { priceSolFromQuote } from "./jupiterPrice";
 import { knownQuoteDecimals, normalizeQuoteMint, quoteSolRate, ui } from "./quote";
 import {
   buildTradeContext,
@@ -2235,6 +2236,21 @@ export class MarketState {
     const rec = this.getOrCreate(mint, { launchpad: "other", bootstrapRequested: true });
     this.touch(rec);
     return rec;
+  }
+
+  /**
+   * A Jupiter quote for a Jupiter-only coin: `inLamports` SOL buys `outAmount` base units (market/jupiterPrice.ts).
+   * Sets its price (and so its market cap, from the mint supply); ignored for coins priced from reserves.
+   */
+  setJupiterQuote(mint: string, inLamports: bigint, outAmount: bigint, at: number): void {
+    const rec = this.tokens.get(mint);
+    if (rec?.launchpad !== "other") return;
+    const priceSol = priceSolFromQuote(inLamports, outAmount, rec.decimals);
+    if (priceSol === null) return;
+    rec.quotePrice = { priceSol, at };
+    const mcSol = priceSol * ui(rec.supply, rec.decimals);
+    if (mcSol > rec.athMcSol) rec.athMcSol = mcSol;
+    this.touch(rec);
   }
 
   /**

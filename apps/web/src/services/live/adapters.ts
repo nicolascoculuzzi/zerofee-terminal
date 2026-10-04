@@ -163,6 +163,8 @@ export function adaptToken(t: WireToken, ctx: TokenAdaptContext): TokenSummary {
     lastTradeAt: num(t.lastTradeAt),
     change5mPct: null,
     historyState: t.historyState ?? t.history?.state,
+    ...(t.holdersPending === true ? { holdersPending: true } : {}),
+    ...(t.priceSource === "jupiter_quote" ? { priceSource: "jupiter_quote" as const } : {}),
   };
 }
 

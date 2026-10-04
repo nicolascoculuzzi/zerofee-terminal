@@ -19,7 +19,8 @@ describe("askServer", () => {
   test("200 -> found; 404 with a reason -> missing (final); 400 -> invalid; 429 / 503 / network -> retry", async () => {
     const answers: Record<string, Response | Error> = {
       found: json(200, { token: wireToken(), tradeContext: null }),
-      wallet: json(404, { error: "no account", code: "not_found", reason: "not_a_token" }),
+      empty: json(404, { error: "no account", code: "not_found", reason: "not_a_token", account: "none" }),
+      wallet: json(404, { error: "a wallet", code: "not_found", reason: "not_a_token", account: "wallet" }),
       pool: json(404, { error: "pool", code: "not_found", reason: "not_a_token", redirect: MINT }),
       bare: json(404, { error: "x", code: "not_found", reason: "no_venue" }),
       old: json(404, { error: "unknown token", code: "not_found" }),
@@ -34,7 +35,9 @@ describe("askServer", () => {
       return a.clone();
     });
     expect((await askServer("found", 0)).kind).toBe("found");
-    expect(await askServer("wallet", 0)).toEqual({ kind: "missing", reason: "not_a_token", redirect: null });
+    expect(await askServer("empty", 0)).toEqual({ kind: "missing", reason: "not_a_token", redirect: null });
+    // a System-owned account: the wallet view, not "Not a token"
+    expect(await askServer("wallet", 0)).toEqual({ kind: "missing", reason: "wallet", redirect: null });
     expect(await askServer("pool", 0)).toEqual({ kind: "missing", reason: "not_a_token", redirect: MINT });
     expect(await askServer("bare", 0)).toEqual({ kind: "missing", reason: "no_venue", redirect: null });
     expect(await askServer("old", 0)).toEqual({ kind: "missing", reason: "not_found", redirect: null });

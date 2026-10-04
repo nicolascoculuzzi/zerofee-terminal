@@ -432,6 +432,7 @@ export class Gateway {
           code: r.code,
           ...(r.reason ? { reason: r.reason } : {}),
           ...(r.redirect ? { redirect: r.redirect } : {}),
+          ...(r.account ? { account: r.account } : {}),
           ...(r.retryAfterSec ? { retryAfterSec: r.retryAfterSec } : {}),
         },
         r.status,

@@ -18,7 +18,8 @@
  *
  * Not a token (no account, or not an SPL / Token-2022 mint): 404 "not_a_token", with `redirect` when the address
  * is one of a coin's pools (a pasted DexScreener / Axiom pair link). A mint with no venue the server decodes:
- * the keyless Jupiter /build probe decides between a Jupiter-routed "other" record and 404 "no_venue".
+ * the keyless Jupiter /build probe decides between a Jupiter-routed "other" record and 404 "no_venue"; its quote
+ * prices the "other" record, and market/jupiterPrice.ts re-quotes it while the coin is viewed.
  *
  * Abuse limits: malformed input is refused before any read; chain resolves are rate limited per client
  * (RESOLVE_PER_MIN / RESOLVE_BURST) and capped server-wide (RESOLVE_MAX_CONCURRENT, then 503); concurrent requests
@@ -40,8 +41,6 @@ import {
   decodePool,
   decodeTokenAccount,
   isCanonicalPumpPool,
-  JUPITER_BUILD_PATH,
-  JUPITER_SWAP_API_BASE,
   LAUNCHLAB_POOL_STATUS,
   type LaunchLabPool,
   launchLabPoolPda,
@@ -51,12 +50,13 @@ import {
   PUMP_PROGRAM_ID,
   RAYDIUM_CPMM_PROGRAM_ID,
   RAYDIUM_LAUNCHLAB_PROGRAM_ID,
+  SYSTEM_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   USDC_MINT,
   WSOL_MINT,
 } from "@zerofee/core";
-import type { ErrorCode, TokenMissingReason, TokenSummary, TradeContext } from "@zerofee/protocol";
+import type { ErrorCode, NotTokenAccount, TokenMissingReason, TokenSummary, TradeContext } from "@zerofee/protocol";
 import type { RaydiumRegistry } from "../accounts/raydium";
 import type { AccountResolver, MintResolved } from "../accounts/resolver";
 import type { ResolveConfig } from "../config";
@@ -67,6 +67,7 @@ import type { StorageReader } from "../storage/reader";
 import { replayRecent } from "../storage/restore";
 import { LruMap } from "../util/lru";
 import { type RpcAccount, RpcError } from "../util/rpc";
+import { QUOTE_IN_LAMPORTS } from "./jupiterPrice";
 import { knownQuoteDecimals, normalizeQuoteMint } from "./quote";
 import type { MarketState } from "./state";
 import type { TokenRecord } from "./token";
@@ -92,6 +93,7 @@ export type ResolveOutcome =
       message: string;
       reason?: TokenMissingReason;
       redirect?: string;
+      account?: NotTokenAccount;
       retryAfterSec?: number;
     };
 
@@ -102,8 +104,13 @@ export interface MintResolverDeps {
   accounts: Pick<AccountResolver, "fetchAccounts" | "upsertPool" | "mints">;
   raydium: RaydiumRegistry | null;
   history: { request(mint: string, priority?: 0 | 1 | 2, reason?: string): void } | null;
-  /** Does Jupiter route SOL -> mint? (jupiterRouteProbe in the app; absent / null: never asked, "no_venue"). */
-  jupiterRoutes?: ((mint: string) => Promise<boolean>) | null;
+  /**
+   * Does Jupiter route SOL -> mint? The outAmount of a QUOTE_IN_LAMPORTS buy, null when it does not
+   * (jupiterRouteProbe in the app; absent / null: never asked, "no_venue"). The answer also prices the coin.
+   */
+  jupiterRoutes?: ((mint: string) => Promise<bigint | null>) | null;
+  /** Prices an unpriced Jupiter-only coin found in memory (JupiterPricer.prime; rate limited there). */
+  jupiterPrime?: ((mint: string) => Promise<void>) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -199,6 +206,7 @@ export class MintResolver {
     if (rec && hasVenue(rec)) {
       this.stats.memory++;
       this.pin(mint);
+      if (rec.launchpad === "other" && !rec.quotePrice) await this.d.jupiterPrime?.(mint).catch(() => {});
       return this.found(mint, "memory");
     }
     if (!this.d.cfg.enabled) {
@@ -259,7 +267,13 @@ export class MintResolver {
     return { ok: true, source, token, tradeContext: this.d.market.tradeContext(mint) };
   }
 
-  private definitive(mint: string, reason: TokenMissingReason, message: string, redirect?: string): ResolveOutcome {
+  private definitive(
+    mint: string,
+    reason: TokenMissingReason,
+    message: string,
+    redirect?: string,
+    account?: NotTokenAccount,
+  ): ResolveOutcome {
     const outcome: ResolveOutcome = {
       ok: false,
       status: 404,
@@ -267,6 +281,7 @@ export class MintResolver {
       message,
       reason,
       ...(redirect ? { redirect } : {}),
+      ...(account ? { account } : {}),
     };
     this.negative.set(mint, { outcome, at: this.now() });
     if (reason === "not_a_token") this.stats.notToken++;
@@ -312,11 +327,13 @@ export class MintResolver {
     const [mintAcc, curveAcc, metaAcc, poolAcc, llSolAcc, llUsd1Acc] = r1.accounts;
     if (!mintAcc || !isMintAccount(mintAcc)) {
       if (restored) return this.stored(mint, started);
+      const account: NotTokenAccount = !mintAcc ? "none" : mintAcc.owner === SYSTEM_PROGRAM_ID ? "wallet" : "other";
       return this.definitive(
         mint,
         "not_a_token",
-        mintAcc ? "this address is not a token mint" : "no account at this address",
+        account === "wallet" ? "this address is a wallet" : mintAcc ? "this address is not a token mint" : "no account at this address",
         mintAcc ? (this.baseMintOfPool(mintAcc) ?? undefined) : undefined,
+        account,
       );
     }
     const mi = decodeMint(mintAcc.data, mintAcc.owner);
@@ -353,14 +370,16 @@ export class MintResolver {
       if (ll.state.status === LAUNCHLAB_POOL_STATUS.trade) graduating = true;
     } else {
       const routes = this.d.jupiterRoutes ?? null;
-      const routable = routes ? await routes(mint).catch(() => false) : false;
-      if (!routable) {
+      const out = routes ? await routes(mint).catch(() => null) : null;
+      if (out === null || out <= 0n) {
         if (restored) return this.stored(mint, started);
         return this.definitive(mint, "no_venue", "no pump.fun, PumpSwap or Raydium market and no Jupiter route for this token");
       }
       this.stats.jupiterOnly++;
       this.d.market.ensureOtherToken(mint);
       this.applyMint(mintInfo, metaAcc ?? null);
+      // the probe's quote is the first price (decimals and supply come from the mint just applied)
+      this.d.market.setJupiterQuote(mint, QUOTE_IN_LAMPORTS, out, this.now());
       this.pin(mint);
       return this.settled(mint, source, started);
     }
@@ -540,51 +559,4 @@ export class MintResolver {
     if (pinfo) this.d.market.onLaunchLabPoolReady(pinfo);
     this.d.market.anchorReserves(mint, slot);
   }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Jupiter routability (no-venue mints)
-// ---------------------------------------------------------------------------------------------
-
-/** System program: a taker that holds nothing; /build quotes and builds for it, nothing is ever signed. */
-const PROBE_TAKER = "11111111111111111111111111111111";
-
-/**
- * Keyless Jupiter `/build` probe: does a 0.01 SOL buy route? Serialized at one call per ~2.2 s (keyless access
- * allows 0.5 RPS) and cached for 10 minutes per mint. Only a quote is fetched; nothing is signed or sent.
- */
-export function jupiterRouteProbe(fetchFn: typeof fetch = fetch): (mint: string) => Promise<boolean> {
-  const cache = new LruMap<string, { ok: boolean; at: number }>(2_000);
-  let chain: Promise<unknown> = Promise.resolve();
-  let last = 0;
-  return (mint) => {
-    const hit = cache.get(mint);
-    if (hit && Date.now() - hit.at < NEGATIVE_TTL_MS) return Promise.resolve(hit.ok);
-    const run = chain.then(async () => {
-      const wait = last + 2_200 - Date.now();
-      if (wait > 0) await Bun.sleep(wait);
-      last = Date.now();
-      const q = new URLSearchParams({
-        inputMint: WSOL_MINT,
-        outputMint: mint,
-        amount: "10000000",
-        slippageBps: "500",
-        taker: PROBE_TAKER,
-      });
-      let ok = false;
-      try {
-        const res = await fetchFn(`${JUPITER_SWAP_API_BASE}${JUPITER_BUILD_PATH}?${q}`, { signal: AbortSignal.timeout(5_000) });
-        if (res.ok) {
-          const body = (await res.json()) as { outAmount?: string };
-          ok = typeof body.outAmount === "string" && BigInt(body.outAmount) > 0n;
-        }
-      } catch {
-        ok = false;
-      }
-      cache.set(mint, { ok, at: Date.now() });
-      return ok;
-    });
-    chain = run.catch(() => undefined);
-    return run;
-  };
 }

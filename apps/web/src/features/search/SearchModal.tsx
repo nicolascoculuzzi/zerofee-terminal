@@ -1,8 +1,9 @@
-import { ArrowRight, Check, Search, X } from "lucide-react";
+import { ArrowRight, Check, Search, Wallet, X } from "lucide-react";
 import { type ClipboardEvent, Fragment, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Hotkey, KeyCap } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
+import { isBase58Address } from "../../lib/address";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { fmtCount, fmtSolShort, shortAddr } from "../../lib/format";
@@ -38,7 +39,9 @@ type Item =
   | { kind: "action"; key: string; action: PaletteAction }
   | { kind: "query"; key: string; query: string }
   /** A pasted / typed contract address (or a link holding one) the search did not find: open it anyway. */
-  | { kind: "open"; key: string; mint: string };
+  | { kind: "open"; key: string; mint: string }
+  /** The same bare address read as a wallet (it may be one: only the chain knows): the wallet view. */
+  | { kind: "viewWallet"; key: string; address: string };
 
 interface Group {
   id: string;
@@ -67,6 +70,7 @@ const LIMIT: Record<Scope, { tokens: number; wallets: number; devs: number; acti
 function copyTarget(item: Item | undefined): { text: string; what: string } | null {
   if (!item) return null;
   if (item.kind === "open") return { text: item.mint, what: "CA" };
+  if (item.kind === "viewWallet") return { text: item.address, what: "address" };
   if (item.kind === "token" || item.kind === "exact") return { text: item.token.mint, what: "CA" };
   if (item.kind === "wallet") return { text: item.wallet.address, what: "address" };
   if (item.kind === "dev") return { text: item.dev.address, what: "address" };
@@ -167,6 +171,19 @@ export function SearchModal() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: deliberately keyed on query and scope
   useEffect(() => setActive(0), [q, scope]);
 
+  /**
+   * An address the search did not find (never indexed, pruned, or not a token at all): offer to open it as a token
+   * (the token page reads it from chain) and, for a bare address, to view it as a wallet. Counted as results.
+   */
+  const offer = useMemo(() => {
+    if (!q || !pastedMint || pending) return { token: false, wallet: false };
+    const data = results.data;
+    if (data.tokens.some((t) => t.mint === pastedMint)) return { token: false, wallet: false };
+    // a link names a token; a bare address may be either
+    const wallet = isBase58Address(q) && !data.wallets.some((w) => w.address === pastedMint);
+    return { token: true, wallet };
+  }, [q, pastedMint, pending, results]);
+
   const groups: Group[] = useMemo(() => {
     const withLive = (t: TokenSummary) => live[t.mint] ?? t;
     const out: Group[] = [];
@@ -194,9 +211,13 @@ export function SearchModal() {
     const data = results.data;
     const limit = LIMIT[scope];
     const exact = data.tokens.find((t) => t.mint === searchQ);
-    // not in the index (never seen, or pruned): the token page reads it from chain
-    if (pastedMint && !exact && !pending && limit.tokens > 0)
-      out.push({ id: "open", label: "Contract address", items: [{ kind: "open", key: `o-${pastedMint}`, mint: pastedMint }] });
+    // not in the index (never seen, or pruned): the token page reads it from chain, the wallet view reads a wallet
+    if (pastedMint) {
+      const items: Item[] = [];
+      if (offer.token && limit.tokens > 0) items.push({ kind: "open", key: `o-${pastedMint}`, mint: pastedMint });
+      if (offer.wallet && limit.wallets > 0) items.push({ kind: "viewWallet", key: `vw-${pastedMint}`, address: pastedMint });
+      if (items.length > 0) out.push({ id: "open", label: "Address", items });
+    }
     if (exact && limit.tokens > 0)
       out.push({ id: "exact", label: "Exact match", items: [{ kind: "exact", key: `x-${exact.mint}`, token: withLive(exact) }] });
     const tokens = data.tokens.filter((t) => t.mint !== exact?.mint).slice(0, limit.tokens);
@@ -217,7 +238,7 @@ export function SearchModal() {
     if (acts.length > 0)
       out.push({ id: "actions", label: "Actions", items: acts.map((action) => ({ kind: "action", key: `a-${action.id}`, action })) });
     return out;
-  }, [q, scope, results, live, recentTokens, recentQueries, actions, pastedMint, searchQ, pending]);
+  }, [q, scope, results, live, recentTokens, recentQueries, actions, pastedMint, searchQ, offer]);
 
   /** Per-scope counts for the scope row (only while searching). */
   const counts = useMemo(() => {
@@ -225,9 +246,14 @@ export function SearchModal() {
     const data = results.data;
     const actionCount = actions.filter((a) => matchAction(a, q)).length;
     const devCount = findDevs(q, live, data.tokens, 20).length;
-    const c = { tokens: data.tokens.length, wallets: data.wallets.length, devs: devCount, actions: actionCount };
+    const c = {
+      tokens: data.tokens.length + (offer.token ? 1 : 0),
+      wallets: data.wallets.length + (offer.wallet ? 1 : 0),
+      devs: devCount,
+      actions: actionCount,
+    };
     return { ...c, all: c.tokens + c.wallets + c.devs + c.actions };
-  }, [q, results, actions, live]);
+  }, [q, results, actions, live, offer]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const current = flat[Math.min(active, flat.length - 1)];
@@ -251,11 +277,15 @@ export function SearchModal() {
     navigate(`/t/${mint}`);
   };
 
-  /** Pasting a contract address or a terminal link opens the token at once, indexed or not (like Axiom). */
+  /**
+   * Pasting a terminal link, or the address of a coin the live set holds, opens the token at once (like Axiom).
+   * Any other bare address may be a wallet as well as a token: it stays in the input, and the list offers both.
+   */
   const onPaste = (e: ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData("text");
     const mint = mintFromText(text);
     if (!mint || tracked.some((w) => w.address === mint)) return; // a tracked wallet: let the search show it
+    if (isBase58Address(text.trim()) && !live[mint]) return;
     e.preventDefault();
     openMint(mint);
   };
@@ -265,6 +295,11 @@ export function SearchModal() {
     switch (item.kind) {
       case "open":
         openMint(item.mint);
+        return;
+      case "viewWallet":
+        remember();
+        close();
+        navigate(`/portfolio?wallet=${encodeURIComponent(item.address)}`);
         return;
       case "exact":
       case "token":
@@ -406,11 +441,27 @@ export function SearchModal() {
             binding={undefined}
             action={{
               id: "open",
-              label: `Open ${shortAddr(item.mint)}`,
+              label: `Open token ${shortAddr(item.mint)}`,
               keywords: "",
               icon: <ArrowRight />,
               hint: "Load from chain",
               run: () => openMint(item.mint),
+            }}
+          />
+        );
+      case "viewWallet":
+        return (
+          <ActionRow
+            key={item.key}
+            {...base}
+            binding={undefined}
+            action={{
+              id: "viewWallet",
+              label: `View wallet ${shortAddr(item.address)}`,
+              keywords: "",
+              icon: <Wallet />,
+              hint: "Holdings and trades",
+              run: () => openItem(item),
             }}
           />
         );
