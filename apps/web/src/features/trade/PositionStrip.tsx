@@ -18,14 +18,15 @@ import { useTickFlash } from "../token/useTickFlash";
  * card with average cost and PnL after Base: https://mobbin.com/screens/5d35e943-618c-402a-a9e8-2d8addd1f612
  */
 
-function Cell({ label, children, aside }: { label: string; children: ReactNode; aside?: ReactNode }) {
+function Cell({ label, children, aside, idle }: { label: string; children: ReactNode; aside?: ReactNode; idle: boolean }) {
   return (
     <div className="flex min-w-0 flex-col justify-center gap-0.5 px-2 first:pl-0">
-      <span className="flex items-center justify-between gap-1 text-micro font-medium text-fg-3">
+      <span className="flex h-3 items-center justify-between gap-1 text-micro font-medium text-fg-3">
         {label}
         {aside}
       </span>
-      <span className="truncate text-data font-medium text-fg-1">{children}</span>
+      {/* No position yet: the zeros read dim, like Axiom's empty strip, instead of competing with real values. */}
+      <span className={cn("truncate text-data font-medium", idle ? "text-fg-3 [&_*]:text-fg-3" : "text-fg-1")}>{children}</span>
     </div>
   );
 }
@@ -85,16 +86,16 @@ export function PositionStrip({ mint, symbol, position }: { mint: string; symbol
         </IconButton>
       </div>
       <div className="grid h-12 grid-cols-4 divide-x divide-hairline">
-        <Cell label="Bought">
+        <Cell label="Bought" idle={!position}>
           <Money sol={bought} kind="exact" />
         </Cell>
-        <Cell label="Sold">
+        <Cell label="Sold" idle={!position}>
           <Money sol={sold} kind="exact" />
         </Cell>
-        <Cell label="Holding">
+        <Cell label="Holding" idle={!position}>
           <Money sol={holding} kind="exact" />
         </Cell>
-        <Cell label="PnL" aside={<span className={cn("zf-num", signClass(bought > 0 ? pnl : null))}>{pct}</span>}>
+        <Cell label="PnL" idle={!position} aside={bought > 0 ? <span className={cn("zf-num", signClass(pnl))}>{pct}</span> : undefined}>
           <span key={flash.key} className={cn("zf-num", signClass(pnlQuote), flash.className)}>
             {fmtMoney(quote, pnlQuote, "signed")}
           </span>

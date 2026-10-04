@@ -3,8 +3,9 @@ import { Button } from "../../components/ui/Button";
 import { MetricLabel } from "../../components/ui/bits";
 import { CopyButton } from "../../components/ui/controls";
 import { Popover } from "../../components/ui/Popover";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { fmtAge, fmtCount, fmtRiskPct, shortAddr } from "../../lib/format";
+import { DASH, fmtAge, fmtCount, fmtRiskPct, shortAddr } from "../../lib/format";
 import { bandsText, METRICS, type MetricKey, type RiskKey, riskTone, TONE_TEXT, token2022Danger } from "../../lib/metrics";
 import type { TokenDetail } from "../../protocol";
 import { useSettings } from "../../state/settings";
@@ -37,7 +38,8 @@ function InfoCell({
           {label}
         </MetricLabel>
       </span>
-      <span className={cn("zf-num truncate text-body font-semibold", tone)}>{value}</span>
+      {/* Unknown reads as a quiet dash, never as a coloured value. */}
+      <span className={cn("zf-num truncate text-body font-semibold", value === DASH ? "text-fg-4" : tone)}>{value}</span>
     </div>
   );
 }
@@ -148,7 +150,7 @@ export function TokenInfo({ detail, header = true }: { detail: TokenDetail; head
         <InfoCell
           metric="lpBurned"
           label="LP burned"
-          value={t.lpBurnedPct === null ? "On curve" : fmtRiskPct(t.lpBurnedPct)}
+          value={t.lpBurnedPct !== null ? fmtRiskPct(t.lpBurnedPct) : t.migratedAt === null ? "On curve" : DASH}
           tone={lpTone}
           bands="Neutral at 100% · Amber below 100% · Red at 0%"
         />
@@ -178,35 +180,43 @@ export function TokenInfo({ detail, header = true }: { detail: TokenDetail; head
           ))}
         </div>
       )}
-      <div className="flex h-8 items-center gap-1 px-3 text-label text-fg-3">
-        <MetricLabel metric="devLaunches">Dev</MetricLabel>
-        <span className="font-mono text-fg-2" title={t.creator}>
-          {shortAddr(t.creator)}
-        </span>
-        <CopyButton text={t.creator} label="Copy dev address" />
-        <span className="truncate">
-          · <span className="zf-num text-fg-2">{fmtCount(detail.devLaunches)}</span> launches ·{" "}
-          <span className="zf-num text-fg-2">{fmtCount(detail.devMigrations)}</span> migrated
-        </span>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="ml-auto"
-          onClick={() =>
-            devTracked
-              ? removeWallet(t.creator)
-              : addWallet({ address: t.creator, name: `Dev ${t.symbol}`.slice(0, 16), emoji: "", alerts: true })
-          }
-        >
-          {devTracked ? "Untrack dev" : "Track dev"}
-        </Button>
-      </div>
-      {t.fundingWallet && (
-        <div className="flex h-6 items-center gap-1 px-3 pb-2 text-label text-fg-3">
-          Funded by <span className="font-mono text-fg-2">{shortAddr(t.fundingWallet)}</span>
-          <CopyButton text={t.fundingWallet} label="Copy funding wallet" />
+      {/* Dev: who launched it, their record, who funded them. Two rows so nothing wraps or truncates at 288 px. */}
+      <div className="px-3 pt-1 pb-2 text-label text-fg-3">
+        <div className="flex h-6 items-center gap-1 whitespace-nowrap">
+          <MetricLabel metric="devLaunches">Dev</MetricLabel>
+          <Tooltip content={<span className="font-mono break-all">{t.creator}</span>}>
+            <span className="font-mono text-fg-2">{shortAddr(t.creator)}</span>
+          </Tooltip>
+          <CopyButton text={t.creator} label="Copy dev address" />
+          <Button
+            variant="ghost"
+            size="xs"
+            className="ml-auto"
+            onClick={() =>
+              devTracked
+                ? removeWallet(t.creator)
+                : addWallet({ address: t.creator, name: `Dev ${t.symbol}`.slice(0, 16), emoji: "", alerts: true })
+            }
+          >
+            {devTracked ? "Untrack dev" : "Track dev"}
+          </Button>
         </div>
-      )}
+        <div className="flex h-5 items-center gap-1 whitespace-nowrap">
+          <span className="zf-num text-fg-2">{fmtCount(detail.devLaunches)}</span>
+          {detail.devLaunches === 1 ? "launch" : "launches"}
+          <span aria-hidden="true">·</span>
+          <span className="zf-num text-fg-2">{fmtCount(detail.devMigrations)}</span> migrated
+          {t.fundingWallet && (
+            <span className="ml-auto flex items-center gap-1">
+              Funded by
+              <Tooltip content={<span className="font-mono break-all">{t.fundingWallet}</span>}>
+                <span className="font-mono text-fg-2">{shortAddr(t.fundingWallet)}</span>
+              </Tooltip>
+              <CopyButton text={t.fundingWallet} label="Copy funding wallet" />
+            </span>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

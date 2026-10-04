@@ -31,6 +31,7 @@ export function ZeroMark({ className }: { className?: string }) {
 }
 
 function Sol({ value, approx }: { value: number | null; approx?: boolean }) {
+  if (value === null) return <span className="zf-num text-fg-4">–</span>;
   return (
     <span className="zf-num">
       {approx && value !== null ? "~" : ""}
@@ -40,10 +41,15 @@ function Sol({ value, approx }: { value: number | null; approx?: boolean }) {
   );
 }
 
-function Fee({ value }: { value: number | null }) {
+/**
+ * A fee line. `computed` fees (venue fee, rent) round to four significant digits like any SOL
+ * amount ("0.003086"); fees the user typed (priority, tip) keep every digit as entered. The exact
+ * lamports are in the tooltip either way.
+ */
+function Fee({ value, computed = false }: { value: number | null; computed?: boolean }) {
   return (
     <span className="zf-num" title={fmtLamports(value)}>
-      {fmtFee(value)}
+      {computed ? fmtSol(value) : fmtFee(value)}
       <span className="zf-unit">{" SOL"}</span>
     </span>
   );
@@ -157,7 +163,7 @@ export function CostBreakdown({
               label={`Venue fee (${venue} ${fmtSolShort(cost.venuePct)}%)`}
               tip={`Charged by ${venue} on every trade. It goes to the launchpad or AMM, not to zerofee.`}
             >
-              <Fee value={cost.venueFeeSol} />
+              <Fee value={cost.venueFeeSol} computed />
             </Line>
           )}
           <Line label="Priority fee" tip="Paid to the validator for ordering, clamped to the live estimate.">
@@ -174,7 +180,7 @@ export function CostBreakdown({
               label="Rent, refundable (first buy only)"
               tip="Opens your token account on the first buy. Refunded when the account closes."
             >
-              <Fee value={cost.rentSol} />
+              <Fee value={cost.rentSol} computed />
             </Line>
           )}
           <Line label="Platform fee" tip="zerofee adds nothing on top: no platform fee, no spread, no referral cut.">
