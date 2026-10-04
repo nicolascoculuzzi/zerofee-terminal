@@ -1,12 +1,13 @@
-import { ArrowRight, Check, Eye, EyeOff } from "lucide-react";
+import { ArrowRight, Check, Eye, EyeOff, Fingerprint, KeyRound, ShieldCheck } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { Segmented } from "../../components/ui/controls";
+import { CopyButton } from "../../components/ui/controls";
 import { cn } from "../../lib/cn";
+import { shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { TradingWallet, UnlockMethod } from "../../services/walletService";
 import { useWallet } from "../../state/wallet";
-import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { InlineError, Panel, PanelRow, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 import { passphraseChecks } from "./password";
 
 const FORM_ID = "zf-create-trading-wallet";
@@ -44,7 +45,6 @@ export function WalletStep({
   const checks = passphraseChecks(passphrase);
   const matches = confirm.length > 0 && confirm === passphrase;
   const valid = method === "passkey" || (existing ? passphrase.length > 0 : checks.every((c) => c.met) && matches);
-  const lockText = autoLockMinutes > 0 ? `after ${autoLockMinutes} minutes without activity` : "only when you lock it";
 
   const create = async (e: FormEvent) => {
     e.preventDefault();
@@ -66,15 +66,19 @@ export function WalletStep({
     return (
       <>
         <StepHeader frame={frame} />
-        <div className="border-y border-hairline py-3">
-          <div className="flex items-center gap-2 text-data font-medium text-fg-1">
-            <Check className="icon-xs" /> {created.label} created
+        <Panel>
+          <div className="flex items-center gap-2 border-b border-hairline px-3 py-2.5 text-data font-medium text-fg-1">
+            <Check className="icon-xs text-buy" /> {created.label} wallet created
           </div>
-          <div className="mt-1 font-mono text-data break-all text-fg-2">{created.address}</div>
-          <div className="mt-1 text-label text-fg-3">
-            Unlocks with your {created.unlockMethod === "passkey" ? "passkey" : "passphrase"} and locks {lockText}.
-          </div>
-        </div>
+          <PanelRow label="Address">
+            <span className="inline-flex items-center gap-1 font-mono text-fg-2">
+              {shortAddr(created.address)}
+              <CopyButton text={created.address} label="Copy trading wallet address" />
+            </span>
+          </PanelRow>
+          <PanelRow label="Unlocks with">{created.unlockMethod === "passkey" ? "Passkey" : "Passphrase"}</PanelRow>
+          <PanelRow label="Auto-lock">{autoLockMinutes > 0 ? `After ${autoLockMinutes} min idle` : "Only when you lock it"}</PanelRow>
+        </Panel>
         <StepActions>
           <Button size="xl" variant="primary" onClick={onNext}>
             Continue to back up <ArrowRight />
@@ -88,18 +92,7 @@ export function WalletStep({
     <>
       <StepHeader frame={frame} />
       <form id={FORM_ID} onSubmit={(e) => void create(e)}>
-        {features.passkey && (
-          <Segmented<UnlockMethod>
-            value={method}
-            onChange={setMethod}
-            label="Unlock method"
-            className="w-full max-md:h-11"
-            options={[
-              { value: "passkey", label: "Passkey (recommended)" },
-              { value: "password", label: "Passphrase" },
-            ]}
-          />
-        )}
+        {features.passkey && !existing && <MethodPicker value={method} onChange={setMethod} />}
 
         {existing ? (
           <div className="space-y-2">
@@ -119,10 +112,7 @@ export function WalletStep({
             />
           </div>
         ) : method === "passkey" ? (
-          <p className="mt-4 text-body text-fg-2">
-            Touch ID, Windows Hello or a security key unlocks the wallet. The key is encrypted with a secret from WebAuthn PRF, so there is
-            nothing to remember or type.{simulated && " Simulated: no system prompt appears."}
-          </p>
+          simulated && <p className="mt-3 text-label text-fg-3">Simulated: no system prompt appears.</p>
         ) : (
           <div className={cn("space-y-3", features.passkey && "mt-4")}>
             <div>
@@ -176,7 +166,10 @@ export function WalletStep({
           </div>
         )}
 
-        <p className="mt-4 text-label text-fg-3">The key is generated and encrypted in this browser. zerofee never receives it.</p>
+        <p className="mt-4 flex gap-2 text-label text-fg-3">
+          <ShieldCheck className="icon-xs mt-px shrink-0" />
+          The key is generated and encrypted in this browser. zerofee never receives it.
+        </p>
         {error && <InlineError>{error}</InlineError>}
 
         <StepActions>
@@ -187,5 +180,60 @@ export function WalletStep({
         </StepActions>
       </form>
     </>
+  );
+}
+
+const METHODS: { value: UnlockMethod; icon: typeof Fingerprint; title: string; tag?: string; body: string }[] = [
+  {
+    value: "passkey",
+    icon: Fingerprint,
+    title: "Passkey",
+    tag: "Recommended",
+    body: "Touch ID, Windows Hello or a security key. Nothing to remember or type.",
+  },
+  { value: "password", icon: KeyRound, title: "Passphrase", body: "A passphrase you type to unlock. 12 characters or more." },
+];
+
+/** Passkey | Passphrase as two radio rows with a one-line consequence each (DESIGN.md 4.19 step 3). */
+function MethodPicker({ value, onChange }: { value: UnlockMethod; onChange: (m: UnlockMethod) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Unlock method" className="grid gap-2">
+      {METHODS.map((m) => {
+        const on = value === m.value;
+        const Icon = m.icon;
+        return (
+          // biome-ignore lint/a11y/useSemanticElements: a radio row with icon, title and description
+          <button
+            key={m.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => onChange(m.value)}
+            className={cn(
+              "flex items-start gap-3 rounded-md border px-3 py-3 text-left transition-colors",
+              on ? "border-fg-3 bg-surface-2" : "border-hairline hover:border-hairline-strong hover:bg-surface-2",
+            )}
+          >
+            <Icon className={cn("icon-md mt-px shrink-0", on ? "text-fg-1" : "text-fg-3")} />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 text-body font-medium text-fg-1">
+                {m.title}
+                {m.tag && <span className="rounded-xs bg-surface-3 px-1 text-micro font-medium text-fg-2">{m.tag}</span>}
+              </span>
+              <span className="mt-0.5 block text-label text-fg-3">{m.body}</span>
+            </span>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
+                on ? "border-accent bg-accent" : "border-hairline-strong",
+              )}
+            >
+              {on && <span className="size-1.5 rounded-full bg-ink" />}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }

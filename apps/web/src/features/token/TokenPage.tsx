@@ -39,6 +39,50 @@ function ChartFallback({ tf }: { tf: string }) {
   );
 }
 
+/** A static 8 px skeleton bar (DESIGN.md 4.18: surface-3, 2 px radius, no shimmer). */
+function Bar({ w, h = "h-2" }: { w: string; h?: string }) {
+  return <span aria-hidden="true" className={`block rounded-xs bg-surface-3 ${h} ${w}`} />;
+}
+
+/**
+ * First paint before the token detail arrives: the page's own frame (48 px header with identity
+ * and stat cells, chart toolbar, right rail) with static bars where values will land, so nothing
+ * jumps when the data comes in.
+ */
+function TokenPageSkeleton() {
+  return (
+    <div className="flex h-full flex-col" aria-busy="true">
+      <div className="flex h-12 shrink-0 items-center border-b border-hairline bg-surface-1 pl-3">
+        <span aria-hidden="true" className="size-7 shrink-0 rounded-sm bg-surface-3" />
+        <div className="ml-2 flex w-40 flex-col gap-2 pr-3">
+          <Bar w="w-24" />
+          <Bar w="w-32" />
+        </div>
+        {["w-14", "w-16", "w-12", "w-12", "w-10", "w-10", "w-10"].map((w, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder cells
+          <div key={i} className="flex h-full flex-col justify-center gap-2 border-l border-hairline px-3">
+            <Bar w="w-8" />
+            <Bar w={w} h={i === 0 ? "h-3" : "h-2"} />
+          </div>
+        ))}
+      </div>
+      <div className="flex min-h-0 flex-1 gap-px bg-hairline">
+        <div className="flex min-w-0 flex-1 flex-col bg-surface-1">
+          <div className="h-8 shrink-0 border-b border-hairline" />
+          <div className="p-2 text-data text-fg-3">Loading token…</div>
+        </div>
+        <div className="hidden w-72 shrink-0 space-y-2 bg-surface-1 p-3 lg:block xl:w-75 2xl:w-80">
+          <span aria-hidden="true" className="block h-7 rounded-sm bg-surface-2" />
+          <span aria-hidden="true" className="block h-7 border-b border-hairline" />
+          <span aria-hidden="true" className="block h-8 rounded-sm bg-surface-2" />
+          <span aria-hidden="true" className="block h-6 rounded-sm bg-surface-2" />
+          <span aria-hidden="true" className="block h-(--zf-btn-xl) rounded-sm bg-surface-3" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Token-page hotkeys (DESIGN.md 6.4). Trade keys need Space held; the shell's dispatcher enforces it. */
 function useTokenHotkeys(mint: string | undefined): void {
   useEffect(() => {
@@ -135,15 +179,21 @@ export default function TokenPage() {
 
   if (!mint || status === "missing") {
     return (
-      <div className="p-3 text-data text-fg-2">
-        This token isn't in the live set: an unknown mint, or pruned by the feed.{" "}
-        <Link to="/pulse" className="text-fg-1 hover:underline">
-          Back to Pulse
-        </Link>
+      <div className="flex h-full items-start justify-center bg-surface-1 px-4 pt-16">
+        <div className="flex max-w-80 flex-col items-center gap-1 text-center">
+          <span className="text-body font-medium text-fg-2">Token not in the live set</span>
+          <span className="text-data text-fg-3">An unknown mint, or one the feed has pruned.</span>
+          <Link
+            to="/pulse"
+            className="mt-2 inline-flex h-6 items-center rounded-sm border border-hairline-strong bg-surface-3 px-2 text-data font-medium text-fg-1 transition-colors hover:bg-surface-3-hover"
+          >
+            Back to Pulse
+          </Link>
+        </div>
       </div>
     );
   }
-  if (!ready) return <div className="p-3 text-data text-fg-3">Loading token…</div>;
+  if (!ready) return tablet ? <TokenPageSkeleton /> : <div className="p-3 text-data text-fg-3">Loading token…</div>;
 
   if (!tablet) return <MobileToken key={mint} detail={ready} />;
 

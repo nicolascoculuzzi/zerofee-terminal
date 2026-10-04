@@ -80,7 +80,7 @@ export const MobileRow = memo(function MobileRow(props: MobileRowProps) {
         </span>
       </Cell>
       <Cell className="flex min-w-0 items-center gap-2">
-        <RiskChips risk={props.risk} colored={props.colored} tips="delegate" className="min-w-0 overflow-x-clip" />
+        <RiskChips risk={props.risk} colored={props.colored} tips="delegate" pending="quiet" className="min-w-0 overflow-x-clip" />
         <span className="ml-auto flex shrink-0">
           <QuickBuyPill mint={view.mint} symbol={view.symbol} sol={props.quickBuySol} preset={props.preset} touch />
         </span>

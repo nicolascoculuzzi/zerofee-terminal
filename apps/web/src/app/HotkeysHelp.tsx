@@ -31,7 +31,9 @@ const MOD = IS_MAC ? "Cmd" : "Ctrl";
 const FIXED: Partial<Record<SheetGroup, FixedShortcut[]>> = {
   Pulse: [{ id: "pulse-search", label: "Search the focused column", keys: [["/"]], liveWith: "pulse.col1" }],
   Tables: [
-    { id: "t-move", label: "Move the cursor", keys: [["↑"], ["↓"], ["Home"], ["End"], ["PgUp"], ["PgDn"]] },
+    { id: "t-move", label: "Move the cursor", keys: [["ArrowUp"], ["ArrowDown"]] },
+    { id: "t-page", label: "Page up / down", keys: [["PgUp"], ["PgDn"]] },
+    { id: "t-ends", label: "First / last row", keys: [["Home"], ["End"]] },
     { id: "t-open", label: "Open the row", keys: [["Enter"]] },
     { id: "t-open-new", label: "Open the row in a new tab", keys: [[MOD, "Enter"]] },
     { id: "t-details", label: "Row details", keys: [["Shift", "Enter"]] },
@@ -154,20 +156,20 @@ export function HotkeysHelp() {
       {groups.length === 0 ? (
         <p className="text-data text-fg-3">No shortcuts match “{query.trim()}”.</p>
       ) : (
-        <div className="gap-x-6 sm:columns-2 lg:columns-3">
+        <div className="gap-x-8 sm:columns-2 lg:columns-3">
           {groups.map(({ group, actions, fixed }) => (
-            <section key={group} className="mb-4 break-inside-avoid">
-              <div className="flex h-6 items-center justify-between gap-2">
+            <section key={group} className="mb-5 break-inside-avoid">
+              <div className="flex h-7 items-center justify-between gap-2">
                 <h3 className="zf-group-label">{group}</h3>
                 {GROUP_NOTE[group] && <span className="text-micro text-fg-3">{GROUP_NOTE[group]}</span>}
               </div>
-              <ul>
+              <ul className="divide-y divide-hairline border-t border-hairline">
                 {actions.map((a) => {
                   const bindings = hotkeys[a.id] ?? [];
                   const dim = !live.has(a.id);
                   return (
-                    <li key={a.id} className="flex min-h-6 items-center justify-between gap-2 py-0.5 text-data">
-                      <span className={cn("min-w-0", dim ? "text-fg-4" : "text-fg-2")}>
+                    <li key={a.id} className="flex min-h-7 items-center justify-between gap-3 py-1 text-data">
+                      <span className={cn("min-w-0 flex-1", dim ? "text-fg-4" : "text-fg-1")}>
                         {a.label}
                         {dim && <span className="sr-only"> (not available here)</span>}
                       </span>
@@ -189,15 +191,14 @@ export function HotkeysHelp() {
                 {fixed.map((f) => {
                   const dim = f.liveWith ? !live.has(f.liveWith) : false;
                   return (
-                    <li key={f.id} className="flex min-h-6 items-center justify-between gap-2 py-0.5 text-data">
-                      <span className={cn("min-w-0", dim ? "text-fg-4" : "text-fg-2")}>
+                    <li key={f.id} className="flex min-h-7 items-center justify-between gap-3 py-1 text-data">
+                      <span className={cn("min-w-0 flex-1", dim ? "text-fg-4" : "text-fg-1")}>
                         {f.label}
                         {dim && <span className="sr-only"> (not available here)</span>}
                       </span>
-                      <span className={cn("flex shrink-0 flex-wrap items-center justify-end gap-1", dim && "opacity-50")}>
-                        {f.keys.map((chord, i) => (
+                      <span className={cn("flex shrink-0 items-center justify-end gap-1", dim && "opacity-50")}>
+                        {f.keys.map((chord) => (
                           <span key={chord.join("+")} className="inline-flex items-center gap-0.5">
-                            {i > 0 && <span className="pr-0.5 text-micro text-fg-3">·</span>}
                             {chord.map((k) => (
                               <KeyCap key={k} k={k} />
                             ))}

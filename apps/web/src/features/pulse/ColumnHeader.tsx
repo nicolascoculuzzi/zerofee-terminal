@@ -70,7 +70,7 @@ export function ColumnHeader(props: ColumnHeaderProps) {
             className="inline-flex h-4 shrink-0 items-center gap-1 rounded-xs bg-surface-3 px-1 text-micro font-medium text-fg-2"
           >
             <Pause className="icon-xs" />
-            {width >= PAUSED_WORD_MIN_W && "Paused"}
+            {width >= PAUSED_WORD_MIN_W && !expanded && "Paused"}
           </span>
         )}
         {props.loadingNote && <span className="truncate text-label text-fg-3">{props.loadingNote}</span>}

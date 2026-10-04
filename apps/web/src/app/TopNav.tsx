@@ -168,7 +168,7 @@ function WalletMenu({ compact }: { compact?: boolean }) {
 
   if (!service.connected || wallets.length === 0) {
     return (
-      <Button variant="primary" size="md" onClick={() => navigate("/onboarding")}>
+      <Button variant="primary" size="sm" onClick={() => navigate("/onboarding")}>
         Connect wallet
       </Button>
     );
@@ -187,7 +187,8 @@ function WalletMenu({ compact }: { compact?: boolean }) {
         onClick={() => setOpen((o) => !o)}
         className={cn(
           "flex shrink-0 items-center gap-2 rounded-sm border px-2 text-data whitespace-nowrap transition-colors hover:bg-surface-3",
-          compact ? "h-11 border-transparent" : "h-control border-hairline-strong bg-surface-2",
+          open && "bg-surface-3",
+          compact ? "h-11 border-transparent" : "h-control border-hairline-strong bg-surface-2 hover:border-fg-4",
         )}
         aria-label="Trading wallet"
         aria-expanded={open}
@@ -276,7 +277,7 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
       className={({ isActive }) =>
         cn(
           "flex h-6 items-center gap-1.5 rounded-sm px-2 text-data font-medium transition-colors",
-          isActive ? "bg-surface-3 text-fg-1" : "text-fg-3 hover:text-fg-1",
+          isActive ? "bg-surface-3 text-fg-1" : "text-fg-3 hover:bg-surface-2 hover:text-fg-1",
         )
       }
     >
@@ -356,6 +357,8 @@ export function TopNav() {
   const searchBinding = useSettings((s) => s.hotkeys["search.open"][0]);
   const settingsKey = useSettings((s) => compactLabel(s.hotkeys["settings.open"]?.[0]));
   const armed = useOrders((s) => Object.values(s.byId).filter(isOpenOrder).length);
+  // Fund needs a trading wallet; before onboarding the bar shows only "Connect wallet".
+  const canFund = useWallet((s) => s.service.connected !== null && s.service.tradingWallets.some((w) => !w.archived));
 
   return (
     <>
@@ -382,9 +385,10 @@ export function TopNav() {
         <button
           type="button"
           onClick={() => openSearch(true)}
-          className="ml-2 flex h-control w-80 max-w-80 min-w-50 shrink items-center gap-2 rounded-sm border border-hairline-strong bg-surface-2 px-2 text-data text-fg-4 transition-colors hover:border-fg-3"
+          aria-label="Search token, CA or wallet"
+          className="group ml-2 flex h-control w-80 max-w-80 min-w-50 shrink items-center gap-2 rounded-sm border border-hairline-strong bg-surface-2 px-2 text-data text-fg-4 transition-colors hover:border-fg-4 hover:text-fg-3"
         >
-          <Search className="icon-sm text-fg-3" />
+          <Search className="icon-sm text-fg-3 transition-colors group-hover:text-fg-2" />
           <span className="truncate">Search token, CA or wallet</span>
           <span className="ml-auto">
             <Hotkey binding={searchBinding} />
@@ -403,8 +407,8 @@ export function TopNav() {
           </div>
           <WalletMenu />
           {/* Between 768 and 1280px Fund lives in the wallet menu, so the bar never overflows. */}
-          <div className="hidden xl:block">
-            <Button variant="secondary" size="md" onClick={() => openFund("fund")}>
+          <div className={cn("hidden", canFund && "xl:block")}>
+            <Button variant="secondary" size="sm" onClick={() => openFund("fund")}>
               Fund
             </Button>
           </div>

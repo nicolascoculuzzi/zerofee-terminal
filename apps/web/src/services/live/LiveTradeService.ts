@@ -5,8 +5,10 @@
  *      balance from `wallet:<address>` and the `chain` topic (blockhash, priority fees, kill switch);
  *   2. build in this browser with @zerofee/core: TokenState (tradeState.ts) -> buildTrade with the preset's
  *      slippage -> compute budget and tips for the landing preset (landingFees.ts) -> assembleTransaction.
- *      Coins with no local venue (or not quoted in SOL) go through core's Jupiter fallback: `/build` from
- *      the browser, and the route's lookup tables checked against a chain read (GET /api/lookup-tables);
+ *      pump.fun, PumpSwap, Raydium LaunchLab and Raydium CPMM coins quoted in SOL build locally; coins with
+ *      no local venue (other quotes, or a context still missing an account) go through core's Jupiter
+ *      fallback: `/build` from the browser, and the route's lookup tables checked against a chain read
+ *      (GET /api/lookup-tables);
  *   3. sign: instant mode in the signer worker, whose firewall gets the browser's own quote as
  *      expectations (and the lookup tables); direct mode with the connected wallet (its popup);
  *   4. POST /api/tx with the signed bytes and the preset. DRY_RUN=true (the server default) simulates and
@@ -63,7 +65,7 @@ import { walletErrorMessage } from "./LiveWalletService";
 import { BASE_FEE_LAMPORTS, type LandingPlan, planLanding } from "./landingFees";
 import { ProgramAccounts } from "./programs";
 import { TradeContexts } from "./tradeContexts";
-import { isSolQuoted, jupiterStateFor, TradeStateError, tokenStateFromContext, venueFeeBps } from "./tradeState";
+import { hasLocalBuilder, jupiterStateFor, NoLocalBuildError, TradeStateError, tokenStateFromContext, venueFeeBps } from "./tradeState";
 import { recentBlockhash, simulationError, submitSigned, TransferError } from "./transfers";
 import type { ConnectedSession } from "./walletStandard";
 
@@ -225,7 +227,9 @@ export class LiveTradeService implements TradeService {
       rest: d.rest,
       touch: () => d.wallet.touch(),
     });
-    // The venue fee the token page shows comes from the same program accounts the builds use.
+    // The venue fee the token page shows comes from the same inputs the builds use: Raydium contexts carry
+    // their own rates; pump.fun and PumpSwap need the program accounts.
+    d.data.setFeeEngine((ctx) => venueFeeBps(ctx, null));
     this.programs.onChange((p) => d.data.setFeeEngine((ctx) => venueFeeBps(ctx, p)));
     void this.programs.get().catch(() => undefined);
   }
@@ -384,11 +388,20 @@ export class LiveTradeService implements TradeService {
     const { ctx, token } = await this.contexts.get(req.mint);
     const held = this.d.data.wallet(user)?.balanceOf(req.mint) ?? null;
     const u = { user, balance: held ? { amount: held.amount, account: held.account } : null };
-    let state: TokenState;
-    if (ctx && isSolQuoted(ctx)) {
-      state = await tokenStateFromContext(ctx, await this.programs.get(), u);
-    } else {
-      const reason = ctx ? "quoted in a token other than SOL" : "no pump.fun curve or PumpSwap pool the server can price";
+    let state: TokenState | null = null;
+    let reason = ctx ? "quoted in a token other than SOL" : "no pump.fun, PumpSwap or Raydium venue the server can price";
+    if (ctx && hasLocalBuilder(ctx)) {
+      // Raydium contexts carry their own configs; only pump.fun and PumpSwap wait for the program accounts.
+      const programs = ctx.venue === "pump" || ctx.venue === "pumpswap" ? await this.programs.get() : null;
+      try {
+        state = await tokenStateFromContext(ctx, programs, u, { slot: this.d.data.chain()?.slot ?? null, nowMs: this.now() });
+      } catch (e) {
+        // An account the local build needs is still missing (or the coin left the venue): Jupiter routes it.
+        if (!(e instanceof NoLocalBuildError)) throw e;
+        reason = e.message;
+      }
+    }
+    if (!state) {
       state = await jupiterStateFor(
         {
           mint: req.mint,

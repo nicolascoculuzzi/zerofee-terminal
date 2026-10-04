@@ -30,6 +30,15 @@ export function ch(n: number): string {
   return `calc(${n}ch + 16px)`;
 }
 
+/**
+ * A fixed column that may widen from `min` to `max` characters when the panel has room, so a wide
+ * tape spreads its numbers instead of bunching them at the left edge. Header and rows share the
+ * template, so columns still line up and never move with the data.
+ */
+export function fit(min: number, max: number): string {
+  return `minmax(calc(${min}ch + 16px), calc(${max}ch + 16px))`;
+}
+
 /** The one flexible label column, with a minimum width in characters. */
 export function flex(minCh: number): string {
   return `minmax(calc(${minCh}ch + 16px), 1fr)`;

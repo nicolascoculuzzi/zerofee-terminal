@@ -109,7 +109,19 @@ export function PreviewPane({ token }: { token: TokenSummary | null }) {
 
   // Live values for the token already shown.
   const t = shown && token && shown.mint === token.mint ? token : shown;
-  if (!t) return <div className="w-60 shrink-0 border-l border-hairline" />;
+  if (!t)
+    return (
+      <div className="flex w-60 shrink-0 items-center justify-center border-l border-hairline px-6 text-center text-label text-fg-3">
+        Select a token to preview its last hour, metrics and risk.
+      </div>
+    );
+
+  // Only the dev facts we know; nothing renders as "– migrated".
+  const devFacts = [
+    dev && Number.isFinite(dev.launches) ? `${fmtCount(dev.launches)} earlier launches` : null,
+    dev && Number.isFinite(dev.migrations) ? `${fmtCount(dev.migrations)} migrated` : null,
+    t.risk.devSold ? "sold out" : t.risk.devPct !== null ? `holds ${fmtRiskPct(t.risk.devPct)}` : null,
+  ].filter((f): f is string => f !== null);
 
   const first = candles[0]?.open ?? null;
   const lastClose = candles[candles.length - 1]?.close ?? null;
@@ -137,68 +149,73 @@ export function PreviewPane({ token }: { token: TokenSummary | null }) {
         <Sparkline candles={candles} />
       </div>
 
+      {/* Unknown metrics are left out rather than shown as a grid of dashes (Axiom omits nulls). */}
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
         {(
           [
-            ["marketCap", <QuoteValue key="mc" usd={t.marketCapUsd} sol={t.marketCapSol} strong />],
-            ["liquidity", <QuoteValue key="liq" usd={t.liquidityUsd} sol={null} />],
-            ["volume", <QuoteValue key="vol" usd={t.volumeUsd} sol={null} />],
+            ["marketCap", t.marketCapUsd ?? t.marketCapSol, <QuoteValue key="mc" usd={t.marketCapUsd} sol={t.marketCapSol} strong />],
+            ["liquidity", t.liquidityUsd, <QuoteValue key="liq" usd={t.liquidityUsd} sol={null} />],
+            ["volume", t.volumeUsd, <QuoteValue key="vol" usd={t.volumeUsd} sol={null} />],
             [
               "holders",
+              t.holders,
               <span key="h" className="zf-num text-data text-fg-2">
                 {fmtCount(t.holders)}
               </span>,
             ],
           ] as const
-        ).map(([metric, value]) => (
-          <div key={metric} className="min-w-0">
-            <dt className="text-label text-fg-3">
-              <MetricLabel metric={metric} />
-            </dt>
-            <dd className="truncate">{value}</dd>
-          </div>
-        ))}
+        )
+          .filter(([, known]) => known !== null && known !== undefined)
+          .map(([metric, , value]) => (
+            <div key={metric} className="min-w-0">
+              <dt className="text-label text-fg-3">
+                <MetricLabel metric={metric} />
+              </dt>
+              <dd className="truncate">{value}</dd>
+            </div>
+          ))}
       </dl>
 
-      <div className="mt-3 flex flex-wrap gap-1">
-        {RISK_KEYS.map((k) => {
-          const v = riskValue(t, k);
-          const ds = k === "dev" && t.risk.devSold;
-          const tone = ds ? "neutral" : metricColors ? riskTone(k, v, thresholds) : "neutral";
-          return (
-            <Tooltip key={k} content={<MetricTip metric={k} value={ds ? "DS" : fmtRiskPct(v)} bands={bandsText(k, thresholds)} />}>
-              <span
-                className={cn("inline-flex h-4 min-w-10 items-center justify-between gap-0.5 rounded-xs border px-[3px]", TONE_CHIP[tone])}
-              >
-                <span className="sr-only">
-                  {METRICS[k].label}{" "}
-                  {ds
-                    ? "dev sold everything"
-                    : `${fmtRiskPct(v)}, ${tone === "good" ? "low" : tone === "warn" ? "mid" : tone === "bad" ? "high" : ""} risk`}
+      {RISK_KEYS.some((k) => riskValue(t, k) !== null) && (
+        <div className="mt-3 grid grid-cols-5 gap-1">
+          {RISK_KEYS.map((k) => {
+            const v = riskValue(t, k);
+            const ds = k === "dev" && t.risk.devSold;
+            const tone = ds ? "neutral" : metricColors ? riskTone(k, v, thresholds) : "neutral";
+            return (
+              <Tooltip key={k} content={<MetricTip metric={k} value={ds ? "DS" : fmtRiskPct(v)} bands={bandsText(k, thresholds)} />}>
+                <span
+                  className={cn("flex h-4 min-w-0 flex-1 items-center justify-between gap-0.5 rounded-xs border px-[3px]", TONE_CHIP[tone])}
+                >
+                  <span className="sr-only">
+                    {METRICS[k].label}{" "}
+                    {ds
+                      ? "dev sold everything"
+                      : `${fmtRiskPct(v)}, ${tone === "good" ? "low" : tone === "warn" ? "mid" : tone === "bad" ? "high" : ""} risk`}
+                  </span>
+                  <span aria-hidden="true" className="text-micro font-medium text-fg-3">
+                    {RISK_LETTER[k]}
+                  </span>
+                  <span aria-hidden="true" className="zf-num text-label font-medium">
+                    {ds ? "DS" : fmtRiskPct(v)}
+                  </span>
                 </span>
-                <span aria-hidden="true" className="text-micro font-medium text-fg-3">
-                  {RISK_LETTER[k]}
-                </span>
-                <span aria-hidden="true" className="zf-num text-label font-medium">
-                  {ds ? "DS" : fmtRiskPct(v)}
-                </span>
-              </span>
-            </Tooltip>
-          );
-        })}
-      </div>
+              </Tooltip>
+            );
+          })}
+        </div>
+      )}
 
-      <div className="mt-3 text-label">
-        <div className="text-fg-3">Dev</div>
-        <div className="flex items-center gap-1 font-mono text-fg-2">
-          {shortAddr(t.creator)}
-          <CopyButton text={t.creator} label="Copy dev address" />
+      {t.creator && (
+        <div className="mt-3 text-label">
+          <div className="text-fg-3">Dev</div>
+          <div className="flex items-center gap-1 font-mono text-fg-2">
+            {shortAddr(t.creator)}
+            <CopyButton text={t.creator} label="Copy dev address" />
+          </div>
+          {devFacts.length > 0 && <div className="text-fg-3">{devFacts.join(" · ")}</div>}
         </div>
-        <div className="text-fg-3">
-          {dev && `${fmtCount(dev.launches)} earlier launches · ${fmtCount(dev.migrations)} migrated · `}
-          {t.risk.devSold ? "sold out" : `holds ${fmtRiskPct(t.risk.devPct)}`}
-        </div>
-      </div>
+      )}
     </aside>
   );
 }

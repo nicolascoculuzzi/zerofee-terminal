@@ -287,12 +287,13 @@ export function CustomizeFeed({ query, toolbarStart }: { query: string; toolbarS
         empty={
           handles.length === 0 ? (
             <EmptyState
+              className="text-balance"
               icon={<AtSign />}
               title="No handles yet"
               body="Add a handle above or import a list. Untracked accounts still show under All posts."
             />
           ) : (
-            <EmptyState title={`No handles match “${query.trim()}”`} body="Search by handle." />
+            <EmptyState className="text-balance" title={`No handles match “${query.trim()}”`} body="Search by handle." />
           )
         }
         onCopy={copy}

@@ -292,7 +292,8 @@ function TradeGrid({ token, touch }: { token: TokenSummary; touch: boolean }) {
               data-grid="1"
               variant="sell-tint"
               size="md"
-              className={cn(h, "text-data font-semibold")}
+              // The window sits on surface-2, where the shared disabled fill vanishes: keep a hairline outline.
+              className={cn(h, "text-data font-semibold disabled:border-hairline! disabled:bg-transparent!")}
               disabled={holding <= 0}
               icon={locked ? <Lock /> : undefined}
               aria-label={sellMode === "pct" ? `Sell ${v}% of ${token.symbol}` : `Sell ${fmtSolShort(v)} SOL of ${token.symbol}`}
@@ -314,12 +315,12 @@ function TradeGrid({ token, touch }: { token: TokenSummary; touch: boolean }) {
             data-grid="2"
             variant="secondary"
             size="xs"
-            className={cn("min-w-0 flex-1", touch && "h-11")}
+            className={cn("min-w-0 flex-1 disabled:border-hairline! disabled:bg-transparent!", touch && "h-11")}
             disabled={holding <= 0 || remaining <= 0}
             title={keys["sell.initials"]?.[0] ? `Sell initials (${compactLabel(keys["sell.initials"][0])})` : "Sell initials"}
             onClick={() => void sellInitials(token.mint, "instant")}
           >
-            <span className="truncate">Sell initials · {fmtSol(Math.max(0, remaining))} SOL</span>
+            <span className="truncate">{remaining > 0 ? `Sell initials · ${fmtSol(remaining)} SOL` : "Sell initials"}</span>
           </Button>
           {position && position.boughtSol > 0 && (
             <span className={cn("zf-num shrink-0 text-label", signClass(pnl))}>

@@ -1,25 +1,25 @@
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, ChevronRight, Lock } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
 import { WalletBadge, WalletIcon } from "../../components/ui/WalletIcon";
+import { WALLET_BRANDS } from "../../components/ui/walletLogos";
 import { cn } from "../../lib/cn";
+import { shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { ConnectedWallet, ProviderInfo, WalletProvider } from "../../services/walletService";
 import { Tag } from "../settings/ui";
-import { InlineError, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { InlineError, Panel, PanelRow, PROVIDER_NAME, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
 const PROVIDERS: WalletProvider[] = ["phantom", "solflare", "backpack"];
 
 /*
- * Connect wallet (DESIGN.md 4.19 step 1): 44 px rows with the wallet's icon, its name at 13/500
- * and a "Detected" tag; the row being connected shows a spinner on its right.
- * Wallet rows with a spinner after Uniswap; badges after Tally:
- * https://mobbin.com/flows/9aaa402b-0d7a-4960-8261-57602073bb6c
- * https://mobbin.com/flows/7791b9e6-611e-4cb0-ae5c-b767bd662931
- * Real wallets supply their official icon through Wallet Standard (`wallet.icon`, a data: URI), shown
- * with the name the wallet registered; installed wallets are listed first. The simulation has no
- * extensions, so each row shows a neutral 24 px letter square instead of a brand logo.
+ * Connect wallet (DESIGN.md 4.19 step 1). A grouped list like OpenSea's and Axiom's connect modals
+ * (https://mobbin.com/screens/642f1d7c-e592-45ef-9dc9-85a0dcc2cbdc): 56 px rows with the wallet's real
+ * logo at 32 px, its name at 13/500 and one status line; installed wallets first with a "Detected" tag,
+ * the row being connected shows a spinner. A wallet that is not installed links to its official site in
+ * a new tab instead. Installed wallets supply their logo through Wallet Standard (`wallet.icon`); the
+ * rest use the official logos bundled in public/wallets/ (components/ui/walletLogos.ts).
  */
 export function ConnectStep({
   frame,
@@ -64,61 +64,94 @@ export function ConnectStep({
   return (
     <>
       <StepHeader frame={frame} />
-      <ul className="divide-y divide-hairline border-y border-hairline">
-        {rows.map((p) => {
-          const id = p.provider;
-          const name = p.name;
-          const installed = p.installed;
-          const isConnected = connected?.provider === id;
-          return (
-            <li key={id}>
-              <button
-                type="button"
-                disabled={busy || !installed}
-                onClick={() => void connect(id)}
-                className={cn(
-                  "focus-inset flex h-11 w-full items-center gap-3 px-2 text-left transition-colors enabled:hover:bg-surface-2 disabled:cursor-not-allowed",
-                  busy && "disabled:cursor-wait",
-                  isConnected && "bg-surface-2",
-                )}
-              >
-                <WalletIcon icon={p.icon} name={name} className={cn(!installed && "opacity-60")} />
-                <span className={cn("min-w-0 flex-1 truncate text-body font-medium", installed ? "text-fg-1" : "text-fg-3")}>{name}</span>
-                {pending === id ? (
-                  <span className="flex items-center gap-1 text-label text-fg-2">
-                    <Spinner /> Connecting
+      <Panel>
+        <ul className="divide-y divide-hairline">
+          {rows.map((p) => {
+            const id = p.provider;
+            const brand = WALLET_BRANDS[id];
+            const isConnected = connected?.provider === id;
+            const logo = <WalletIcon icon={p.icon} name={p.name} provider={id} size="lg" />;
+            if (!p.installed) {
+              return (
+                <li key={id} className="flex h-14 items-center gap-3 px-3">
+                  {logo}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-body font-medium text-fg-2">{p.name}</span>
+                    <span className="block truncate text-label text-fg-3">Not installed</span>
                   </span>
-                ) : isConnected ? (
-                  <span className="flex items-center gap-1 text-label text-fg-1">
-                    <Check className="icon-xs" /> Connected
+                  <a
+                    href={brand.site}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Install ${p.name} from ${brand.host} (opens in a new tab)`}
+                    className="inline-flex h-7 items-center gap-1 rounded-sm border border-hairline-strong px-2.5 text-data font-medium text-fg-1 transition-colors hover:bg-surface-3"
+                  >
+                    Install <ArrowUpRight className="icon-xs text-fg-3" />
+                  </a>
+                </li>
+              );
+            }
+            return (
+              <li key={id}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void connect(id)}
+                  className={cn(
+                    "group focus-inset flex h-14 w-full items-center gap-3 px-3 text-left transition-colors enabled:hover:bg-surface-2 disabled:cursor-wait",
+                    isConnected && "bg-surface-2",
+                  )}
+                >
+                  {logo}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-body font-medium text-fg-1">{p.name}</span>
+                    <span className="block truncate text-label text-fg-3">
+                      {isConnected && connected ? shortAddr(connected.address) : "Browser extension"}
+                    </span>
                   </span>
-                ) : installed ? (
-                  <Tag>Detected</Tag>
-                ) : (
-                  <span className="text-label text-fg-3">Not installed</span>
-                )}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+                  {pending === id ? (
+                    <span className="flex items-center gap-1.5 text-label text-fg-2">
+                      <Spinner /> Approve in {p.name}
+                    </span>
+                  ) : isConnected ? (
+                    <span className="flex items-center gap-1 text-label text-fg-1">
+                      <Check className="icon-xs text-buy" /> Connected
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <Tag>Detected</Tag>
+                      <ChevronRight className="icon-sm text-fg-4 transition-colors group-hover:text-fg-2" />
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </Panel>
       {error && <InlineError>{error}</InlineError>}
 
       {connected && (
-        <div className="mt-4">
-          <div className="zf-label flex items-center gap-1">
-            Connected address · <WalletBadge wallet={connected} className="normal-case" />
-          </div>
-          <div className="mt-1 flex items-start gap-1 font-mono text-data break-all text-fg-2">
-            {connected.address}
-            <CopyButton text={connected.address} label="Copy connected address" />
-          </div>
-        </div>
+        <Panel className="mt-4">
+          <PanelRow label="Connected with">
+            <WalletBadge wallet={connected} className="justify-end" />
+          </PanelRow>
+          <PanelRow label="Address">
+            <span className="inline-flex items-center gap-1 font-mono text-fg-2">
+              {shortAddr(connected.address)}
+              <CopyButton text={connected.address} label="Copy connected address" />
+            </span>
+          </PanelRow>
+        </Panel>
       )}
 
-      <p className="mt-4 text-label text-fg-3">
-        zerofee finds installed wallets through Wallet Standard and only ever sees the public address.
-        {simulated && " Simulated: no extension is needed, and connecting creates a demo address."}
+      <p className="mt-4 flex gap-2 text-label text-fg-3">
+        <Lock className="icon-xs mt-px shrink-0" />
+        <span>
+          zerofee only sees your public address. Connecting never moves funds.
+          {!simulated && !rows.some((r) => r.installed) && " After you install a wallet, it appears here on its own."}
+          {simulated && " Simulated: no extension is needed; connecting creates a demo address."}
+        </span>
       </p>
 
       {connected && (

@@ -10,6 +10,7 @@ import { cn } from "../../lib/cn";
 import { DASH, fmtCount, fmtPct, fmtRiskPct, fmtSignedSol, fmtSol, fmtTokens, shortAddr } from "../../lib/format";
 import { bandsText, type RiskKey, riskTone, TONE_TEXT } from "../../lib/metrics";
 import type { Holder, TokenSummary, TopTrader, WalletTag } from "../../protocol";
+import { getServices } from "../../services";
 import { useSettings } from "../../state/settings";
 import { type TrackedWallet, useTrackedMap, useTrackers } from "../../state/trackers";
 import { Money, quoteUnit, useQuote } from "./money";
@@ -105,20 +106,23 @@ function Unknown({ tip }: { tip: string }) {
 
 type HolderKey = "rank" | "wallet" | "pct" | "tokens" | "value" | "entry" | "realized" | "unrealized" | "funded" | "actions";
 
-function holderCols(quote: "USD" | "SOL"): Col<HolderKey>[] {
+/** Sortable headers reserve 2ch for the sort arrow, so labels never truncate. */
+function holderCols(quote: "USD" | "SOL", funded: boolean): Col<HolderKey>[] {
   const u = quoteUnit(quote);
-  return [
+  const cols: Col<HolderKey>[] = [
     { key: "rank", label: "#", width: ch(3), align: "right" },
-    { key: "wallet", label: "Wallet", width: flex(16) },
-    { key: "pct", label: "% supply", width: ch(12), align: "right", sortable: true },
-    { key: "tokens", label: "Tokens", width: ch(8), align: "right", sortable: true },
-    { key: "value", label: `Value ${u}`, width: ch(8), align: "right", sortable: true },
-    { key: "entry", label: `Avg entry MC`, width: ch(8), align: "right", title: "Average entry as market cap" },
-    { key: "realized", label: "Realized", width: ch(9), align: "right", sortable: true },
-    { key: "unrealized", label: "Unrealized", width: ch(9), align: "right", sortable: true },
+    { key: "wallet", label: "Wallet", width: flex(18) },
+    { key: "pct", label: "% supply", width: ch(13), align: "right", sortable: true },
+    { key: "tokens", label: "Tokens", width: ch(9), align: "right", sortable: true },
+    { key: "value", label: `Value ${u}`, width: ch(11), align: "right", sortable: true },
+    { key: "entry", label: "Avg entry MC", width: ch(11), align: "right", title: "Average entry as market cap" },
+    { key: "realized", label: "Realized", width: ch(11), align: "right", sortable: true },
+    { key: "unrealized", label: "Unrealized", width: ch(12), align: "right", sortable: true },
     { key: "funded", label: "Funded by", width: ch(12) },
     { key: "actions", label: "", width: ch(6), align: "right" },
   ];
+  // No funding data on any row: drop the column rather than show a column of dashes.
+  return funded ? cols : cols.filter((c) => c.key !== "funded");
 }
 
 interface HolderView {
@@ -159,7 +163,8 @@ function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked:
   const why = `No buys on record (tokens arrived by transfer), so there's no cost basis. Net flow ${fmtSignedSol(v.totalPnlSol)} SOL.`;
   switch (key) {
     case "rank":
-      return <span className="zf-num text-fg-3">{v.system ? DASH : v.rank}</span>;
+      // Curve and pool rows aren't holders in the ranking: no rank, no cost basis (blank, not "–").
+      return v.system ? null : <span className="zf-num text-fg-3">{v.rank}</span>;
     case "wallet":
       return <WalletCell address={h.address} tags={h.tags} tracked={tracked} />;
     case "pct":
@@ -177,34 +182,16 @@ function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked:
       return <Money sol={v.valueSol} />;
     case "entry":
       return v.avgPriceSol === null ? (
-        v.system ? (
-          <span className="text-fg-4">{DASH}</span>
-        ) : (
+        v.system ? null : (
           <Unknown tip={why} />
         )
       ) : (
         <Money sol={v.avgPriceSol * token.supply} className="text-fg-2" />
       );
     case "realized":
-      return v.realizedSol === null ? (
-        v.system ? (
-          <span className="text-fg-4">{DASH}</span>
-        ) : (
-          <Unknown tip={why} />
-        )
-      ) : (
-        <Money sol={v.realizedSol} kind="signed" />
-      );
+      return v.realizedSol === null ? v.system ? null : <Unknown tip={why} /> : <Money sol={v.realizedSol} kind="signed" />;
     case "unrealized":
-      return v.unrealizedSol === null ? (
-        v.system ? (
-          <span className="text-fg-4">{DASH}</span>
-        ) : (
-          <Unknown tip={why} />
-        )
-      ) : (
-        <Money sol={v.unrealizedSol} kind="signed" />
-      );
+      return v.unrealizedSol === null ? v.system ? null : <Unknown tip={why} /> : <Money sol={v.unrealizedSol} kind="signed" />;
     case "funded":
       return h.fundedBy ? (
         h.fundedBy === token.creator ? (
@@ -216,9 +203,7 @@ function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked:
         ) : (
           <span className="truncate font-mono text-fg-2">{shortAddr(h.fundedBy)}</span>
         )
-      ) : (
-        <span className="text-fg-4">{DASH}</span>
-      );
+      ) : null;
     case "actions":
       return v.system ? null : (
         <span className="flex items-center">
@@ -260,7 +245,8 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
   const [filter, setFilter] = useState<HolderFilter>("all");
   const [sort, setSort] = useState<SortState<HolderKey> | null>(null);
   const pause = usePauseOnHover();
-  const cols = useMemo(() => holderCols(quote), [quote]);
+  const funded = holders.some((h) => !!h.fundedBy);
+  const cols = useMemo(() => holderCols(quote, funded), [quote, funded]);
   const r = token.risk;
 
   const views = useMemo(() => {
@@ -299,7 +285,7 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
         <SummaryValue k="bundlers" pct={r.bundlersPct} label="Bundlers" />
         <Segmented<HolderFilter>
           size="xs"
-          className="ml-auto shrink-0"
+          className={cn("ml-auto shrink-0", holders.length === 0 && "invisible")}
           value={filter}
           onChange={setFilter}
           options={[
@@ -317,7 +303,7 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
         <div className="h-full overflow-auto" onScroll={pause.onScroll} {...pause.bind}>
           <DataTable
             label="Holders"
-            minWidth={860}
+            minWidth={900}
             cols={cols}
             rows={rows}
             rowKey={(v) => v.h.address}
@@ -326,12 +312,15 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
             sort={sort}
             onSort={(k) => setSort((s) => nextSort(s, k))}
           />
-          {rows.length === 0 && (
-            <EmptyState
-              title={holders.length === 0 ? "No holders yet" : "No holders match this filter"}
-              body={holders.length === 0 ? "Holders appear with the first buys." : "Pick All to see every holder."}
-            />
-          )}
+          {rows.length === 0 &&
+            (!getServices().features.holders ? (
+              <EmptyState title="Holder list not available" body="The live feed publishes the holder counts above, not the wallet list." />
+            ) : (
+              <EmptyState
+                title={holders.length === 0 ? "No holders yet" : "No holders match this filter"}
+                body={holders.length === 0 ? "Holders appear with the first buys." : "Pick All to see every holder."}
+              />
+            ))}
         </div>
       </div>
     </div>
@@ -346,14 +335,14 @@ type TraderKey = "rank" | "wallet" | "bought" | "sold" | "realized" | "unrealize
 
 const TRADER_COLS: Col<TraderKey>[] = [
   { key: "rank", label: "#", width: ch(3), align: "right" },
-  { key: "wallet", label: "Wallet", width: flex(16) },
-  { key: "bought", label: "Bought SOL", width: ch(9), align: "right", sortable: true },
-  { key: "sold", label: "Sold SOL", width: ch(9), align: "right", sortable: true },
-  { key: "realized", label: "Realized PnL", width: ch(10), align: "right", sortable: true },
-  { key: "unrealized", label: "Unrealized", width: ch(9), align: "right", sortable: true },
-  { key: "remaining", label: "Remaining", width: ch(8), align: "right", title: "Balance still held, % of supply" },
-  { key: "held", label: "Held for", width: ch(6), align: "right" },
-  { key: "last", label: "Last tx", width: ch(6), align: "right" },
+  { key: "wallet", label: "Wallet", width: flex(18) },
+  { key: "bought", label: "Bought SOL", width: ch(12), align: "right", sortable: true },
+  { key: "sold", label: "Sold SOL", width: ch(11), align: "right", sortable: true },
+  { key: "realized", label: "Realized PnL", width: ch(13), align: "right", sortable: true },
+  { key: "unrealized", label: "Unrealized", width: ch(12), align: "right", sortable: true },
+  { key: "remaining", label: "Remaining", width: ch(9), align: "right", title: "Balance still held, % of supply" },
+  { key: "held", label: "Held for", width: ch(8), align: "right" },
+  { key: "last", label: "Last tx", width: ch(7), align: "right" },
 ];
 
 interface TraderView {
@@ -408,7 +397,7 @@ export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
         return v.t.soldSol > 0 ? (
           <span className="zf-num text-sell">{fmtSol(v.t.soldSol)}</span>
         ) : (
-          <span className="text-fg-4">{DASH}</span>
+          <span className="zf-num text-fg-4">0</span>
         );
       case "realized":
         return v.realizedSol === null ? <Unknown tip={why} /> : <Money sol={v.realizedSol} kind="signed" />;
@@ -421,7 +410,8 @@ export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
           <span className="text-fg-3">Exited</span>
         );
       case "held":
-        return v.firstBuyAt ? <Age ts={v.firstBuyAt} className="text-fg-2" /> : <span className="text-fg-4">{DASH}</span>;
+        // Exited wallets hold nothing, so "held for" doesn't apply (Remaining already says Exited).
+        return v.firstBuyAt ? <Age ts={v.firstBuyAt} className="text-fg-2" /> : null;
       case "last":
         return v.lastTx ? <Age ts={v.lastTx} /> : <span className="text-fg-4">{DASH}</span>;
     }
@@ -433,7 +423,7 @@ export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
       <div className="h-full overflow-auto" onScroll={pause.onScroll} {...pause.bind}>
         <DataTable
           label="Top traders"
-          minWidth={780}
+          minWidth={820}
           cols={TRADER_COLS}
           rows={rows}
           rowKey={(v) => v.t.address}
@@ -442,7 +432,15 @@ export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
           sort={sort}
           onSort={(k) => setSort((s) => nextSort(s, k))}
         />
-        {rows.length === 0 && <EmptyState title="No traders yet" body="Wallets show up here after their first trade." />}
+        {rows.length === 0 &&
+          (getServices().features.holders ? (
+            <EmptyState title="No traders yet" body="Wallets show up here after their first trade." />
+          ) : (
+            <EmptyState
+              title="Top traders not available"
+              body="The live feed doesn't publish per-wallet PnL yet. Click a trader in Trades to see their fills."
+            />
+          ))}
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
-import { ArrowRight, Check, Copy } from "lucide-react";
+import { ArrowRight, Check, Copy, QrCode as QrCodeIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { NumberInput, Segmented } from "../../components/ui/controls";
+import { NumberInput } from "../../components/ui/controls";
+import { WalletIcon } from "../../components/ui/WalletIcon";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { fmtInt, fmtSol, fmtSolShort } from "../../lib/format";
@@ -10,7 +12,7 @@ import type { ConnectedWallet, TradingWallet } from "../../services/walletServic
 import { useMarket } from "../../state/market";
 import { useWallet } from "../../state/wallet";
 import { useTransient } from "../settings/ui";
-import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { InlineError, Panel, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 import { QrCode } from "./QrCode";
 
 const CHIPS = [0.5, 1, 2, 5] as const;
@@ -123,14 +125,12 @@ export function FundStep({
   return (
     <>
       <StepHeader frame={frame} />
-      <Segmented<Source>
+      <SourceTabs
         value={source}
         onChange={setSource}
-        label="Funding source"
-        className="w-full max-md:h-11"
         options={[
-          { value: "connected", label: `From ${name}` },
-          { value: "deposit", label: "Deposit address" },
+          { value: "connected", label: `From ${name}`, icon: <WalletIcon icon={connected.icon} name={name} size="sm" /> },
+          { value: "deposit", label: "Deposit address", icon: <QrCodeIcon className="icon-sm text-fg-3" /> },
         ]}
       />
 
@@ -180,7 +180,7 @@ export function FundStep({
                   aria-pressed={on}
                   onClick={() => setAmount(v)}
                   className={cn(
-                    "h-6 rounded-sm border bg-surface-2 text-data font-medium transition-colors max-md:h-11",
+                    "h-8 rounded-sm border bg-surface-2 text-data font-medium transition-colors max-md:h-11",
                     on ? "border-fg-2 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
                   )}
                 >
@@ -191,29 +191,29 @@ export function FundStep({
           </div>
         </div>
       ) : (
-        <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start">
-          <QrCode value={wallet.address} label={`QR code for ${wallet.label}'s address`} />
+        <Panel className="mt-4 flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
+          <QrCode value={wallet.address} size={144} label={`QR code for ${wallet.label}'s address`} />
           <div className="min-w-0 flex-1">
-            <div className="zf-label">{wallet.label} · trading wallet address</div>
+            <div className="zf-label">{wallet.label} · trading wallet</div>
             <p className="mt-1 font-mono text-data break-all text-fg-1">{wallet.address}</p>
             <Button
-              size="sm"
+              size="md"
               variant="secondary"
               icon={copied ? <Check /> : <Copy />}
               aria-label={copied ? "Copied" : "Copy address"}
               onClick={() => {
                 void copyText(wallet.address).then((ok) => ok && setCopied(true));
               }}
-              className="mt-2 max-md:h-11"
+              className="mt-3 max-md:h-11"
             >
-              {copied ? "Copied" : "Copy"}
+              {copied ? "Copied" : "Copy address"}
             </Button>
-            <p className="mt-2 text-label text-fg-2">Send SOL on Solana only.</p>
+            <p className="mt-3 text-label text-fg-3">Send SOL on the Solana network only.</p>
           </div>
-        </div>
+        </Panel>
       )}
 
-      <div className="mt-4 flex min-h-8 items-center border-y border-hairline py-2 text-data" aria-live="polite">
+      <div className="mt-4 flex min-h-10 items-center rounded-md border border-hairline px-3 text-data" aria-live="polite">
         {funded && simulated ? (
           <span className="flex flex-wrap items-center gap-x-2 text-warn">
             Dry run: the server simulated a {fmtSol(funded.sol)} SOL transfer and sent nothing.
@@ -225,8 +225,12 @@ export function FundStep({
             {funded.slot !== null && <span className="zf-num text-label text-fg-3">slot {fmtInt(funded.slot)}</span>}
           </span>
         ) : (
-          <span className="flex items-center gap-2 text-fg-3">
-            Waiting for deposit · <span className="zf-num">{fmtSol(balance)}</span> SOL
+          <span className="flex w-full items-center gap-2 text-fg-3">
+            <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-fg-4" />
+            Waiting for deposit
+            <span className="ml-auto text-fg-2">
+              Balance <span className="zf-num text-fg-1">{fmtSol(balance)}</span> SOL
+            </span>
           </span>
         )}
       </div>
@@ -252,5 +256,41 @@ export function FundStep({
         )}
       </StepActions>
     </>
+  );
+}
+
+/** Two funding sources as a full-width segmented radiogroup with icons (36 px, active on surface-3). */
+function SourceTabs({
+  value,
+  onChange,
+  options,
+}: {
+  value: Source;
+  onChange: (s: Source) => void;
+  options: { value: Source; label: string; icon: ReactNode }[];
+}) {
+  return (
+    <div role="radiogroup" aria-label="Funding source" className="grid grid-cols-2 gap-1 rounded-md border border-hairline p-1">
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          // biome-ignore lint/a11y/useSemanticElements: segmented radio with an icon
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "focus-inset flex h-8 items-center justify-center gap-2 rounded-sm text-data font-medium transition-colors max-md:h-11",
+              on ? "bg-surface-3 text-fg-1" : "text-fg-3 hover:bg-surface-2 hover:text-fg-1",
+            )}
+          >
+            {o.icon}
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
