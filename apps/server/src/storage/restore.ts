@@ -104,18 +104,27 @@ export async function replayHolders(
     if (o.cancelled?.()) break;
     // the token may have been evicted or replaced meanwhile
     if (market.tokens.get(rec.mint) !== rec || !rec.holders) continue;
-    const t0 = performance.now();
-    const rows = reader.tradesOf(rec.mint, o.replaySinceMs, o.receivedBefore);
+    let t0 = performance.now();
     const entries: TradeEntry[] = [];
     let group: TradeRow[] = [];
+    let groups = 0;
     const flushGroup = () => {
       if (!group.length) return;
       const buyers = new Set(group.filter((r) => r.side === 0).map((r) => r.trader));
       for (const r of group) entries.push(replayTrade(rec, r, buyers));
       group = [];
     };
-    for (const r of rows) {
-      if (group.length && (group[0] as TradeRow).signature !== r.signature) flushGroup();
+    // A busy token has thousands of trades: read and apply them in slices too (at transaction boundaries).
+    for (const r of reader.iterateTradesOf(rec.mint, o.replaySinceMs, o.receivedBefore)) {
+      if (group.length && (group[0] as TradeRow).signature !== r.signature) {
+        flushGroup();
+        if ((++groups & 63) === 0 && performance.now() - sliceStart >= sliceMs) {
+          perf.span("restore.replaySlice", performance.now() - t0);
+          await yieldFn();
+          sliceStart = t0 = performance.now();
+          if (o.cancelled?.() || market.tokens.get(rec.mint) !== rec) break;
+        }
+      }
       group.push(r);
     }
     flushGroup();
@@ -125,9 +134,9 @@ export async function replayHolders(
       rec.trades = ring.length > 200 ? ring.slice(ring.length - 200) : ring;
       market.touchToken(rec.mint);
     }
-    trades += rows.length;
+    trades += entries.length;
     tokens++;
-    perf.span("restore.replayToken", performance.now() - t0);
+    perf.span("restore.replaySlice", performance.now() - t0);
     if (performance.now() - sliceStart >= sliceMs) {
       await yieldFn();
       sliceStart = performance.now();
