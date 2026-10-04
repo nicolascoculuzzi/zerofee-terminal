@@ -100,6 +100,8 @@ interface Job {
   attempt: number;
   prio: Priority;
   notFound: number;
+  /** Reason of the first transient failure (set once a retry is scheduled). */
+  lastReason?: string;
 }
 
 /** Outcome of one fetch round (all sources raced). */
@@ -190,6 +192,8 @@ export class MetadataFetcher {
         const f = this.followers.get(key) ?? new Set<string>();
         this.followers.set(key, f);
         f.add(mint);
+        // the URI already failed once: this token gets its fallback now, like the first one did
+        if (existing.lastReason) this.opts.onRetry?.(mint, existing.attempt, existing.lastReason);
       }
       if (prio < existing.prio) this.promote(existing, prio);
       return;
@@ -334,7 +338,11 @@ export class MetadataFetcher {
         const backoff =
           Math.min(RETRY_CAP_MS, (this.opts.retryBaseMs ?? RETRY_BASE_MS) * 2 ** (job.attempt - 1)) * (0.75 + this.random() * 0.5);
         const delay = Math.round(Math.max(backoff, f.retryAfterMs ?? 0));
-        if (job.attempt === 1) this.opts.onRetry?.(job.mint, job.attempt, f.reason);
+        if (job.attempt === 1) {
+          job.lastReason = f.reason;
+          this.opts.onRetry?.(job.mint, job.attempt, f.reason);
+          for (const m of this.followers.get(job.key) ?? []) this.opts.onRetry?.(m, job.attempt, f.reason);
+        }
         const t = setTimeout(() => {
           this.timers.delete(t);
           if (this.stopped) return;

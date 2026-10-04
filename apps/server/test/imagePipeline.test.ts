@@ -237,6 +237,17 @@ describe("metadata retries", () => {
     t.f.stop();
   });
 
+  test("every token sharing a failing URI hears about the retry (fallback image), including late joiners", async () => {
+    const t = fetcher(() => new Response("", { status: 503 }), { retryBaseMs: 200 });
+    t.f.request("A", "https://meta.example/same.json");
+    t.f.request("B", "https://meta.example/same.json");
+    await waitFor(() => t.retries.length === 2);
+    t.f.request("C", "https://meta.example/same.json");
+    expect(t.retries.sort()).toEqual(["A:http_503", "B:http_503", "C:http_503"]);
+    expect(t.calls()).toBe(1);
+    t.f.stop();
+  });
+
   test("permanent failures stop at once: invalid JSON; 404 everywhere stops after three attempts", async () => {
     const bad = fetcher(() => new Response("<html>oops</html>", { headers: { "content-type": "text/html" } }));
     bad.f.request("M1", "https://meta.example/a.json");
