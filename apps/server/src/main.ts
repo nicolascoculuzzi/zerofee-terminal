@@ -33,6 +33,7 @@ const statsTimer = setInterval(() => {
       `tokens ${h.tokens.inMemory} pulse ${JSON.stringify(h.tokens.pulse)} source ${s?.connected ? "up" : "DOWN"} reconnects ${s?.reconnects ?? 0} ` +
       `pending pool events ${h.ingest.pendingPoolEvents} db pending ${h.storage.pendingRows} SOL ${h.solUsd.price ?? "-"}`,
   );
+  log.info(user.trackers.summary());
 }, 60_000);
 
 let stopping = false;

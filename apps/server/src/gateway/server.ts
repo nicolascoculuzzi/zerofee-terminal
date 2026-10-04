@@ -13,9 +13,10 @@
  *
  * With the accounts layer (`user`, src/user.ts): the account / settings / alert / admin endpoints are
  * routed to its API; WebSocket upgrades resolve the session cookie (a cookie-authenticated upgrade
- * must come from an allowed Origin: cross-site WebSocket hijacking); the user topics `wallet:<address>`
- * and `orders` need a signed-in session (orders are published on a per-user internal topic so users
- * never see each other's); sockets close (4401) when their session is revoked or expires.
+ * must come from an allowed Origin: cross-site WebSocket hijacking); the user topics `wallet:<address>`,
+ * `orders`, and the trackers' `tracked`, `tracked:<mint>` and `copy` (UserGateway.userTopics) need a
+ * signed-in session (all but `wallet:` are published on per-user internal topics so users never see
+ * each other's); sockets close (4401) when their session is revoked or expires.
  */
 
 import {
@@ -64,6 +65,13 @@ interface WsData {
   pending: Set<string>;
 }
 
+/** A per-user topic served by another module (the trackers' `tracked`, `tracked:<mint>`, `copy`). */
+export interface UserTopicHandler {
+  /** Internal pub/sub topic of this user's subscription (per user, so users never see each other's). */
+  internal(userId: string, p: ParsedTopic): string;
+  snapshot(userId: string, p: ParsedTopic): Promise<unknown>;
+}
+
 /** What the gateway needs from the accounts layer (src/user.ts). */
 export interface UserGateway {
   api: { handle(req: Request, ip: string): Promise<Response | null> };
@@ -71,6 +79,8 @@ export interface UserGateway {
   origins: { isAllowed(origin: string | null): boolean };
   limits: { tx: RateLimiter };
   topics: UserTopicSource;
+  /** Extra user topics by parsed kind. */
+  userTopics?: Partial<Record<ParsedTopic["kind"], UserTopicHandler>>;
   wsConnPerUser: number;
 }
 
@@ -426,7 +436,7 @@ export class Gateway {
       }
       return;
     }
-    if (parsed && (parsed.kind === "wallet" || parsed.kind === "orders")) {
+    if (parsed && (parsed.kind === "wallet" || parsed.kind === "orders" || parsed.kind === "tracked" || parsed.kind === "copy")) {
       void this.subscribeUserTopic(ws, topic, parsed).catch((e) => {
         log.error(`user topic ${parsed.kind} failed: ${e instanceof Error ? e.message : e}`);
         this.sendError(ws, "internal", "internal error", topic);
@@ -454,17 +464,20 @@ export class Gateway {
   private async subscribeUserTopic(
     ws: ServerWebSocket<WsData>,
     topic: string,
-    p: Extract<ParsedTopic, { kind: "wallet" | "orders" }>,
+    p: Extract<ParsedTopic, { kind: "wallet" | "orders" | "tracked" | "copy" }>,
   ): Promise<void> {
     const user = this.d.user;
     if (!user) return this.sendError(ws, "unavailable", "user topics need the accounts layer", topic);
+    const extra = p.kind === "tracked" || p.kind === "copy" ? user.userTopics?.[p.kind] : undefined;
+    if ((p.kind === "tracked" || p.kind === "copy") && !extra)
+      return this.sendError(ws, "unavailable", `${p.kind} is not served here`, topic);
     const s = ws.data.session;
     if (s.anonymous || !s.userId) return this.sendError(ws, "unauthorized", "sign in to subscribe to user topics", topic);
     if (s.expiresAt !== null && s.expiresAt <= Date.now()) return this.sendError(ws, "unauthorized", "session expired", topic);
     const userId = s.userId;
     if (ws.data.pending.has(topic)) return; // the same subscribe is already in flight
     ws.data.pending.add(topic);
-    const internal = p.kind === "orders" ? ordersTopic(userId) : topic;
+    const internal = extra ? extra.internal(userId, p) : p.kind === "orders" ? ordersTopic(userId) : topic;
     let data: unknown = null;
     let counted = false;
     try {
@@ -476,7 +489,13 @@ export class Gateway {
       counted = true;
       for (let attempt = 0; attempt < 3; attempt++) {
         const before = this.hub.seq(internal);
-        data = p.kind === "orders" ? await user.topics.ordersSnapshot(userId) : await user.topics.walletSnapshot(p.address);
+        data = extra
+          ? await extra.snapshot(userId, p)
+          : p.kind === "orders"
+            ? await user.topics.ordersSnapshot(userId)
+            : p.kind === "wallet"
+              ? await user.topics.walletSnapshot(p.address)
+              : null;
         if (this.hub.seq(internal) === before) break;
       }
     } catch (e) {

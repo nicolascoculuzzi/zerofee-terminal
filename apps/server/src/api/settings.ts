@@ -33,6 +33,8 @@ export interface SettingsHooks {
   settingsChanged?(userId: string, settings: UserSettings): void;
   /** The user's tracked wallets changed (alert engine index). */
   trackedChanged?(userId: string): void;
+  /** The user's blacklists changed (copy trading skips blacklisted tokens and devs). */
+  blacklistChanged?(userId: string): void;
 }
 
 const LANDINGS: readonly LandingPreset[] = ["reduced", "secure", "fast"];
@@ -146,12 +148,13 @@ function blacklistValue(kind: BlacklistKind, v: unknown): string {
 
 function trackedAlerts(v: unknown, base: TrackedWalletAlerts): TrackedWalletAlerts {
   const o = obj(v, "alerts");
-  strict(o, ["buy", "sell", "create", "minSol"], "alerts");
+  strict(o, ["buy", "sell", "create", "minSol", "firstBuyOnly"], "alerts");
   return {
     buy: o.buy === undefined ? base.buy : bool(o.buy, "alerts.buy"),
     sell: o.sell === undefined ? base.sell : bool(o.sell, "alerts.sell"),
     create: o.create === undefined ? base.create : bool(o.create, "alerts.create"),
     minSol: o.minSol === undefined ? base.minSol : num(o.minSol, "alerts.minSol", { min: 0, max: 100_000 }),
+    firstBuyOnly: o.firstBuyOnly === undefined ? base.firstBuyOnly === true : bool(o.firstBuyOnly, "alerts.firstBuyOnly"),
   };
 }
 
@@ -306,7 +309,9 @@ export function settingsRoutes(store: UserStore, now: () => number, hooks: Setti
         const b = obj(await c.json(4 * 1024));
         strict(b, ["note"]);
         const note = b.note === undefined ? undefined : str(b.note, "note", { max: 200 });
-        return json(await store.prefs.addBlacklist(c.session.userId, kind, value, note, now(), USER_LIMITS.blacklistPerKind));
+        const entry = await store.prefs.addBlacklist(c.session.userId, kind, value, note, now(), USER_LIMITS.blacklistPerKind);
+        hooks.blacklistChanged?.(c.session.userId);
+        return json(entry);
       },
     },
     {
@@ -317,6 +322,7 @@ export function settingsRoutes(store: UserStore, now: () => number, hooks: Setti
         const kind = oneOf(c.params.kind, "kind", BLACKLIST_KINDS);
         if (!(await store.prefs.removeBlacklist(c.session.userId, kind, blacklistValue(kind, c.params.value))))
           throw notFound("not blacklisted");
+        hooks.blacklistChanged?.(c.session.userId);
         return ok();
       },
     },

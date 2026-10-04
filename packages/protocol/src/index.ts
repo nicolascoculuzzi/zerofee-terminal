@@ -10,4 +10,5 @@ export * from "./market";
 export * from "./messages";
 export * from "./rest";
 export * from "./topics";
+export * from "./trackers";
 export * from "./user";

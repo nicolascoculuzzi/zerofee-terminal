@@ -134,6 +134,30 @@ export interface ServerConfig {
     /** Directory holding the edge kill-switch flag files (HALT_TX, MAINTENANCE); null = not reported. */
     killSwitchDir: string | null;
   };
+  /** Wallet tracker matching and copy trading (src/trackers). */
+  trackers: {
+    /** Watcher entries (user x address) the in-memory index may hold in total. */
+    maxEntries: number;
+    /** Live feed flush cadence (ms). */
+    flushMs: number;
+    /** Matches kept for `tracked` snapshots; per mint for `tracked:<mint>`; mints with marker history. */
+    feedRing: number;
+    mintRing: number;
+    mintRings: number;
+    maxRowsPerFrame: number;
+    /** Per-(wallet, mint) positions of watched wallets (first-buy detection). */
+    positions: number;
+    skipRetentionDays: number;
+    copy: {
+      /** SPEC "Limits": copy volume per leader per slot across all followers (SOL). */
+      leaderSlotCapSol: number;
+      buyTtlMs: number;
+      sellTtlMs: number;
+      minSol: number;
+      skipLogPerHour: number;
+      exitCooldownMs: number;
+    };
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -160,6 +184,13 @@ function int(env: Env, name: string, def: number, min: number, max: number): num
   const raw = env[name]?.trim();
   const v = raw ? Number(raw) : def;
   if (!Number.isInteger(v) || v < min || v > max) throw new Error(`${name} must be an integer in [${min}, ${max}]`);
+  return v;
+}
+
+function float(env: Env, name: string, def: number, min: number, max: number): number {
+  const raw = env[name]?.trim();
+  const v = raw ? Number(raw) : def;
+  if (!Number.isFinite(v) || v < min || v > max) throw new Error(`${name} must be a number in [${min}, ${max}]`);
   return v;
 }
 
@@ -347,6 +378,24 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       metricsToken: optional(env, "METRICS_TOKEN"),
       feedStallMs: int(env, "METRICS_FEED_STALL_SEC", 30, 5, 3_600) * 1_000,
       killSwitchDir: optional(env, "KILL_SWITCH_DIR"),
+    },
+    trackers: {
+      maxEntries: int(env, "TRACKER_MAX_ENTRIES", 2_000_000, 1, 100_000_000),
+      flushMs: int(env, "TRACKER_FLUSH_MS", 100, 10, 5_000),
+      feedRing: int(env, "TRACKER_FEED_RING", 20_000, 100, 10_000_000),
+      mintRing: int(env, "TRACKER_MINT_RING", 300, 10, 100_000),
+      mintRings: int(env, "TRACKER_MINT_RINGS", 10_000, 10, 10_000_000),
+      maxRowsPerFrame: int(env, "TRACKER_MAX_ROWS_PER_FRAME", 500, 1, 100_000),
+      positions: int(env, "TRACKER_POSITIONS", 200_000, 1_000, 100_000_000),
+      skipRetentionDays: int(env, "COPY_SKIP_RETENTION_DAYS", 7, 1, 3_650),
+      copy: {
+        leaderSlotCapSol: float(env, "COPY_LEADER_SLOT_CAP_SOL", 25, 0.001, 1_000_000),
+        buyTtlMs: int(env, "COPY_BUY_TTL_MS", 15_000, 1_000, 600_000),
+        sellTtlMs: int(env, "COPY_SELL_TTL_MS", 60_000, 1_000, 3_600_000),
+        minSol: float(env, "COPY_MIN_SOL", 0.001, 0.000001, 1_000),
+        skipLogPerHour: int(env, "COPY_SKIP_LOG_PER_HOUR", 120, 0, 1_000_000),
+        exitCooldownMs: int(env, "COPY_EXIT_COOLDOWN_MS", 30_000, 0, 3_600_000),
+      },
     },
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
