@@ -548,6 +548,61 @@ export const RAYDIUM_CPMM_ERRORS: Record<number, string> = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Jupiter (long-tail fallback). Swap API V2 `/build` only: raw instructions, Metis routing, no Jupiter
+// swap fee. Never `/order`: the Meta-Aggregator charges a platform fee, 50 bps on tokens under 24 h old.
+//   Build docs: https://developers.jup.ag/docs/swap/build  (OpenAPI: https://developers.jup.ag/docs/api-reference/swap/build)
+//   Fees:       https://developers.jup.ag/docs/swap/fees
+// The program ID was verified on 2026-10-03 (SPEC "Open questions": "whether routes still go through
+// JUP6…"): every /build response captured that day (test/fixtures/jupiter-build.json) routes through it,
+// the program's own on-chain Anchor IDL account names it, and Jupiter's CPI crate declares it.
+// The IDL is vendored from that account (idl/jupiter.json, pinned in idl/JUPITER_SOURCE.json).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Jupiter aggregator v6. Sources: live `/build` swapInstruction.programId (2026-10-03, slot ~453.12M);
+ * IDL account C88XWfp26heEmDkmfSzeXP7Fd7GQJ2j9dDTUsyiZbUTa (`address`), https://solscan.io/account/JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4#programIdl ;
+ * https://github.com/jup-ag/jupiter-cpi/blob/12bc5f67b94a2c3edc74d6e721a19442124a0bad/src/lib.rs (declare_id!).
+ */
+export const JUPITER_PROGRAM_ID: Address = address("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+/** Anchor event-CPI authority PDA ["__event_authority"]; the IDL pins it (`address`) on every route instruction. */
+export const JUPITER_EVENT_AUTHORITY: Address = address("D8cy77BBepLMngZx6ZukaTff5hCt1HrWyKk3Hnd9oitf");
+/**
+ * Shared-accounts routes move funds through program token accounts owned by PDA ["authority", u8 id]
+ * (ids 0-7 exist). jupiter-cpi src/lib.rs AUTHORITY_SEED / AUTHORITY_COUNT (commit above).
+ */
+export const JUPITER_AUTHORITY_SEED = "authority";
+export const JUPITER_AUTHORITY_COUNT = 8;
+
+/** Route instruction discriminators. idl/jupiter.json `instructions[].discriminator`. */
+export const JUPITER_IX = {
+  /** route_v2(in_amount u64, quoted_out_amount u64, slippage_bps u16, platform_fee_bps u16, positive_slippage_bps u16, route_plan Vec<RoutePlanStepV2>) - 10 accounts + hops. */
+  routeV2: new Uint8Array([187, 100, 250, 204, 49, 196, 175, 20]),
+  /** shared_accounts_route_v2(id u8, then route_v2's arguments) - 12 accounts + hops. */
+  sharedAccountsRouteV2: new Uint8Array([209, 152, 83, 147, 124, 254, 216, 233]),
+} as const;
+
+/** Swap API V2 base URL (keyless 0.5 RPS; an `x-api-key` header raises the limit). https://developers.jup.ag/docs/portal/rate-limits */
+export const JUPITER_SWAP_API_BASE = "https://api.jup.ag/swap/v2";
+export const JUPITER_BUILD_PATH = "/build";
+/** `/build` accepts at most 64 route accounts (default 64). https://developers.jup.ag/docs/swap/build */
+export const JUPITER_MAX_ACCOUNTS = 64;
+
+/** Jupiter errors worth naming in the UI. idl/jupiter.json `errors` (6000 + index). */
+export const JUPITER_ERRORS: Record<number, string> = {
+  6000: "EmptyRoute",
+  6001: "SlippageToleranceExceeded",
+  6003: "MissingPlatformFeeAccount",
+  6004: "InvalidSlippage",
+  6008: "NotEnoughAccountKeys",
+  6014: "IncorrectTokenProgramID",
+  6017: "ExactOutAmountNotMatched",
+  6018: "SourceAndDestinationMintCannotBeTheSame",
+  6021: "InvalidOutputTokenAccount",
+  6024: "InsufficientFunds",
+  6026: "BondingCurveAlreadyCompleted",
+};
+
+// ---------------------------------------------------------------------------------------------
 // Transaction landing: Helius Sender. https://www.helius.dev/docs/sending-transactions/sender
 // ---------------------------------------------------------------------------------------------
 

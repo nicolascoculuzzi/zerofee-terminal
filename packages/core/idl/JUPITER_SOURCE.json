@@ -1,0 +1,19 @@
+{
+  "note": "Jupiter v6 IDL as stored in the program's own Anchor IDL account (createWithSeed(PDA([], program), 'anchor:idl', program); zlib-inflated). Jupiter publishes no IDL repo; jup-ag/jupiter-cpi stopped at 2024-01 and has none of the *_v2 routes /build emits. Refresh with: bun run packages/core/scripts/jupiter-idl.ts --update",
+  "program": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+  "idlAccount": "C88XWfp26heEmDkmfSzeXP7Fd7GQJ2j9dDTUsyiZbUTa",
+  "fetchedAt": "2026-10-04T02:26:20.735Z",
+  "slot": 453121303,
+  "sha256": "12a0856158b2b6927d683a2ba21566f82e39989aca476e23c02d845fc38cdca8",
+  "cpiCrate": {
+    "repo": "jup-ag/jupiter-cpi",
+    "commit": "12bc5f67b94a2c3edc74d6e721a19442124a0bad",
+    "committedAt": "2024-01-10T04:01:50Z",
+    "uses": "declare_id!(JUP6…) and AUTHORITY_SEED = b\"authority\" (shared-accounts program authority PDA, ids 0-7)"
+  },
+  "docs": {
+    "build": "https://developers.jup.ag/docs/swap/build",
+    "openapi": "https://developers.jup.ag/docs/api-reference/swap/build",
+    "fees": "https://developers.jup.ag/docs/swap/fees"
+  }
+}
