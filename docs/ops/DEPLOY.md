@@ -52,8 +52,9 @@ Everything goes into `deploy/docker/.env.production` on the server ([template](.
 
 | Variable | Where it comes from |
 |---|---|
-| `APP_DOMAIN`, `ACME_EMAIL` | Your domain, e.g. `app.example.com`, and the e-mail for Let's Encrypt notices |
-| `POSTGRES_PASSWORD`, `METRICS_TOKEN` | Generate each: `openssl rand -hex 32` |
+| `APP_DOMAIN`, `ACME_EMAIL` | Your domain, e.g. `app.example.com`, and the e-mail for Let's Encrypt notices. Compose derives `PUBLIC_ORIGIN=https://<APP_DOMAIN>` from it, which SIWS sign-in binds. |
+| `POSTGRES_PASSWORD`, `METRICS_TOKEN`, `ADMIN_TOKEN` | Generate each: `openssl rand -hex 32`. `ADMIN_TOKEN` unlocks the server's audited kill switch and operator API. |
+| `VAPID_*`, `TELEGRAM_*`, `CHANNEL_ENCRYPTION_KEY` | Optional alert channels: Web Push keys (`bun run --cwd apps/server vapid-keys` on a dev machine), a Telegram bot from @BotFather, a key for stored Discord webhooks (`openssl rand -hex 32`) |
 | `YELLOWSTONE_ENDPOINT`, `YELLOWSTONE_X_TOKEN` | Chainstack, Yellowstone gRPC add-on |
 | `RPC_URL`, `RPC_WS_URL` | Chainstack node, HTTPS and WSS endpoints |
 | `BACKUP_REMOTE` | The rclone remote you create in step 5, e.g. `zerofee-backup:zerofee` |
@@ -96,10 +97,11 @@ cp deploy/docker/.env.production.example deploy/docker/.env.production
 chmod 600 deploy/docker/.env.production
 openssl rand -hex 32
 openssl rand -hex 32
+openssl rand -hex 32
 nano deploy/docker/.env.production
 ```
 
-The two random values are `POSTGRES_PASSWORD` and `METRICS_TOKEN`. Fill in everything from step 2. Keep `DRY_RUN=true` until the go-live checklist at the end.
+The three random values are `POSTGRES_PASSWORD`, `METRICS_TOKEN` and `ADMIN_TOKEN`. Fill in everything from step 2. Keep `DRY_RUN=true` until the go-live checklist at the end.
 
 **Backup encryption key.** Make it on your laptop, never on the server:
 
@@ -172,7 +174,7 @@ bun -e 'const ws = new WebSocket("wss://app.example.com/ws"); ws.onopen = () => 
 - Scan the site with [SSL Labs](https://www.ssllabs.com/ssltest/) (expect A+) and the [Mozilla HTTP Observatory](https://developer.mozilla.org/en-US/observatory).
 - Open the site with the browser console open. There should be no CSP violations. Trusted Types messages are expected: that policy is report-only until it's promoted.
 - The live debug view stays private. Reach it through an SSH tunnel with `ssh -N -L 8787:127.0.0.1:8787 deploy@<server-ip>`, then open http://127.0.0.1:8787/debug.
-- Rehearse the kill switch once: `deploy/scripts/kill-switch.sh halt "drill"` (status shows `/api/tx -> 503`), then `deploy/scripts/kill-switch.sh resume`.
+- Rehearse the kill switch once: `deploy/scripts/kill-switch.sh halt "drill"`. Status should show the edge flag on, `server halt: {"halted":true,...}` and `/api/tx -> 503`. Then `deploy/scripts/kill-switch.sh resume`.
 
 ## 8. Alerts
 
@@ -223,7 +225,7 @@ From then on it runs nightly at 03:30 UTC. Do the first [restore drill](RUNBOOK.
 `DRY_RUN=true` keeps POST /api/tx in simulate-only mode. Turn it off only when all of this is done ([SPEC](../../SPEC.md), Phase 9):
 
 - [ ] The signer runs on its own origin (iframe + `postMessage` origin checks): a launch blocker. Enable the commented signer block in the Caddyfile.
-- [ ] SIWS sessions are wired in, so POST /api/tx refuses anonymous senders. Keep `ALLOW_ANONYMOUS_TX=false`.
+- [ ] Sign-in works end to end on the real domain (SIWS binds `https://<APP_DOMAIN>`), and POST /api/tx refuses anonymous senders. Keep `ALLOW_ANONYMOUS_TX=false`.
 - [ ] The web build ships Subresource Integrity attributes, and each release's hashes are published (`/SHA256SUMS` plus the git tag).
 - [ ] Relay limits are in writing: Helius Sender above 50 TPS, a Jito UUID.
 - [ ] You have read each data provider's terms on serving many users from one plan.

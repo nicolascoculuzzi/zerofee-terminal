@@ -11,9 +11,10 @@ Run everything as `deploy` on the server, from `/opt/zerofee/app`. `dc` is the a
 | Metrics | `curl -s -H "Authorization: Bearer $(sed -n 's/^METRICS_TOKEN=//p' deploy/docker/.env.production)" http://127.0.0.1:8787/metrics` |
 | Deploy | `deploy/scripts/deploy.sh v0.3.0` |
 | Roll back | `deploy/scripts/rollback.sh` (previous) or `deploy/scripts/rollback.sh <sha12>` |
-| Halt trading | `deploy/scripts/kill-switch.sh halt "<reason>"`, then `resume` |
+| Halt trading | `deploy/scripts/kill-switch.sh halt "<reason>"`, then `resume` (edge flag + the server's admin halt) |
 | Maintenance page | `deploy/scripts/kill-switch.sh maintenance on "<reason>"`, then `off` |
 | Kill-switch state | `deploy/scripts/kill-switch.sh status` |
+| Admin API (audited) | `curl -s -H "Authorization: Bearer <ADMIN_TOKEN>" http://127.0.0.1:8787/api/admin/status` (also `/api/admin/audit`; host only, the edge answers 404) |
 | Backup now | `deploy/backup/backup.sh` |
 | Restore drill | `deploy/backup/restore-drill.sh --identity /dev/shm/zerofee-backup.key` |
 | Audit trail | `/opt/zerofee/ops.log` (who flipped what), `/opt/zerofee/deploys.log` (every deploy and rollback) |
@@ -66,6 +67,10 @@ The pattern: create the new secret, put it in `deploy/docker/.env.production`, r
 | Secret | How |
 |---|---|
 | `METRICS_TOKEN` | `openssl rand -hex 32`, edit, `dc up -d server`, then update the header of the three `/metrics` monitors in Uptime Kuma. The health ping reads the file directly. |
+| `ADMIN_TOKEN` | `openssl rand -hex 32`, edit, `dc up -d server`. With named operators (`name:token,name:token`), rotate one entry at a time; the audit log records names, never tokens. |
+| `CHANNEL_ENCRYPTION_KEY` | It encrypts stored Discord webhook URLs: a new key makes the stored ones unreadable, so users must add their Discord channels again. Rotate only if it leaked, then tell users. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | A new pair (`bun run --cwd apps/server vapid-keys` on a dev machine) invalidates every browser push subscription; users re-enable Web Push. Rotate only if the private key leaked. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` | `/revoke` in @BotFather for a new bot token; a new webhook secret also needs `setWebhook` again. Edit, `dc up -d server`. |
 | `POSTGRES_PASSWORD` | The env value only applies when the database is first created. Change the role: `dc exec postgres psql -U zerofee -d zerofee`, then `\password zerofee`. Then edit the env file and run `dc up -d server` (it rebuilds `DATABASE_URL`). |
 | Chainstack (`YELLOWSTONE_X_TOKEN`, `RPC_URL`, `RPC_WS_URL`) | New credentials in the Chainstack console, edit, `dc up -d server`, `deploy/scripts/smoke.sh` (feed flowing), delete the old credentials. |
 | `HELIUS_SENDER_API_KEY`, `JITO_UUID` | Same pattern. |
@@ -79,12 +84,16 @@ The pattern: create the new secret, put it in `deploy/docker/.env.production`, r
 
 From mildest to most drastic:
 
-1. **Halt trading at the edge:** `deploy/scripts/kill-switch.sh halt "<reason>"`. Caddy answers POST /api/tx with 503 immediately, with no reload, and keeps doing so even if the server process is broken. Market data keeps flowing. Use it for venue interface drift, relay misbehavior, a suspected signer-firewall bypass, or anything odd in trade outcomes.
-2. **Stop all sending in the server:** set `DRY_RUN=true` in `.env.production`, then `dc up -d server`. POST /api/tx then only simulates. Use it alongside step 1. Once armed orders exist (Phase 5), the server submits transactions on its own, and the edge halt doesn't cover those. The SPEC's admin `POST /api/halt` (stop submissions and fire every pre-signed cancel) replaces this step once it's built.
+1. **Halt trading:** `deploy/scripts/kill-switch.sh halt "<reason>"`. It flips two layers at once:
+   - **Edge:** Caddy answers POST /api/tx with 503 immediately, with no reload, and keeps doing so even if the server process is broken.
+   - **Server:** the admin kill switch (`POST /api/admin/halt`, needs `ADMIN_TOKEN`). The server refuses every submission, survives restarts in the halted state, writes the change to its audit log, and pushes it to every client so the UI disables trading. It also covers what the server submits on its own (armed orders).
+
+   Market data keeps flowing. Use it for venue interface drift, relay misbehavior, a suspected signer-firewall bypass, or anything odd in trade outcomes.
+2. **Stop all sending, belt and braces:** set `DRY_RUN=true` in `.env.production`, then `dc up -d server`. POST /api/tx then only simulates. Use it if the admin halt failed (the script says so) or you no longer trust the server's own state.
 3. **Maintenance mode:** `deploy/scripts/kill-switch.sh maintenance on "<reason>"`. The whole site, API and WebSocket included, answers 503 and tells browsers to drop cached files. Use it for a front-end compromise, a DNS incident or risky maintenance.
 4. **Everything off:** `dc stop caddy server`.
 
-`kill-switch.sh status` shows the flags, what the public edge answers and what the server reports. Every flip is recorded in `/opt/zerofee/ops.log`. Undo with `resume`, `maintenance off` or `DRY_RUN=false`. The "Trading not halted" monitor turns green again.
+`kill-switch.sh status` shows both layers, what the public edge answers and what the server's metrics report. Every flip is recorded in `/opt/zerofee/ops.log`, and the server-side ones also in the admin audit log (`/api/admin/audit`). Undo with `resume`, `maintenance off` or `DRY_RUN=false`. The "Trading not halted" monitor turns green again.
 
 What no server-side switch can stop: transactions a user's browser sends straight to Helius Sender's browser endpoint (the fallback lane). Users have their own kill switch in the product: the Panic button cancels their armed orders and locks the keystore.
 
@@ -173,7 +182,7 @@ It downloads the set, checks its hashes, decrypts it, restores Postgres into a t
 deploy/backup/restore.sh --identity /dev/shm/zerofee-backup.key --from latest --yes
 ```
 
-Add `--only postgres` or `--only sqlite` to restore one of them, or `--from <set>` for an older set (`rclone lsf zerofee-backup:zerofee`). Before replacing anything the script halts trading, keeps an encrypted dump of the current Postgres database (`/opt/zerofee/backups/restore-<time>/`), and renames the current SQLite files to `*.pre-restore-<time>` instead of deleting them. It then restarts the server and waits for its healthcheck. Afterwards:
+Add `--only postgres` or `--only sqlite` to restore one of them, or `--from <set>` for an older set (`rclone lsf zerofee-backup:zerofee`). Before replacing anything the script halts trading, keeps an encrypted dump of the current Postgres database (`/opt/zerofee/backups/restore-<time>/`), and renames the current SQLite files to `*.pre-restore-<time>` instead of deleting them. It then restarts the server and waits for its healthcheck. A restored Postgres brings back its own admin audit log, which decides the server-side halt state after the restart; the edge halt stays on either way until you resume. Afterwards:
 
 1. `deploy/scripts/smoke.sh`, plus a look at the data.
 2. `deploy/scripts/kill-switch.sh resume`.
