@@ -213,7 +213,7 @@ describe("hooks: wallet tracker and order fills", () => {
     engine.onOrderEvent({
       userId: uid,
       orderId: "o1",
-      kind: "take_profit",
+      kind: "take-profit",
       status: "filled",
       mint: MINT,
       symbol: "BONK",
@@ -223,19 +223,34 @@ describe("hooks: wallet tracker and order fills", () => {
     engine.onOrderEvent({
       userId: uid,
       orderId: "o2",
-      kind: "stop_loss",
-      status: "failed",
+      kind: "stop-loss",
+      status: "failed-consumed",
+      event: "consumed",
       mint: MINT,
       side: "sell",
       signature: null,
       detail: "slippage",
     });
-    engine.onOrderEvent({ userId: uid, orderId: "o3", kind: "limit", status: "cancelled", mint: MINT, side: "buy", signature: null });
+    engine.onOrderEvent({ userId: uid, orderId: "o3", kind: "limit-buy", status: "cancelled", mint: MINT, side: "buy", signature: null });
+    engine.onOrderEvent({
+      userId: uid,
+      orderId: "o4",
+      kind: "trailing-stop",
+      status: "armed",
+      event: "flagged",
+      mint: MINT,
+      symbol: "BONK",
+      side: "sell",
+      signature: null,
+      detail: "interface-upgrade",
+    });
     await Bun.sleep(20);
+    const short = `${MINT.slice(0, 4)}…${MINT.slice(-4)}`;
     expect(out.map((n) => [n.title, n.priority])).toEqual([
       ["Take profit filled: BONK", "high"],
-      [`Stop loss failed, re-arm it: ${MINT.slice(0, 4)}…${MINT.slice(-4)}`, "high"],
-      [`Limit order cancelled: ${MINT.slice(0, 4)}…${MINT.slice(-4)}`, "low"],
+      [`Stop loss failed, re-arm it: ${short}`, "high"],
+      [`Limit buy cancelled: ${short}`, "low"],
+      ["Trailing stop needs a check, re-arm it: BONK", "normal"],
     ]);
     expect(out[0]).toMatchObject({ source: "order", channels: ["telegram", "push"], url: "https://zerofee.test/orders" });
   });

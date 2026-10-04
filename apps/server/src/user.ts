@@ -26,6 +26,7 @@ import { openUserDb, type PgDriver, UserStore } from "./db/pg";
 import { RateLimiter } from "./gateway/rateLimit";
 import type { UserTopicHandler } from "./gateway/server";
 import { logger } from "./log";
+import { ArmedOrdersRepo } from "./orders/repo";
 import type { CopyExitHook } from "./trackers/copy";
 import { TrackerService } from "./trackers/service";
 
@@ -70,8 +71,14 @@ export interface UserLimits {
   test: RateLimiter;
 }
 
+/** The `orders` topic snapshot: open orders plus those that changed in the last day. */
+const ORDERS_SNAPSHOT_RECENT_MS = 24 * 3_600_000;
+const ORDERS_SNAPSHOT_LIMIT = 200;
+
 export class UserLayer {
   readonly store: UserStore;
+  /** Armed orders (the engine, orders/, writes them; the `orders` topic snapshot reads them). */
+  readonly armedOrders: ArmedOrdersRepo;
   readonly sessions: SessionService;
   readonly origins: OriginPolicy;
   readonly api: ApiRouter;
@@ -90,6 +97,8 @@ export class UserLayer {
   readonly settingsHooks: SettingsHooks;
   /** Wallet tracker matching, the tracked feed and copy trading. */
   readonly trackers: TrackerService;
+  /** Tab-closed copy exits: the armed-orders engine once the app attached it. */
+  private copyExits: CopyExitHook | null = null;
   /** `tracked`, `tracked:<mint>` and `copy` user topics for the gateway. */
   readonly userTopics: Partial<Record<string, UserTopicHandler>>;
   private timers: ReturnType<typeof setInterval>[] = [];
@@ -103,6 +112,7 @@ export class UserLayer {
   ) {
     this.now = o.now ?? Date.now;
     this.store = new UserStore(db);
+    this.armedOrders = new ArmedOrdersRepo(db);
     const a = cfg.auth;
     const n = cfg.notifications;
     this.origins = new OriginPolicy(a.allowedOrigins);
@@ -152,7 +162,8 @@ export class UserLayer {
       store: this.store,
       alerts: this.alerts,
       now: this.now,
-      exits: o.copyExits ?? null,
+      // Late-bound: the orders engine is built with the app (createApp attaches it).
+      exits: { leaderSold: (ev) => (this.copyExits ?? o.copyExits)?.leaderSold(ev) ?? false },
     });
     this.userTopics = this.trackers.topicHandlers();
     this.telegram = tgApi
@@ -219,7 +230,13 @@ export class UserLayer {
     this.topics = {
       canWatchWallet: (userId, address) => store.users.ownsWallet(userId, address),
       walletSnapshot: o.walletSnapshot ?? (async () => null),
-      ordersSnapshot: async (userId) => ({ orders: await store.users.listOrders(userId) }),
+      ordersSnapshot: async (userId) => ({
+        orders: await this.armedOrders.listViews(userId, {
+          scope: "open",
+          limit: ORDERS_SNAPSHOT_LIMIT,
+          sinceMs: this.now() - ORDERS_SNAPSHOT_RECENT_MS,
+        }),
+      }),
     };
   }
 
@@ -234,6 +251,11 @@ export class UserLayer {
       `alert channels: push ${this.push ? "on" : "off (VAPID keys)"}, telegram ${this.telegram ? (n.telegramWebhookSecret ? "on (webhook)" : "on (polling)") : "off (TELEGRAM_BOT_TOKEN)"}, ` +
         `discord ${this.box ? "on" : "off (CHANNEL_ENCRYPTION_KEY)"}`,
     );
+  }
+
+  /** The armed-orders engine fires tab-closed copy exits (createApp, when the engine runs). */
+  attachCopyExits(hook: CopyExitHook): void {
+    this.copyExits = hook;
   }
 
   /** Live market prices for alert evaluation (createApp). */

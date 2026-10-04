@@ -6,6 +6,7 @@
 import { DEFAULT_RPC_URL, HELIUS_SENDER_ENDPOINTS, type HeliusSenderRegion, JITO_BLOCK_ENGINES, type JitoRegion } from "@zerofee/core";
 import { type EnrichConfig, loadEnrichConfig } from "./enrich/config";
 import { proTraderSet } from "./market/feeWallets";
+import { loadOrdersConfig, type OrdersConfig } from "./orders/config";
 
 export type IngestSourceKind = "rpc" | "yellowstone";
 export type RpcCommitment = "processed" | "confirmed";
@@ -158,6 +159,8 @@ export interface ServerConfig {
       exitCooldownMs: number;
     };
   };
+  /** Armed-orders engine (orders/config.ts). */
+  orders: OrdersConfig;
 }
 
 type Env = Record<string, string | undefined>;
@@ -397,6 +400,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
         exitCooldownMs: int(env, "COPY_EXIT_COOLDOWN_MS", 30_000, 0, 3_600_000),
       },
     },
+    orders: loadOrdersConfig(env),
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
   if (cfg.userDb.databaseUrl && !/^postgres(ql)?:\/\//.test(cfg.userDb.databaseUrl))

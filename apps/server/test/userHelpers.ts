@@ -11,6 +11,7 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
 import { setLogLevel } from "../src/log";
+import type { OrderServiceOverrides } from "../src/orders";
 import { openDb } from "../src/storage/db";
 import { createUserLayer, type UserLayer, type UserLayerOverrides } from "../src/user";
 import { RpcClient } from "../src/util/rpc";
@@ -76,6 +77,8 @@ export interface StartOptions extends Omit<UserLayerOverrides, "db" | "now"> {
   clock?: Clock;
   /** Ingest source (a fake one to drive market prices). */
   source?: Source | null;
+  /** Armed-orders engine seams (fake chain, recording lanes, pinned lookup tables, no timers). */
+  orders?: OrderServiceOverrides;
 }
 
 /** A fake ingest source: tests push transactions into the market with emit(). */
@@ -176,7 +179,9 @@ export async function startUserApp(o: StartOptions = {}): Promise<UserTestEnv> {
     solUsd: null,
     pollers: false,
     user,
+    orders: o.orders,
   });
+  await app.orders?.ready;
   const base = `http://127.0.0.1:${app.gateway.port}`;
   return {
     app,
