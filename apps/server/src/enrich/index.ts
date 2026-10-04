@@ -183,7 +183,8 @@ export class Enricher {
     if (n <= 0) return [];
     const top: [string, number][] = [];
     for (const rec of this.d.market.tokens.values()) {
-      if (rec.launchpad !== "pump" || rec.lastTradeAt === null || now - rec.lastTradeAt > 120_000) continue;
+      if ((rec.launchpad !== "pump" && rec.launchpad !== "launchlab") || rec.lastTradeAt === null || now - rec.lastTradeAt > 120_000)
+        continue;
       const v = rec.windows.totals(now).volume5m;
       if (top.length < n || v > (top[top.length - 1] as [string, number])[1]) {
         top.push([rec.mint, v]);

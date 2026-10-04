@@ -46,6 +46,7 @@ import {
   type LookupTableState,
   liveQuoteOut,
   marketEventFromDecoded,
+  marketEventFromLaunchLabGraduation,
   type NonceSlotSnapshot,
   nonceKey,
   reservationHeld,
@@ -557,12 +558,28 @@ export class OrderEngine implements CopyExitHook {
       const events = new Map<string, ArmedMarketEvent[]>();
       const touched = new Set<string>();
       const baseMintOfPool = (p: string) => this.d.baseMintOfPool?.(p) as Address | undefined;
-      for (const ev of tx.events) {
-        const me = marketEventFromDecoded(ev, { slot: BigInt(tx.slot), baseMintOfPool });
+      const slot = BigInt(tx.slot);
+      const push = (mint: string, me: ArmedMarketEvent) => events.set(mint, [...(events.get(mint) ?? []), me]);
+      tx.events.forEach((ev, i) => {
+        // LaunchLab TradeEvents name neither the mint nor the trader: the swap instruction's payer trades.
+        const acc = tx.raydium?.accounts[i];
+        const trader = acc?.kind === "launchlabSwap" ? (acc.payer as Address) : undefined;
+        const me = marketEventFromDecoded(ev, { slot, baseMintOfPool, ...(trader ? { trader } : {}) });
         const mint = me?.mint ?? mintOfEvent(ev, baseMintOfPool);
-        if (!mint || !this.byMint.has(mint)) continue;
+        if (!mint || !this.byMint.has(mint)) return;
         touched.add(mint);
-        if (me) events.set(mint, [...(events.get(mint) ?? []), me]);
+        if (me) push(mint, me);
+        // A swap on a LaunchLab coin's graduation pool means it graduated, whether or not the source saw
+        // migrate_to_cpswap (the logs feed may not have): migration snipes may fire.
+        if (ev.kind === "cpmmSwap" && this.d.market.migrated(mint)) {
+          const pool = this.d.market.migratedPool?.(mint);
+          if (pool) push(mint, marketEventFromLaunchLabGraduation(mint as Address, pool as Address, slot));
+        }
+      });
+      for (const m of tx.raydium?.migrations ?? []) {
+        if (!this.byMint.has(m.baseMint)) continue;
+        touched.add(m.baseMint);
+        push(m.baseMint, marketEventFromLaunchLabGraduation(m.baseMint as Address, m.cpmmPool as Address, slot));
       }
       const now = this.now();
       for (const mint of touched) {
@@ -1125,7 +1142,7 @@ function removeFrom(map: Map<string, Set<string>>, key: string, id: string): voi
   if (!set.size) map.delete(key);
 }
 
-/** The coin an ingested event is about (PumpSwap swaps name the pool). */
+/** The coin an ingested event is about (PumpSwap and Raydium events name the pool). */
 function mintOfEvent(ev: IngestTx["events"][number], baseMintOfPool: (pool: string) => string | undefined): string | undefined {
   switch (ev.kind) {
     case "pumpCreate":
@@ -1137,6 +1154,9 @@ function mintOfEvent(ev: IngestTx["events"][number], baseMintOfPool: (pool: stri
       return ev.baseMint;
     case "ammBuy":
     case "ammSell":
+    case "launchlabTrade":
+    case "launchlabPoolCreate":
+    case "cpmmSwap":
       return baseMintOfPool(ev.pool);
   }
 }

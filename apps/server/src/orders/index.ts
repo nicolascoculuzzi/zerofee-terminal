@@ -91,7 +91,7 @@ export function createOrderService(d: OrderServiceDeps): OrderService {
     publish: d.publish,
     notify: (ev) => d.user.alerts.onOrderEvent(ev),
     halt: d.user.halt,
-    baseMintOfPool: (pool) => d.pools.get(pool)?.baseMint,
+    baseMintOfPool: (pool) => d.pools.get(pool)?.baseMint ?? d.market.raydiumBaseMint(pool),
     ...(o.lookupTables ? { lookupTables: o.lookupTables } : {}),
     ...(o.interfaceVersion ? { interfaceVersion: o.interfaceVersion } : {}),
     now,
