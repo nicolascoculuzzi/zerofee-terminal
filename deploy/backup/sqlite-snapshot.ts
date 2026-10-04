@@ -10,8 +10,8 @@
  * full   VACUUM INTO: an exact, compacted copy.
  * slim   (default) The same schema and every row except trades older than --trades-hours. The 72 h
  *        trade tape is most of the file and the chain re-streams it anyway. A restore needs tokens,
- *        candles, the pool registry and the metadata cache, plus the recent trades the server replays
- *        for holder metrics (REPLAY_HOURS, default 6).
+ *        candles, the pool registry, the metadata cache and the wallet funding cache (paid Helius
+ *        lookups), plus the recent trades the server replays for holder metrics (REPLAY_HOURS, default 6).
  * Both modes read inside one transaction, so the copy is a single point-in-time snapshot while the
  * server keeps writing (WAL readers never block the writer).
  *

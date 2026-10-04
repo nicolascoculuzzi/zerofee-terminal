@@ -34,7 +34,7 @@ import type { IngestTx } from "../ingest/types";
 import { LruMap } from "../util/lru";
 import { RateCounter, SampleRing } from "../util/stats";
 import { CandleBook, type CandleTrade, type CandleUpdate, cmpKey, type OrderKey } from "./candles";
-import { HolderBook } from "./holders";
+import { HolderBook, type MetricsConfig, type SnapshotEntry } from "./holders";
 import { knownQuoteDecimals, normalizeQuoteMint, quoteSolRate, ui } from "./quote";
 import {
   buildTradeContext,
@@ -48,10 +48,11 @@ import {
   type TradeEntry,
 } from "./token";
 
-export interface MarketConfig {
-  sniperSlots: number;
-  bundleMinBuyers: number;
+export interface MarketConfig extends MetricsConfig {
+  /** Known terminal fee wallets (SOL): a swap that credits one marks its trader as a pro trader. */
   proTraderWallets: readonly string[];
+  /** Known terminal fee token accounts (fees taken in an SPL token): present in the swap = paid. */
+  proTraderTokenAccounts?: readonly string[];
   /** Trades kept per token in memory (tape snapshot + rollback). */
   recentTrades?: number;
 }
@@ -78,6 +79,12 @@ export interface MarketDeps {
   requestMetadata?(mint: string, uri: string): void;
   storage?: StorageSink;
   now?(): number;
+  /** Cached funder of a wallet (non-exchange), for the shared-funder bundle rule; null when unknown. */
+  funderOf?(wallet: string): string | null;
+  /** A launch was applied (dev history bookkeeping). Must not block: called on the ingest path. */
+  onLaunch?(rec: TokenRecord): void;
+  /** A migration was applied. Must not block. */
+  onMigrate?(rec: TokenRecord): void;
 }
 
 /** A launch / migration / trade for the debug feed. */
@@ -138,6 +145,8 @@ interface EvCtx {
   key: OrderKey;
   evIndex: number;
   txBuyers: Map<string, Set<string>>;
+  /** Known terminal fee wallets this tx paid; null when the source has no account keys. */
+  paidFeeWallets: string[] | null;
 }
 
 interface PendingPoolEvent {
@@ -161,7 +170,8 @@ export class MarketState {
   /** Non-SOL, non-USDC quote mints whose decimals were requested from the resolver. */
   private readonly quoteRequests = new Set<string>();
   private readonly quoteMintInfo = new Map<string, { decimals: number; tokenProgram: string }>();
-  private readonly pros: Set<string>;
+  private readonly proWallets: Set<string>;
+  private readonly proTokenAccounts: Set<string>;
   private readonly recentCap: number;
   readonly latency = new SampleRing(50_000);
   readonly launchLatency = new SampleRing(5_000);
@@ -191,8 +201,37 @@ export class MarketState {
     private readonly cfg: MarketConfig,
     private readonly deps: MarketDeps,
   ) {
-    this.pros = new Set(cfg.proTraderWallets);
+    this.proWallets = new Set(cfg.proTraderWallets);
+    this.proTokenAccounts = new Set(cfg.proTraderTokenAccounts ?? []);
     this.recentCap = cfg.recentTrades ?? 200;
+  }
+
+  /**
+   * Known terminal fee accounts this tx paid: a fee wallet whose lamports went up (presence alone when the
+   * source has no balances), or a fee token account present in the account keys.
+   */
+  private paidFeeWallets(tx: IngestTx): string[] {
+    const keys = tx.accountKeys as string[];
+    const out: string[] = [];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i] as string;
+      if (this.proTokenAccounts.has(k)) {
+        out.push(k);
+        continue;
+      }
+      if (!this.proWallets.has(k)) continue;
+      const pre = tx.lamports?.pre[i];
+      const post = tx.lamports?.post[i];
+      if (pre === undefined || post === undefined) out.push(k);
+      else {
+        try {
+          if (BigInt(post) > BigInt(pre)) out.push(k);
+        } catch {
+          out.push(k);
+        }
+      }
+    }
+    return out;
   }
 
   private now(): number {
@@ -241,9 +280,10 @@ export class MarketState {
       }
     }
     const record = { signature: tx.signature, mints: new Set<string>(), creates: [] as string[], migrations: [] as string[] };
+    const paidFeeWallets = tx.accountKeys ? this.paidFeeWallets(tx) : null;
     tx.events.forEach((ev, i) => {
       this.stats.events++;
-      const mint = this.applyEvent(ev, { tx, key: [tx.slot, seq as number, i], evIndex: i, txBuyers });
+      const mint = this.applyEvent(ev, { tx, key: [tx.slot, seq as number, i], evIndex: i, txBuyers, paidFeeWallets });
       if (mint) record.mints.add(mint);
       if (ev.kind === "pumpCreate") record.creates.push(ev.mint);
       if (ev.kind === "pumpMigrate") record.migrations.push(ev.mint);
@@ -346,13 +386,13 @@ export class MarketState {
       rec.curveSlot = ctx.tx.slot;
     }
     if (!rec.holders) {
-      rec.holders = new HolderBook(ctx.tx.slot, this.cfg);
+      rec.holders = this.newHolderBook(ctx.tx.slot);
       rec.holders.exclude(ev.bondingCurve);
-      rec.holders.exclude(INCINERATOR);
     }
     rec.holders.addDev(ev.creator);
     if (ctx.tx.accountKeys) rec.proTraders ??= new Set();
     this.stats.launches++;
+    this.deps.onLaunch?.(rec);
     const latency = ctx.tx.receivedAt - ts;
     this.launchLatency.add(latency);
     this.changes.feed.push({
@@ -518,7 +558,17 @@ export class MarketState {
     this.changes.tradeCtx.add(rec.mint);
     this.persist(rec, true);
     if (rec.createdAt === null) this.requestBootstrap(rec, false);
+    this.deps.onMigrate?.(rec);
     return rec.mint;
+  }
+
+  /** Holder book for a token whose creation we observed: burn addresses excluded, funder lookup wired. */
+  newHolderBook(createdSlot: number | null): HolderBook {
+    const h = new HolderBook(createdSlot, this.cfg, this.deps.funderOf ? (w) => this.deps.funderOf?.(w) ?? null : null);
+    h.exclude(INCINERATOR);
+    // Tokens sent to an account owned by the system program address are as good as burned.
+    h.exclude(DEFAULT_PUBKEY);
+    return h;
   }
 
   private onCreatePool(ev: AmmCreatePoolEvent, ctx: EvCtx): string {
@@ -707,11 +757,12 @@ export class MarketState {
     if (rec.holders) {
       holderDelta = t.isBuy ? t.tokenAmount : -t.tokenAmount;
       rec.holders.applyDelta(t.trader, holderDelta);
-      if (t.isBuy) rec.holders.classifyBuy(t.trader, ctx.tx.slot, ctx.txBuyers.get(rec.mint) ?? new Set());
+      if (t.isBuy) rec.holders.classifyBuy(t.trader, ctx.tx.slot, ctx.txBuyers.get(rec.mint) ?? new Set(), t.quoteAmount);
     }
-    if (ctx.tx.accountKeys) {
+    if (ctx.paidFeeWallets) {
       rec.proTraders ??= new Set();
-      if (ctx.tx.accountKeys.some((k) => this.pros.has(k))) rec.proTraders.add(t.trader);
+      // the fee wallet trading for itself (a sweep, a treasury buy) is not a customer
+      if (ctx.paidFeeWallets.some((w) => w !== t.trader)) rec.proTraders.add(t.trader);
     }
     const tags: TradeTag[] = rec.holders ? rec.holders.tagsOf(t.trader) : rec.creator === t.trader ? ["dev"] : [];
     if (rec.proTraders?.has(t.trader)) tags.push("pro");
@@ -967,6 +1018,87 @@ export class MarketState {
     if (!rec.creator) this.setCreator(rec, r.curve.creator, "curve");
     this.touch(rec);
     this.changes.tradeCtx.add(rec.mint);
+  }
+
+  /** DexScreener verdict. An approved token profile does not revert, so a paid token stays paid. */
+  setDexPaid(mint: string, paid: boolean, paidAt: number | null): void {
+    const rec = this.tokens.get(mint);
+    if (!rec || (rec.dexPaid === true && !paid)) return;
+    const at = paid ? paidAt : null;
+    if (rec.dexPaid === paid && rec.dexPaidAt === at) return;
+    rec.dexPaid = paid;
+    rec.dexPaidAt = at;
+    this.touch(rec);
+    if (paid) this.persist(rec, true);
+  }
+
+  /** Dev history (earlier launches by the creator in our database, and how many migrated). */
+  setDevHistory(mint: string, launches: number, migrated: number): void {
+    const rec = this.tokens.get(mint);
+    if (!rec || (rec.devLaunches === launches && rec.devMigrated === migrated)) return;
+    rec.devLaunches = launches;
+    rec.devMigrated = migrated;
+    this.touch(rec);
+  }
+
+  /**
+   * Reconciles a token's holder book with a chain snapshot (HolderBook.applySnapshot). Trades we already
+   * applied after an entry's slot are re-applied on top of it, from the token's recent-trade ring.
+   * Returns false when the token has no holder book (history not observed).
+   */
+  applyHolderSnapshot(
+    mint: string,
+    entries: readonly SnapshotEntry[],
+    o: { source: "rpc" | "das"; at: number; full: boolean; floor?: bigint; slot: number },
+  ): boolean {
+    const rec = this.tokens.get(mint);
+    if (!rec?.holders) return false;
+    let oldest = o.slot;
+    for (const e of entries) if (e.slot < oldest) oldest = e.slot;
+    const later = new Map<string, { slot: number; delta: bigint }[]>();
+    for (const e of rec.trades) {
+      if (e.trade.slot <= oldest || e.holderDelta === 0n) continue;
+      const list = later.get(e.trade.trader);
+      if (list) list.push({ slot: e.trade.slot, delta: e.holderDelta });
+      else later.set(e.trade.trader, [{ slot: e.trade.slot, delta: e.holderDelta }]);
+    }
+    rec.holders.applySnapshot(entries, {
+      source: o.source,
+      at: o.at,
+      full: o.full,
+      floor: o.floor,
+      tradedAfter: new Set(later.keys()),
+      laterDelta: (owner, slot) => {
+        let d = 0n;
+        for (const x of later.get(owner) ?? []) if (x.slot > slot) d += x.delta;
+        return d;
+      },
+    });
+    this.touch(rec);
+    return true;
+  }
+
+  /** Result of the insider analysis: wallets the creator funded within two hops. */
+  setFundedInsiders(mint: string, wallets: Iterable<string>, at: number): void {
+    const rec = this.tokens.get(mint);
+    if (!rec?.holders) return;
+    rec.holders.setFundedInsiders(wallets, at);
+    this.touch(rec);
+  }
+
+  /** New funder data arrived: re-runs the shared-funder bundle rule for a token. Returns bundlers added. */
+  recheckBundles(mint: string): number {
+    const rec = this.tokens.get(mint);
+    if (!rec?.holders) return 0;
+    const added = rec.holders.recheckCrowded();
+    if (added) this.touch(rec);
+    return added;
+  }
+
+  /** Marks a token changed so the gateway republishes it (enrichment outside the record itself). */
+  touchToken(mint: string): void {
+    const rec = this.tokens.get(mint);
+    if (rec) this.touch(rec);
   }
 
   // ---------------------------------------------------------------------------------------------

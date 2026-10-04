@@ -99,6 +99,12 @@ export interface TokenRecord {
   holders: HolderBook | null;
   /** Distinct pro traders; null when the source cannot see account keys. */
   proTraders: Set<string> | null;
+  /** DexScreener approved token profile (null: not checked yet) and its payment time. */
+  dexPaid: boolean | null;
+  dexPaidAt: number | null;
+  /** Earlier launches by the creator in our database, and how many migrated (null: not computed yet). */
+  devLaunches: number | null;
+  devMigrated: number | null;
   trades: TradeEntry[];
   dangers: Token2022Danger[];
   bootstrapRequested: boolean;
@@ -156,6 +162,10 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
     windows: new RollingWindows(),
     holders: null,
     proTraders: null,
+    dexPaid: null,
+    dexPaidAt: null,
+    devLaunches: null,
+    devMigrated: null,
     trades: [],
     dangers: [],
     bootstrapRequested: false,
@@ -239,9 +249,14 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     sells: w.sells,
     holders: m ? m.holders : null,
     top10Pct: m ? m.top10Pct : null,
+    holdersSource: rec.holders ? (rec.holders.reconciledSource ?? "trades") : null,
+    holdersCheckedAt: rec.holders?.reconciledAt ?? null,
     devPct: m ? m.devPct : null,
+    devSoldAll: m ? m.devSoldAll : null,
+    devLaunches: rec.devLaunches,
+    devMigrated: rec.devMigrated,
     snipersPct: m ? m.snipersPct : null,
-    insidersPct: null,
+    insidersPct: m ? m.insidersPct : null,
     bundlersPct: m ? m.bundlersPct : null,
     proTraders: rec.proTraders ? rec.proTraders.size : null,
     bondingProgressBps: bondingProgress(rec),
@@ -250,7 +265,8 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     migratedAt: rec.migratedAt,
     pool: rec.pool,
     socials: { ...rec.socials },
-    dexPaid: null,
+    dexPaid: rec.dexPaid,
+    dexPaidAt: rec.dexPaidAt,
     athMcSol: Math.max(rec.athMcSol, mcSol),
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,

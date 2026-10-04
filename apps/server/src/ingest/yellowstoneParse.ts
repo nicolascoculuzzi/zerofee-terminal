@@ -94,6 +94,7 @@ export function parseSubscribeUpdate(u: SubscribeUpdate, receivedAt: number): Pa
         accountKeys,
         poolMints: r.events.some((e) => e.kind === "ammBuy" || e.kind === "ammSell") ? extractAmmPoolMints(input) : [],
         tokenBalances: tokenBalancesFromMeta(meta.preTokenBalances, meta.postTokenBalances),
+        lamports: { pre: meta.preBalances, post: meta.postBalances },
       },
     };
   }

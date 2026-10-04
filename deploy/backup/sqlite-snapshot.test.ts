@@ -46,6 +46,8 @@ beforeAll(() => {
   for (let i = 0; i < 100; i++) candle.run(`mint${i % 5}`, NOW - i * 60_000);
   db.run("INSERT INTO pools (pool, base_mint, quote_mint, info, updated_at) VALUES ('pool1', 'mint0', 'quote', '{}', ?)", [NOW]);
   db.run(`INSERT INTO metadata_cache (key, json, ok, fetched_at) VALUES ('cid1', '{"name":"x"}', 1, ?)`, [NOW]);
+  // funded-by results are kept forever (each one cost 100 Helius credits): a slim snapshot keeps them
+  db.run("INSERT INTO wallet_funders (wallet, funder, fetched_at) VALUES ('wallet1', 'funder1', ?)", [NOW]);
   db.close();
 });
 
@@ -66,7 +68,7 @@ describe("snapshot", () => {
     const keptTrades = count(src, "SELECT count(*) AS n FROM trades WHERE block_time >= ?", NOW - 6 * HOUR);
     src.close();
     expect(keptTrades).toBe(61);
-    expect(s.rows).toEqual({ candles: 100, metadata_cache: 1, pools: 1, tokens: 5, trades: keptTrades });
+    expect(s.rows).toEqual({ candles: 100, metadata_cache: 1, pools: 1, tokens: 5, trades: keptTrades, wallet_funders: 1 });
     expect(s.newest).toEqual({ candles: NOW, tokens: NOW, trades: NOW });
     expect(s.bytes).toBeGreaterThan(0);
     expect(s.bytes).toBeLessThan(s.sourceBytes);

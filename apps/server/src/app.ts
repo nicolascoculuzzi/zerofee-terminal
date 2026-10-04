@@ -8,6 +8,7 @@ import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@zerofee/core";
 import type { HealthResponse } from "@zerofee/protocol";
 import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
+import { Enricher, watchedMints } from "./enrich";
 import { ChainPublisher } from "./feeds/chain";
 import { MetadataFetcher } from "./feeds/metadata";
 import { ProgramAccountsCache } from "./feeds/programAccounts";
@@ -41,8 +42,10 @@ export interface AppOverrides {
   fetchFn?: typeof fetch;
   /** Skip the Binance socket (tests). */
   solUsd?: SolUsdFeed | null;
-  /** Skip periodic network pollers (blockhash, fees, tip floor, program accounts). */
+  /** Skip periodic network pollers (blockhash, fees, tip floor, program accounts, enrichment timer). */
   pollers?: boolean;
+  /** false: no enrichment at all (Dex Paid, holder reconciliation, funding, dev history). */
+  enrich?: boolean;
   /**
    * Accounts layer (createUserLayer): SIWS sessions, settings / alert / admin API, user topics.
    * Without it the gateway is anonymous-only. The app starts it and stops it with itself.
@@ -63,6 +66,7 @@ export interface App {
   source: Source | null;
   sink: IngestSink;
   reconciler: Reconciler | null;
+  enricher: Enricher | null;
   user: UserLayer | null;
   metrics: Metrics;
   health(): HealthResponse;
@@ -90,8 +94,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const reader = new StorageReader(db);
   const solUsd = o.solUsd === undefined ? new SolUsdFeed({ urls: cfg.binanceWsUrls, staleMs: cfg.solUsdStaleMs }) : o.solUsd;
 
-  // MarketState and the resolver reference each other through callbacks.
+  // MarketState, the resolver and the enricher reference each other through callbacks.
   let market: MarketState | null = null;
+  let enricher: Enricher | null = null;
   const resolver = new AccountResolver(rpc, {
     pool: (p) => market?.onPoolReady(p),
     mint: (m) => market?.onMintResolved(m),
@@ -112,6 +117,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     solUsd: () => solUsd?.current() ?? null,
     requestMetadata: (mint, uri) => metadata.request(mint, uri),
     storage: writer,
+    funderOf: (w) => enricher?.funderOf(w) ?? null,
+    onLaunch: (rec) => enricher?.onLaunch(rec),
+    onMigrate: (rec) => enricher?.onMigrate(rec),
   });
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
@@ -119,12 +127,23 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   restoreMarket(m, reader, {
     sinceMs: now - Math.max(cfg.pulse.migratedWindowMs, cfg.pulse.newMaxAgeMs),
     replaySinceMs: now - cfg.replayHours * 3_600_000,
-    metrics: cfg.metrics,
     now,
   });
 
   const pulse = new PulseBoard(cfg.pulse);
   let gateway: Gateway | null = null;
+  if (cfg.enrich.enabled && o.enrich !== false) {
+    enricher = new Enricher({
+      cfg: cfg.enrich,
+      market: m,
+      pulse,
+      // the hub exists once the gateway started (before that nobody can have a token page open)
+      focused: () => (gateway?.hub ? watchedMints(gateway.hub) : []),
+      launches: reader,
+      fundingStore: { get: (w) => reader.walletFunder(w), put: (row) => writer.walletFunder(row) },
+      fetchFn: o.fetchFn,
+    });
+  }
   const chain = new ChainPublisher({
     rpc,
     blockhashMode: cfg.source === "yellowstone" ? "stream" : "rpc",
@@ -143,14 +162,26 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
+  if (reconciler) reconciler.onMismatch = (mm) => log.info(`pumpportal mismatch ${JSON.stringify(mm)}`);
 
   const sink: IngestSink = {
     tx: (tx) => {
       m.applyTx(tx);
       if (reconciler) {
         for (const ev of tx.events) {
-          if (ev.kind === "pumpCreate") reconciler.seenPrimary("create", ev.mint, tx.receivedAt);
-          if (ev.kind === "pumpMigrate") reconciler.seenPrimary("migrate", ev.mint, tx.receivedAt);
+          if (ev.kind !== "pumpCreate" && ev.kind !== "pumpMigrate") continue;
+          const info = {
+            signature: tx.signature,
+            slot: tx.slot,
+            detail: {
+              quoteMint: ev.quoteMint,
+              crossConnected: pumpPortal?.stats.connected ?? false,
+              ...(ev.kind === "pumpCreate"
+                ? { mayhem: ev.isMayhemMode, tokenProgram: ev.tokenProgram, cashback: ev.isCashbackEnabled, user: ev.user }
+                : {}),
+            },
+          };
+          reconciler.seenPrimary(ev.kind === "pumpCreate" ? "create" : "migrate", ev.mint, tx.receivedAt, info);
         }
       }
     },
@@ -202,8 +233,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       const lead = [...r.leadMs].sort((a, b) => a - b);
       const q = (p: number) => (lead.length ? lead[Math.min(lead.length - 1, Math.floor((p / 100) * lead.length))] : "-");
       notes.push(
-        `pumpportal reconcile: matched ${r.matched}, primary-only ${r.primaryOnly}, pumpportal-only ${r.crossOnly}; ` +
-          `pumpportal arrives after us by p50=${q(50)} p90=${q(90)} ms`,
+        `pumpportal reconcile: matched ${r.matched}, late ${r.late}, primary-only ${r.primaryOnly}, pumpportal-only ${r.crossOnly}, ` +
+          `repeats ${r.repeats}, pending ${reconciler.pending}; pumpportal arrives after us by p50=${q(50)} p90=${q(90)} ms`,
       );
     }
     const srcHealth = sources().map((s) => s.health());
@@ -211,6 +242,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       srcHealth[0].notes.push(
         ...notes,
         `rpc: ${rpc.stats.calls} calls, ${rpc.stats.errors} errors, ${rpc.stats.dataAllowance} data-allowance, ${rpc.stats.rateLimited} rate-limited`,
+        ...(enricher?.notes() ?? ["enrich: off"]),
       );
     return {
       ok: !!source && srcHealth[0]?.connected === true,
@@ -299,9 +331,17 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   if (o.pollers !== false) {
     chain.start();
     programAccounts.start();
+    enricher?.start();
   }
   source?.start(sink);
-  pumpPortal?.start((ev) => reconciler?.seenCross(ev.kind, ev.mint, ev.receivedAt));
+  pumpPortal?.start((ev) =>
+    reconciler?.seenCross(ev.kind, ev.mint, ev.receivedAt, {
+      signature: ev.signature,
+      pool: ev.pool,
+      detail: { primaryConnected: source?.health().connected ?? false },
+    }),
+  );
+  const reconcileTimer = reconciler ? setInterval(() => reconciler.sweep(), 5_000) : null;
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
@@ -327,11 +367,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     source,
     sink,
     reconciler,
+    enricher,
     user,
     metrics,
     health,
     async stop() {
       clearInterval(evictTimer);
+      if (reconcileTimer) clearInterval(reconcileTimer);
+      enricher?.stop();
       metrics.stop();
       await source?.stop();
       await pumpPortal?.stop();
