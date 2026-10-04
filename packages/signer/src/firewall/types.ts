@@ -124,6 +124,11 @@ export interface TradeAction {
    * happens is not knowable offline, so it is not part of maxSolOutLamports; the summary says so.
    */
   readonly mayPayVenueRent?: boolean;
+  /**
+   * Aggregator routes (Jupiter): the venue of each hop, from the decoded route plan. The hops run inside
+   * the aggregator and are not inspected; the rule proves only where the output lands and its minimum.
+   */
+  readonly route?: readonly string[];
 }
 
 /**

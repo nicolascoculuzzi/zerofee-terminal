@@ -42,6 +42,7 @@ import { findAssociatedTokenAddress } from "../src/firewall/ata";
 import { decodeTransaction } from "../src/firewall/decode";
 import { checkTransaction } from "../src/firewall/firewall";
 import { SYSTEM_PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, WSOL_MINT } from "../src/firewall/programs";
+import { JUPITER_ROUTE_INSTRUCTIONS, JUPITER_ROUTE_V2_LAYOUT, JUPITER_SHARED_ROUTE_V2_LAYOUT } from "../src/firewall/rules/jupiter-idl";
 import { createPumpSwapRule, findCanonicalPumpPool } from "../src/firewall/rules/pump";
 import {
   CPMM_INSTRUCTION_NAMES,
@@ -65,6 +66,7 @@ import {
   randomAddress,
   type TestActors,
 } from "./helpers/fixtures";
+import { compileJupiter, JUPITER_ATTACKER, type JupiterCaseLabel, jupiterActors, jupiterCase, rawJupiterRoute } from "./helpers/jupiter";
 import { ammExtendInstruction, ammInstruction, curveInstruction } from "./helpers/pump";
 import {
   CPMM_COIN,
@@ -311,14 +313,17 @@ describe("firewall: signatures, programs and fees", () => {
     await expectRefused(buildTransaction({ feePayer: a.signer, instructions: [evil] }), makeContext(a), /is not allowlisted/);
   });
 
-  test("allowlisted program without a firewall rule (Jupiter today)", async () => {
+  test("allowlisted program without a firewall rule (Jupiter allowlisted, its rule left out)", async () => {
     const a = makeActors();
     const ix: Instruction = {
       programAddress: PROGRAMS.jupiter,
       accounts: [{ address: a.signer, role: AccountRole.WRITABLE_SIGNER }],
       data: new Uint8Array(32),
     };
-    await expectRefused(buildTransaction({ feePayer: a.signer, instructions: [ix] }), makeContext(a), /no firewall rule for program/);
+    const ctx = makeContext(a);
+    const withoutRule = { ...ctx, venueRules: ctx.venueRules!.filter((r) => r.programId !== PROGRAMS.jupiter) };
+    expect(withoutRule.allowedPrograms).toContain(PROGRAMS.jupiter);
+    await expectRefused(buildTransaction({ feePayer: a.signer, instructions: [ix] }), withoutRule, /no firewall rule for program/);
   });
 
   test("fee-payer swap", async () => {
@@ -1365,5 +1370,158 @@ describe("firewall: Raydium buys share the per-trade cap with every other venue"
       await cpmmInstruction("swap_base_output", cpmmParams(a, "buy"), { max_amount_in: half, amount_out: 1n }),
     ];
     await expectRefused(tx1(a, ...instructions), makeContext(a), /in total, above the per-trade cap/);
+  });
+});
+
+describe("firewall: Jupiter routes (real /build responses, tampered)", () => {
+  // The captures embed the taker's token accounts, so the trading wallet is the taker.
+  const BUDGET = computeBudget(300_000, 50_000n);
+  /** [CU limit, CU price, ...the route as /build returned it, Jito tip], with the route's lookup tables. */
+  function routeTx(a: TestActors, label: JupiterCaseLabel, tamper: (swap: Instruction) => Instruction = (s) => s) {
+    const { instructions, tables } = rawJupiterRoute(label);
+    const swapAt = instructions.findIndex((ix) => ix.programAddress === PROGRAMS.jupiter);
+    const route = instructions.map((ix, i) => (i === swapAt ? tamper(ix) : ix));
+    const full = [...BUDGET, ...route, tipWithDontFront(a.signer, JITO_TIP_ACCOUNTS[0]!, 10_000n)];
+    return { full, tables, swap: BUDGET.length + swapAt, ctx: makeContext(a, { addressLookupTables: tables }) };
+  }
+  const setMeta = (ix: Instruction, index: number, meta: AccountMeta): Instruction => {
+    const accounts = [...(ix.accounts ?? [])];
+    accounts[index] = meta;
+    return { ...ix, accounts };
+  };
+  const patch = (ix: Instruction, write: (v: DataView) => void): Instruction => {
+    const data = new Uint8Array(ix.data!);
+    write(new DataView(data.buffer));
+    return { ...ix, data };
+  };
+  const R = JUPITER_ROUTE_V2_LAYOUT;
+  const ROUTE = JUPITER_ROUTE_INSTRUCTIONS.find((d) => d.name === "route_v2")!;
+  const SHARED = JUPITER_ROUTE_INSTRUCTIONS.find((d) => d.name === "shared_accounts_route_v2")!;
+
+  test("the untampered routes pass (route_v2 buys with SOL, shared-accounts sell into SOL, shared-accounts USDC buy)", async () => {
+    const a = jupiterActors();
+    for (const label of ["normalBuy", "normalSell", "usdcBuy", "longtailCurveBuy"] as const) {
+      const { full, tables, ctx } = routeTx(a, label);
+      await expectAllowed(compileJupiter(full, tables), ctx);
+    }
+  });
+
+  test("destination ATA swapped to an attacker's", async () => {
+    const a = jupiterActors();
+    const attackerAta = await findAssociatedTokenAddress(a.attacker, jupiterCase("normalBuy").request.outputMint, TOKEN_PROGRAM);
+    const buy = routeTx(a, "normalBuy", (s) => setMeta(s, R.destination, { address: attackerAta, role: AccountRole.WRITABLE }));
+    await expectRefused(
+      compileJupiter(buy.full, buy.tables),
+      buy.ctx,
+      new RegExp(`#${buy.swap} Jupiter route_v2: token account at position 2 must be the trading wallet's associated token account`),
+    );
+    // Same on a shared-accounts sell: the wSOL account receiving the proceeds swapped for the attacker's.
+    const attackerWsol = await findAssociatedTokenAddress(a.attacker, WSOL_MINT, TOKEN_PROGRAM);
+    const sell = routeTx(a, "normalSell", (s) =>
+      setMeta(s, JUPITER_SHARED_ROUTE_V2_LAYOUT.destination, { address: attackerWsol, role: AccountRole.WRITABLE }),
+    );
+    await expectRefused(
+      compileJupiter(sell.full, sell.tables),
+      sell.ctx,
+      /Jupiter shared_accounts_route_v2: token account at position 5 must be the trading wallet's associated token account/,
+    );
+  });
+
+  test("platform fee set: the BONK buy /build returned for platformFeeBps=50 and an attacker's feeAccount, untouched", async () => {
+    const a = jupiterActors();
+    const { full, tables, swap, ctx } = routeTx(a, "platformFeeBuy");
+    // The capture really carries the fee: 50 bps, the attacker's account as the first hop account.
+    expect(new DataView(full[swap]!.data!.buffer).getUint16(ROUTE.platformFeeOffset, true)).toBe(50);
+    expect(full[swap]!.accounts![ROUTE.layout.fixedAccounts]!.address).toBe(JUPITER_ATTACKER);
+    const violations = await expectRefused(
+      compileJupiter(full, tables),
+      ctx,
+      new RegExp(`#${swap} Jupiter route_v2: platform_fee_bps must be 0, got 50`),
+    );
+    // The only other violation: the ATA creation for the bought mint, refused because the trade is.
+    expect(violations.filter((v) => !v.includes("neither trades nor transfers"))).toHaveLength(1);
+  });
+
+  test("authority != signer: another wallet as user_transfer_authority (it signs), or the connected wallet (it does not)", async () => {
+    const a = jupiterActors();
+    const signing = routeTx(a, "normalBuy", (s) => setMeta(s, R.authority, { address: a.attacker, role: AccountRole.READONLY_SIGNER }));
+    const violations = await expectRefused(compileJupiter(signing.full, signing.tables), signing.ctx, /requires 2 signatures/);
+    expect(violations.join("\n")).toMatch(/route_v2: user_transfer_authority must be the trading wallet/);
+    const silent = routeTx(a, "normalBuy", (s) => setMeta(s, R.authority, { address: a.connected, role: AccountRole.READONLY }));
+    await expectRefused(
+      compileJupiter(silent.full, silent.tables),
+      silent.ctx,
+      /route_v2: user_transfer_authority must be the trading wallet/,
+    );
+  });
+
+  test("min-out 0: quoted_out_amount 0, or slippage_bps of 10,000 and above", async () => {
+    const a = jupiterActors();
+    const zero = routeTx(a, "longtailCurveBuy", (s) => patch(s, (v) => v.setBigUint64(ROUTE.quotedOutOffset, 0n, true)));
+    await expectRefused(compileJupiter(zero.full, zero.tables), zero.ctx, /quoted_out_amount is 0, so the minimum output is 0/);
+    const all = routeTx(a, "longtailCurveSell", (s) => patch(s, (v) => v.setUint16(ROUTE.slippageOffset, 10_000, true)));
+    await expectRefused(compileJupiter(all.full, all.tables), all.ctx, /slippage_bps 10000 leaves no minimum output/);
+    const over = routeTx(a, "longtailCurveSell", (s) => patch(s, (v) => v.setUint16(ROUTE.slippageOffset, 65_535, true)));
+    await expectRefused(compileJupiter(over.full, over.tables), over.ctx, /slippage_bps 65535 leaves no minimum output/);
+  });
+
+  test("over cap: a 1.5 SOL in_amount (cap 1 SOL), and a USDC buy above the USDC cap", async () => {
+    const a = jupiterActors();
+    const sol = routeTx(a, "normalBuy", (s) => patch(s, (v) => v.setBigUint64(ROUTE.inAmountOffset, (CAP * 3n) / 2n, true)));
+    await expectRefused(compileJupiter(sol.full, sol.tables), sol.ctx, /route_v2: spends up to 1\.5 SOL, above the per-trade cap of 1 SOL/);
+    const usdc = routeTx(a, "usdcBuy", (s) => patch(s, (v) => v.setBigUint64(SHARED.inAmountOffset, USDC_CAP + 1n, true)));
+    await expectRefused(
+      compileJupiter(usdc.full, usdc.tables),
+      usdc.ctx,
+      /shared_accounts_route_v2: spends up to .* above the per-trade cap/,
+    );
+  });
+
+  test("destination loaded from an ALT (the runtime resolves whatever the real table holds)", async () => {
+    const a = jupiterActors();
+    const { full, tables, ctx } = routeTx(a, "normalBuy");
+    const destination = full.find((ix) => ix.programAddress === PROGRAMS.jupiter)!.accounts![R.destination]!.address;
+    const table = randomAddress();
+    const withDestination = { ...tables, [table]: [destination] };
+    await expectRefused(
+      compileJupiter(full, withDestination, [destination]),
+      { ...ctx, addressLookupTables: withDestination },
+      /route_v2: token account at position 2 must be the trading wallet's associated token account for .* as a static key, not loaded from a lookup table/,
+    );
+  });
+
+  test("unknown Jupiter instruction, and the named ones that are not fee-free exact-in v2 routes", async () => {
+    const a = jupiterActors();
+    const withDisc = (hex: string) => (s: Instruction) =>
+      ({ ...s, data: Uint8Array.from([...hex.match(/../g)!.map((h) => Number.parseInt(h, 16)), ...s.data!.subarray(8)]) }) as Instruction;
+    const cases: [string, RegExp][] = [
+      ["00112233445566ff", /instruction "unknown 00112233445566ff" is refused \(only route_v2, shared_accounts_route_v2 are allowed\)/],
+      ["9d8ab85215f4f324", /instruction "exact_out_route_v2" is refused \(exact-out routes/],
+      ["e6798f50779f6aaa", /instruction "shared_accounts_route_with_token_ledger" is refused \(token-ledger routes/],
+      ["e517cb977ae3ad2a", /instruction "route" is refused \(v1 routes/],
+      ["3ec6d6c1d59f6cd2", /instruction "claim" is refused/],
+    ];
+    for (const [hex, pattern] of cases) {
+      const { full, tables, ctx } = routeTx(a, "normalBuy", withDisc(hex));
+      await expectRefused(compileJupiter(full, tables), ctx, pattern);
+    }
+  });
+
+  test("a route with no hop accounts, a truncated route plan, and a fee on the surplus (positive_slippage_bps)", async () => {
+    const a = jupiterActors();
+    const bare = routeTx(a, "normalBuy", (s) => ({ ...s, accounts: s.accounts!.slice(0, R.fixedAccounts) }));
+    await expectRefused(
+      compileJupiter(bare.full, bare.tables),
+      bare.ctx,
+      /route_v2: expected 10 accounts plus the route's hop accounts, got 10/,
+    );
+    const cut = routeTx(a, "normalBuy", (s) => ({ ...s, data: s.data!.subarray(0, s.data!.length - 2) }));
+    await expectRefused(
+      compileJupiter(cut.full, cut.tables),
+      cut.ctx,
+      /route plan does not decode against the reviewed Jupiter IDL \(route plan length 1 exceeds the data\)/,
+    );
+    const surplus = routeTx(a, "normalBuy", (s) => patch(s, (v) => v.setUint16(ROUTE.positiveSlippageOffset, 1, true)));
+    await expectRefused(compileJupiter(surplus.full, surplus.tables), surplus.ctx, /positive_slippage_bps must be 0, got 1/);
   });
 });

@@ -26,6 +26,7 @@ import {
   RAYDIUM,
   randomAddress,
 } from "./helpers/fixtures";
+import { compileJupiter, jupiterActors, rawJupiterRoute } from "./helpers/jupiter";
 import { ammExtendInstruction, ammInstruction, curveInstruction } from "./helpers/pump";
 import {
   CPMM_COIN,
@@ -484,6 +485,26 @@ describe("firewall: allowed Raydium LaunchLab and CPMM transactions", () => {
         .sort(),
     ).toEqual([...shared].sort());
     await expectAllowed(tx, makeContext(a, { addressLookupTables: tables }));
+  });
+});
+
+describe("firewall: allowed Jupiter routes (real /build responses, our compute budget and tip)", () => {
+  test.each([
+    "longtailCurveBuy",
+    "longtailCurveSell",
+    "longtail2022Buy",
+    "longtail2022Sell",
+    "normalBuy",
+    "normalSell",
+    "usdcBuy",
+  ] as const)("%s as /build returned it, with its lookup tables", async (label) => {
+    const a = jupiterActors();
+    const { instructions, tables } = rawJupiterRoute(label);
+    const full = [...computeBudget(300_000, 50_000n), ...instructions, tipWithDontFront(a.signer, JITO_TIP_ACCOUNTS[2]!, 10_000n)];
+    const summary = await expectAllowed(compileJupiter(full, tables), makeContext(a, { addressLookupTables: tables }));
+    const trade = summary.actions.find((x) => x.kind === "trade");
+    expect(trade).toMatchObject({ kind: "trade", venue: "Jupiter" });
+    expect(summary.text).toContain("the hops are not inspected, but the output must reach the trading wallet's own token account");
   });
 });
 

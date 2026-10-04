@@ -60,9 +60,14 @@ export async function checkUserTokenAccount(c: Check, accountIndex: number, mint
   }
   const account = c.core[accountIndex]!;
   const expected = await c.env.ata(c.env.ctx.signer, mint, tokenProgram.address);
-  if (!account.isStatic || account.address !== expected) {
+  if (account.address !== expected) {
     c.violations.push(
       `${c.label}: token account at position ${accountIndex} must be the trading wallet's associated token account for ${mint}`,
+    );
+  } else if (!account.isStatic) {
+    // The runtime resolves a looked-up key from the real table, which need not hold what we were told.
+    c.violations.push(
+      `${c.label}: token account at position ${accountIndex} must be the trading wallet's associated token account for ${mint} as a static key, not loaded from a lookup table`,
     );
   }
 }

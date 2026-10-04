@@ -4,7 +4,7 @@
  * read live; test/constants-crosscheck.test.ts fails when a value drifts from packages/core.
  *
  * Built-in rules decode System, Compute Budget, SPL Token, Token-2022 and ATA instructions; venue
- * programs (pump.fun, PumpSwap, Raydium LaunchLab, Raydium CPMM) are handled by venue rules. Whether
+ * programs (pump.fun, PumpSwap, Raydium LaunchLab, Raydium CPMM, Jupiter v6) are handled by venue rules. Whether
  * any program may be invoked at all is still decided by ctx.allowedPrograms. Tip accounts live in
  * ../policy.ts.
  */
@@ -38,6 +38,12 @@ export const RAYDIUM_LAUNCHLAB_PROGRAM: Address = address("LanMV9sAd7wArD4vJFi2q
  * https://github.com/raydium-io/raydium-idl/blob/e7e0c96fe77bcf6a020b84a44c47a722aac8e359/raydium_cpmm/raydium_cp_swap.json
  */
 export const RAYDIUM_CPMM_PROGRAM: Address = address("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
+/**
+ * Jupiter aggregator v6, the long-tail fallback (Swap API V2 `/build` routes). Verified 2026-10-03: every
+ * captured /build response routes through it, its on-chain IDL account names it, and jupiter-cpi declares it.
+ * https://github.com/jup-ag/jupiter-cpi/blob/12bc5f67b94a2c3edc74d6e721a19442124a0bad/src/lib.rs
+ */
+export const JUPITER_PROGRAM: Address = address("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
 /** Sysvars referenced by nonce instructions. */
 export const SYSVAR_RECENT_BLOCKHASHES: Address = address("SysvarRecentB1ockHashes11111111111111111111");
 export const SYSVAR_RENT: Address = address("SysvarRent111111111111111111111111111111111");

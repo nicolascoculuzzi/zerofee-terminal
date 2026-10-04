@@ -11,16 +11,18 @@ function who(address: Address, signer: Address, connectedWallet: Address): strin
 export function describeAction(action: SummaryAction, signer: Address, connectedWallet: Address): string {
   switch (action.kind) {
     case "trade": {
-      const rent = action.mayPayVenueRent
+      const note = action.mayPayVenueRent
         ? ` If its platform or creator fee vault does not exist yet, ${action.venue} creates it with the trading wallet paying the rent (not refundable).`
-        : "";
+        : action.route?.length
+          ? ` Routed through ${action.route.join(" > ")}; the hops are not inspected, but the output must reach the trading wallet's own token account.`
+          : "";
       if (action.side === "buy") {
         const amount =
           action.baseAmountIs === "min_out" ? `at least ${formatInteger(action.baseAmount)}` : formatInteger(action.baseAmount);
-        return `Buy on ${action.venue} (${action.instruction}): spend up to ${formatQuote(action.maxQuoteIn ?? 0n, action.quoteMint)} for ${amount} base units of token ${shortAddress(action.baseMint)}.${rent}`;
+        return `Buy on ${action.venue} (${action.instruction}): spend up to ${formatQuote(action.maxQuoteIn ?? 0n, action.quoteMint)} for ${amount} base units of token ${shortAddress(action.baseMint)}.${note}`;
       }
       const sold = action.baseAmountIs === "max_in" ? `up to ${formatInteger(action.baseAmount)}` : formatInteger(action.baseAmount);
-      return `Sell ${sold} base units of token ${shortAddress(action.baseMint)} on ${action.venue} (${action.instruction}) for at least ${formatQuote(action.minQuoteOut ?? 0n, action.quoteMint)}.${rent}`;
+      return `Sell ${sold} base units of token ${shortAddress(action.baseMint)} on ${action.venue} (${action.instruction}) for at least ${formatQuote(action.minQuoteOut ?? 0n, action.quoteMint)}.${note}`;
     }
     case "extend_account":
       return `Pay the one-time rent to grow ${action.venue} pool ${shortAddress(action.account)} to its current size (required before trading on an older pool; not refundable).`;

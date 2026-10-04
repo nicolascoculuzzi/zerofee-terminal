@@ -1,5 +1,5 @@
 /**
- * @zerofee/signer public API: keystore (Vault), signer firewall (checkTransaction, venue rules,
+ * @zerofee/signer public API: keystore (Vault), signer firewall (checkTransaction, venue rules incl. Jupiter,
  * SpendTracker), SignerService, and the worker / iframe RPC. Deliberately absent: any function that
  * returns key material or signs arbitrary bytes with a trading wallet.
  */
@@ -12,6 +12,7 @@ export {
   ASSOCIATED_TOKEN_PROGRAM,
   COMPUTE_BUDGET_PROGRAM,
   JITO_DONT_FRONT_PREFIX,
+  JUPITER_PROGRAM,
   PUMP_AMM_PROGRAM,
   PUMP_PROGRAM,
   RAYDIUM_CPMM_PROGRAM,
@@ -22,6 +23,21 @@ export {
   USDC_MINT,
   WSOL_MINT,
 } from "./firewall/programs";
+export {
+  createJupiterRule,
+  findJupiterEventAuthority,
+  findJupiterProgramAuthority,
+  type JupiterRuleOptions,
+} from "./firewall/rules/jupiter";
+export {
+  decodeJupiterRoutePlan,
+  JUPITER_ROUTE_INSTRUCTIONS,
+  JUPITER_ROUTE_V2_LAYOUT,
+  JUPITER_SHARED_ROUTE_V2_LAYOUT,
+  JUPITER_STATIC_POSITIONS,
+  type JupiterRouteInstruction,
+  type JupiterRouteStep,
+} from "./firewall/rules/jupiter-idl";
 export {
   type AuxiliaryInstruction,
   createIdlVenueRule,
