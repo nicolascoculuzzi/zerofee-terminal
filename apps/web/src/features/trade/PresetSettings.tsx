@@ -1,8 +1,9 @@
-import { Check, ShieldCheck, Zap } from "lucide-react";
+import { ArrowDownUp, Check, Coins, Fuel, ShieldCheck, Zap } from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { NumberInput, Segmented } from "../../components/ui/controls";
 import { Popover } from "../../components/ui/Popover";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { fmtFee } from "../../lib/format";
 import { compactLabel } from "../../lib/hotkeys";
@@ -56,55 +57,69 @@ function useEditor() {
 }
 
 /**
- * Trade panel execution summary: the P1|P2|P3 switch with the landing chip, then the fee line.
- * Two rows so every label stays readable at the 288 px rail.
+ * Trade panel execution summary (DESIGN.md 4.11 item 6): one 24 px row, xs P1|P2|P3 then the
+ * settings as compact parts that open the preset editor. At the 288-320 px rail each part is a
+ * 12 px icon and its value (slippage, priority fee, tip, then the landing lane's icon), as on
+ * Axiom's panel; one tooltip spells them out. From a 352 px container (wide layout, mobile
+ * sheet) the words replace the icons: "Slip 20%  Prio 0.0001  Tip 0.00001  Reduced".
  */
 export function ExecutionSummary({ side }: { side: "buy" | "sell" }) {
   const settings = useSettings((s) => s.presets[s.activePreset][side]);
   const anchor = useRef<HTMLDivElement>(null);
   const editor = useEditor();
+  const lane = LANDING_INFO[settings.landing];
+  const prio = fmtFee(settings.priorityFeeSol);
+  const tip = fmtFee(settings.tipSol);
   return (
-    <div ref={anchor} className="space-y-1">
-      <div className="flex h-6 items-center gap-2">
-        <PresetSwitch size="xs" />
-        <button
-          type="button"
-          onClick={editor.toggle}
-          aria-expanded={editor.open}
-          title={LANDING_INFO[settings.landing].note}
-          className="focus-inset ml-auto flex h-5 items-center rounded-xs px-1 text-label text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg-1"
+    <div ref={anchor} className="@container">
+      <div className="flex h-6 items-center gap-1">
+        <PresetSwitch size="xs" className="shrink-0 @max-[21rem]:[&>button]:px-1.5" />
+        <Tooltip
+          wrapperClassName="ml-auto min-w-0"
+          content={
+            <span className="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5">
+              <span className="text-fg-3">Slippage</span>
+              <span className="zf-num text-right">{settings.slippagePct}%</span>
+              <span className="text-fg-3">Priority fee</span>
+              <span className="zf-num text-right">{prio} SOL</span>
+              <span className="text-fg-3">Tip</span>
+              <span className="zf-num text-right">{tip} SOL</span>
+              <span className="text-fg-3">Landing</span>
+              <span className={cn("text-right", lane.risky && "text-warn")}>{lane.label}</span>
+            </span>
+          }
         >
-          <LandingMark landing={settings.landing} />
-        </button>
+          <button
+            type="button"
+            onClick={editor.toggle}
+            aria-expanded={editor.open}
+            aria-label={`Edit ${side} settings: slippage ${settings.slippagePct}%, priority fee ${prio} SOL, tip ${tip} SOL, ${lane.label} landing`}
+            className="focus-inset zf-num num-dense flex h-5 min-w-0 items-center gap-1 overflow-hidden rounded-xs px-0.5 text-label whitespace-nowrap text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg-1 @min-[22rem]:gap-2 @min-[22rem]:px-1 @min-[22rem]:[font-stretch:normal]"
+          >
+            <Part icon={<ArrowDownUp />} label="Slip" value={`${settings.slippagePct}%`} />
+            <Part icon={<Fuel />} label="Prio" value={prio} />
+            <Part icon={<Coins />} label="Tip" value={tip} />
+            <span className={cn("inline-flex items-center gap-1", lane.risky ? "text-warn" : "text-fg-3")}>
+              {lane.risky ? <Zap className="icon-xs" /> : <ShieldCheck className="icon-xs" />}
+              <span className="hidden @min-[22rem]:inline">{lane.label}</span>
+            </span>
+          </button>
+        </Tooltip>
       </div>
-      <button
-        type="button"
-        onClick={editor.toggle}
-        aria-expanded={editor.open}
-        aria-label={`Edit ${side} settings: slippage ${settings.slippagePct}%, priority fee ${fmtFee(settings.priorityFeeSol)} SOL, tip ${fmtFee(settings.tipSol)} SOL`}
-        className="focus-inset flex h-5 w-full items-center gap-2 rounded-xs text-left text-label text-fg-2 transition-colors hover:text-fg-1"
-      >
-        <SummaryParts slippage={settings.slippagePct} priority={settings.priorityFeeSol} tip={settings.tipSol} />
-      </button>
       <PresetEditor open={editor.open} onClose={() => editor.setOpen(false)} anchor={anchor} side={side} />
     </div>
   );
 }
 
-function SummaryParts({ slippage, priority, tip }: { slippage: number; priority: number; tip: number }) {
+/** One summary part: a 12 px icon (narrow) or a text-3 word (wide), then the value. */
+function Part({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
-    <span className="zf-num flex min-w-0 items-center gap-1 truncate">
-      <span>
-        <span className="text-fg-3">Slip</span> {slippage}%
+    <span className="inline-flex items-center gap-0.5 @min-[22rem]:gap-1">
+      <span aria-hidden="true" className="inline-flex text-fg-3 @min-[22rem]:hidden [&>svg]:size-3">
+        {icon}
       </span>
-      <span className="text-fg-3">·</span>
-      <span>
-        <span className="text-fg-3">Prio</span> {fmtFee(priority)}
-      </span>
-      <span className="text-fg-3">·</span>
-      <span>
-        <span className="text-fg-3">Tip</span> {fmtFee(tip)}
-      </span>
+      <span className="hidden text-fg-3 @min-[22rem]:inline">{label}</span>
+      {value}
     </span>
   );
 }
