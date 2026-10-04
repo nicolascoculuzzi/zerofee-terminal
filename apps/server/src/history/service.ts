@@ -70,6 +70,8 @@ export interface HistoryDeps {
   poolReady?(pool: string): boolean;
   requestPool?(pool: string): void;
   now?(): number;
+  /** Base wait after a failed step (default 5 s; a 429 waits three times as long). */
+  retryMs?: number;
 }
 
 interface WalkState {
@@ -386,7 +388,7 @@ export class HistoryService {
         // rate limited even after the reader's retries: the budget is short, not the job broken
         if (e instanceof RpcError && e.code === 429) {
           this.stats.rateLimitedSteps++;
-          job.notBefore = this.now() + 15_000;
+          job.notBefore = this.now() + 3 * (this.d.retryMs ?? 5_000);
           this.running = null;
           continue;
         }
@@ -395,7 +397,7 @@ export class HistoryService {
         if (job.errors >= 5) {
           this.stats.failed++;
           await this.finalize(job, true);
-        } else job.notBefore = this.now() + 5_000 * job.errors;
+        } else job.notBefore = this.now() + (this.d.retryMs ?? 5_000) * job.errors;
       }
       this.running = null;
       // yield to the event loop between steps
@@ -410,7 +412,13 @@ export class HistoryService {
     if (job.pending.length) {
       const n = Math.max(1, this.d.reader.batchSize);
       const batch = job.pending.splice(0, n);
-      const txs = await this.d.reader.transactions(batch.map((b) => b.signature));
+      let txs: (RpcJsonTx | null)[];
+      try {
+        txs = await this.d.reader.transactions(batch.map((b) => b.signature));
+      } catch (e) {
+        job.pending.unshift(...batch); // not fetched: retried with the job
+        throw e;
+      }
       txs.forEach((tx, i) => {
         const b = batch[i] as (typeof batch)[number];
         job.stats.fetched++;
@@ -479,6 +487,23 @@ export class HistoryService {
     job.started = true;
     this.lastAttempt.set(job.mint, this.now());
     this.lastRefresh.set(job.mint, this.now());
+    // Retain the coin's trades from the start: a history older than TRADES_RETENTION_HOURS would otherwise be
+    // pruned (every minute) while it is being backfilled.
+    if (this.d.cfg.retainDays > 0) {
+      const h0 = rec.history ?? this.state(job.mint);
+      this.d.writer.history({
+        mint: job.mint,
+        state: row?.state ?? h0?.state ?? "partial",
+        fromSlot: row?.fromSlot ?? h0?.fromSlot ?? null,
+        fromTime: row?.fromTime ?? h0?.fromTime ?? null,
+        fromCreation: row?.fromCreation ?? false,
+        capped: row?.capped ?? false,
+        trades: row?.trades ?? null,
+        cursors: null,
+        retainUntil: this.now() + this.d.cfg.retainDays * 86_400_000,
+        updatedAt: row?.updatedAt ?? this.now(),
+      });
+    }
     if (job.quiet) return true;
     const h = rec.history ?? this.state(job.mint);
     this.setHistory(job.mint, {

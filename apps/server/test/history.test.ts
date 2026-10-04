@@ -15,6 +15,7 @@ import { MarketState } from "../src/market/state";
 import { openDb } from "../src/storage/db";
 import { StorageReader } from "../src/storage/reader";
 import { StorageWriter } from "../src/storage/writer";
+import { RpcError } from "../src/util/rpc";
 import { addr, FakeCurve, FakeResolver, fixture, synthTx, waitFor } from "./helpers";
 import { type ChainTx, chainTx, decodeFake, FakeHistoryReader, HISTORY_CFG } from "./historyHelpers";
 
@@ -466,5 +467,73 @@ describe("backfill writes go through the writer thread", () => {
     expect(other.tradesOfMint(life.mint)).toHaveLength(31);
     expect(other.historyRow(life.mint)).toMatchObject({ state: "complete", trades: 31 });
     await writer.stop();
+  });
+});
+
+describe("long histories and failing reads", () => {
+  test("a history older than the trade retention survives the prune that runs during its backfill", async () => {
+    const life = coinLife("old", 20);
+    // shift the whole life 5 days back (retention is 72 h)
+    const shift = 5n * 86_400n;
+    for (const tx of life.txs) for (const ev of tx.events) if ("timestamp" in ev) (ev as { timestamp: bigint }).timestamp -= shift;
+    const db = openDb(":memory:");
+    const writer = new StorageWriter(db, { flushMs: 1_000_000, retentionHours: 72 });
+    const w: World = {
+      market: new MarketState(CFG, { resolver: new FakeResolver(), solUsd: () => 100, storage: writer }),
+      writer,
+      reader: new StorageReader(db),
+      states: [],
+    };
+    w.market.applyTx(life.txs[life.txs.length - 1] as IngestTx);
+    const rec = w.market.tokens.get(life.mint);
+    if (rec) rec.bondingCurve = life.curve.bondingCurve;
+    const reader = new FakeHistoryReader(chainOf(life.curve.bondingCurve, life.txs));
+    const fetch = reader.transactions.bind(reader);
+    reader.transactions = async (sigs) => {
+      writer.flush();
+      writer.prune(); // the minute timer firing mid-backfill
+      return fetch(sigs);
+    };
+    const svc = service(w, reader);
+    svc.start();
+    svc.request(life.mint, 0);
+    await waitFor(() => svc.state(life.mint)?.state === "complete", 5_000);
+    writer.flush();
+    writer.prune();
+    expect(w.reader.tradesOfMint(life.mint)).toHaveLength(21);
+    expect(svc.state(life.mint)?.trades).toBe(21);
+  });
+
+  test("a failed getTransaction batch is retried, not dropped", async () => {
+    const life = coinLife("flaky", 12);
+    const w = world();
+    w.market.applyTx(life.txs[life.txs.length - 1] as IngestTx);
+    const rec = w.market.tokens.get(life.mint);
+    if (rec) rec.bondingCurve = life.curve.bondingCurve;
+    const reader = new FakeHistoryReader(chainOf(life.curve.bondingCurve, life.txs));
+    const fetch = reader.transactions.bind(reader);
+    let calls = 0;
+    reader.transactions = async (sigs) => {
+      calls++;
+      if (calls % 3 === 0) throw new RpcError("getTransaction", 429, "HTTP 429");
+      return fetch(sigs);
+    };
+    const svc = new HistoryService({
+      cfg: HISTORY_CFG,
+      market: w.market,
+      reader,
+      store: w.reader,
+      writer: w.writer,
+      watched: () => [],
+      listed: () => [],
+      decode: decodeFake,
+      retryMs: 5,
+    });
+    services.push(svc);
+    svc.start();
+    svc.request(life.mint, 0);
+    await waitFor(() => svc.state(life.mint)?.state === "complete", 5_000);
+    w.writer.flush();
+    expect(w.reader.tradesOfMint(life.mint)).toHaveLength(13);
   });
 });
