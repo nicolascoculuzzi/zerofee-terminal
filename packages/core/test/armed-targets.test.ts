@@ -1,4 +1,4 @@
-/** Market-cap targets -> quote-out thresholds, on the live fixture curve and canonical pool. */
+/** Market-cap targets -> quote-out thresholds, on the live fixture curve and canonical pool; the migration-pool estimate. */
 import { describe, expect, test } from "bun:test";
 import {
   bondingCurvePda,
@@ -10,6 +10,7 @@ import {
   decodePool,
   decodeTokenAccount,
   effectiveQuoteReserve,
+  estimateMigrationPoolReserves,
   isCanonicalPumpPool,
   isqrt,
   type LiveMarketState,
@@ -120,5 +121,23 @@ describe("PumpSwap canonical pool", async () => {
     );
     // A cap low enough to need a negative quote vault (boost pool) is unreachable.
     expect(quoteOutAtMarketCap("sell", amount, market, mcNow / 100n)).toBeNull();
+  });
+});
+
+describe("migration snipe: opening-pool estimate", async () => {
+  const curve = decodeBondingCurve(fixture(await bondingCurvePda(CURVE_MINT)).data);
+  const global = pumpGlobal();
+
+  test("a boost only splits the migrated quote into real and virtual; the effective quote and the base stay the same", () => {
+    // migrate books the boost as virtual quote reserves taken out of the real vault (mainnet fork, 2026-10-03).
+    const boost = 17_584_505_555n;
+    const plain = estimateMigrationPoolReserves(curve, global);
+    const boosted = estimateMigrationPoolReserves(curve, global, boost);
+    expect(plain.virtualQuoteReserves).toBe(0n);
+    expect(boosted.baseReserve).toBe(plain.baseReserve);
+    expect(boosted.virtualQuoteReserves).toBe(boost);
+    expect(boosted.quoteVaultReserve).toBe(plain.quoteVaultReserve - boost);
+    expect(effectiveQuoteReserve(boosted)).toBe(effectiveQuoteReserve(plain));
+    expect(() => estimateMigrationPoolReserves(curve, global, plain.quoteVaultReserve)).toThrow(RangeError);
   });
 });

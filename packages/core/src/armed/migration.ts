@@ -49,7 +49,8 @@ export async function migrationPoolContext(args: MigrationPoolArgs): Promise<Amm
       coinCreator: args.curve.creator,
       isMayhemMode: args.curve.isMayhemMode,
       isCashbackCoin: args.curve.isCashbackCoin,
-      // Pools are created at full size: no extend_account prefix.
+      // `migrate` creates the pool at 287 bytes, below POOL_ACCOUNT_NEW_SIZE, but buys on it execute without
+      // extend_account (mainnet fork, 2026-10-03), so the snipe leaves out the prefix the SDK would add.
       dataLength: POOL_ACCOUNT_NEW_SIZE,
     },
     user: args.user,
@@ -64,8 +65,16 @@ export async function migrationPoolContext(args: MigrationPoolArgs): Promise<Amm
 /**
  * ESTIMATE of the canonical pool's opening reserves, to centre a snipe grid: the curve sold out
  * (virtual reserves at real_token_reserves = 0 along x*y = k), its quote minus `pool_migration_fee`
- * against the unsold remainder of the supply. Boost virtual quote reserves (≈17.58 SOL observed)
- * are not known at arming time; pass `virtualQuoteReserves` to model them. Exact figures arrive in
+ * against the unsold remainder of the supply.
+ *
+ * `migrate` parks a boost share of that quote (≈17.58 SOL observed) in the pool's boost vault (the wSOL
+ * ATA of PumpSwap PDA ["boost_vault", pool]) instead of its real quote vault, and books the same amount
+ * as signed virtual quote reserves. So the EFFECTIVE quote (real + virtual), which prices every trade
+ * and sets the fee tier, is the same with or without a boost. `virtualQuoteReserves` (the
+ * expected boost, unknown at arming time) only splits real from virtual, which matters for sells
+ * (capped at the real vault). On a mainnet fork (2026-10-03) the base and the effective quote matched
+ * the pool `migrate` created to the unit; earlier this function added the boost on top of the real
+ * quote and overstated the opening price by about 20%. Exact figures arrive in
  * CompletePumpAmmMigrationEvent (`mint_amount`, `sol_amount`) and the pool account.
  */
 export function estimateMigrationPoolReserves(
@@ -84,5 +93,6 @@ export function estimateMigrationPoolReserves(
   const quote = realQuoteFinal - global.poolMigrationFee;
   const base = curve.tokenTotalSupply - global.initialRealTokenReserves;
   if (quote <= 0n || base <= 0n) throw new RangeError("estimated migration reserves are not positive");
-  return { baseReserve: base, quoteVaultReserve: quote, virtualQuoteReserves };
+  if (virtualQuoteReserves < 0n || virtualQuoteReserves >= quote) throw new RangeError("the boost must be in [0, the migrated quote)");
+  return { baseReserve: base, quoteVaultReserve: quote - virtualQuoteReserves, virtualQuoteReserves };
 }
