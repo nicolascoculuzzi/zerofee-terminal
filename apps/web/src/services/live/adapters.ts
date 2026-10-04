@@ -133,7 +133,8 @@ export function adaptToken(t: WireToken, ctx: TokenAdaptContext): TokenSummary {
     holders: known(t.holders),
     proTraders: known(t.proTraders),
     bondingProgress: t.migrated || t.complete ? 1 : t.bondingProgressBps / 10_000,
-    migratedAt: t.migratedAt,
+    // Migrated at an unknown time (the server saw the pool, not the migration): NaN, which still reads as migrated.
+    migratedAt: t.migratedAt ?? (t.migrated ? Number.NaN : null),
     risk: {
       top10Pct: known(t.top10Pct),
       devPct: known(t.devPct),

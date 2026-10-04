@@ -133,7 +133,13 @@ const lamportsToSol = (x: bigint) => Number(x) / 1e9;
 /** Plain-words reason for anything the engine, the signer, Jupiter or the server threw. */
 export function tradeErrorMessage(e: unknown): string {
   if (e instanceof JupiterApiError) return /no routes?/i.test(e.message) ? "No Jupiter route for this coin right now" : e.message;
-  if (e instanceof JupiterRouteError) return e.message;
+  if (e instanceof JupiterRouteError) {
+    // "Jupiter /build: no route the signer can verify (...)": Jupiter only offered routes the firewall refuses.
+    const text = e.message.replace(/^Jupiter \/build: /, "");
+    return /^no route the signer can verify/.test(text)
+      ? `No Jupiter route the signer can verify for this coin right now${text.slice("no route the signer can verify".length)}`
+      : `Jupiter: ${text}`;
+  }
   if (e instanceof ApiError) return e.code === "halted" ? `Trading is halted: ${e.message}` : e.message;
   if (e instanceof TradeError || e instanceof TradeStateError || e instanceof TransferError) return e.message;
   if (e instanceof RangeError && /exceeds balance/.test(e.message)) return "Sell amount exceeds the wallet's balance";
