@@ -56,7 +56,11 @@ const VERSION_RE = /^[0-9a-z]{1,13}$/;
 export const PUMP_CDN = "https://images.pump.fun/coin-image";
 /** A valid address no token uses: pump's CDN answers it with its placeholder image. */
 const PUMP_SENTINEL = "11111111111111111111111111111111";
-const ACCEPT = "image/webp,image/png,image/jpeg,image/gif;q=0.9,image/avif;q=0.8,*/*;q=0.1";
+/**
+ * No image/avif: content-negotiating CDNs (Cloudflare Images behind images.pump.fun) answer AVIF when it is
+ * offered, which Bun.Image may not decode on this host. AVIF still accepted when an upstream sends it anyway.
+ */
+const ACCEPT = "image/webp,image/png,image/jpeg,image/gif;q=0.9";
 const LARGEST = IMAGE_PROXY_SIZES[IMAGE_PROXY_SIZES.length - 1] as ImageProxySize;
 const WARM_SIZE: ImageProxySize = 96;
 const PERMANENT_TTL = 6 * 3_600_000;
@@ -746,6 +750,11 @@ export class ImageProxy {
       if (!format) {
         const kind = describeUnknown(res.bytes);
         if (kind === "markup") throw new FetchFailure("markup", true);
+        // a 200 with an empty body (a CDN object not written yet): look again later
+        if (kind === "empty") {
+          bump(this.stats.badMagic, kind);
+          throw new FetchFailure("empty", false);
+        }
         bump(this.stats.badMagic, kind);
         if (this.badMagicLogged < 50) {
           this.badMagicLogged++;

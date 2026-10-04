@@ -313,6 +313,16 @@ describe("image jobs", () => {
     expect(t.proxy.imageState(MINT)).toBe("ok");
   });
 
+  test("an empty 200 body (a CDN object not written yet) is retried, not refused", async () => {
+    let n = 0;
+    const t = setup({ env: { IMG_WAIT_MS: "30" }, route: () => (n++ === 0 ? img(new Uint8Array(0), "image/webp") : img(PNG)) });
+    const p = path(MINT, "https://cdn.example.com/a.png", 48);
+    expect((await t.get(p)).headers.get("x-zf-image")).toBe("pending");
+    await waitFor(() => t.proxy.stats.jobs.ok === 1, 3_000);
+    expect((await t.get(p)).status).toBe(200);
+    expect(t.proxy.stats.badMagic).toEqual({ empty: 1 });
+  });
+
   test("permanent failures are reported as failed (the client stops asking); no image is none", async () => {
     const t = setup({
       refs: { [MINT]: { image: "https://cdn.example.com/a.svg", pump: false }, [OTHER]: { image: null, pump: false } },
