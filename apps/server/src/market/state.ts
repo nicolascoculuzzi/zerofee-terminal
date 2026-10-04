@@ -18,9 +18,12 @@ import {
   type AmmSwapEvent,
   coinCreatorVaultAuthorityPda,
   creatorVaultPda,
+  curveMintSupply,
   DEFAULT_PUBKEY,
   type DecodedEvent,
   INCINERATOR,
+  MAYHEM_FEE_RECIPIENTS,
+  ONE_BILLION_SUPPLY,
   type OnchainTokenMetadata,
   PUMP_TOKEN_DECIMALS,
   type PumpCompleteEvent,
@@ -361,7 +364,12 @@ export class MarketState {
       quoteTokenProgram: knownQuoteTokenProgram(quoteMint),
       tokenProgram: ev.tokenProgram,
       decimals: PUMP_TOKEN_DECIMALS,
-      supply: ev.tokenTotalSupply > 0n ? ev.tokenTotalSupply : rec.supply,
+      // token_total_supply is the curve's 1e15 even for a mayhem coin, whose mint holds 2e15
+      supply:
+        rec.supplyExact || ev.tokenTotalSupply <= 0n
+          ? rec.supply
+          : curveMintSupply({ tokenTotalSupply: ev.tokenTotalSupply, isMayhemMode: ev.isMayhemMode }),
+      curveTokenTotalSupply: ev.tokenTotalSupply > 0n ? ev.tokenTotalSupply : rec.curveTokenTotalSupply,
       createdAt: ts,
       createdSlot: ctx.tx.slot,
       createSignature: ctx.tx.signature,
@@ -479,7 +487,7 @@ export class MarketState {
     const rec = this.getOrCreate(ev.mint, {
       launchpad: "pump",
       isMayhem: ev.mayhemMode,
-      supply: ev.mayhemMode ? 2_000_000_000_000_000n : 1_000_000_000_000_000n,
+      supply: curveMintSupply({ tokenTotalSupply: ONE_BILLION_SUPPLY, isMayhemMode: ev.mayhemMode }),
     });
     if (rec.quoteMint !== quoteMint) {
       rec.quoteMint = quoteMint;
@@ -493,7 +501,8 @@ export class MarketState {
     }
     if (ev.mayhemMode && !rec.isMayhem) {
       rec.isMayhem = true;
-      if (rec.createdAt === null) rec.supply = 2_000_000_000_000_000n;
+      if (!rec.supplyExact)
+        rec.supply = curveMintSupply({ tokenTotalSupply: rec.curveTokenTotalSupply ?? ONE_BILLION_SUPPLY, isMayhemMode: true });
     }
     if (rec.createdAt === null) this.requestBootstrap(rec, true);
     const latest = !rec.curveKey || cmpKey(ctx.key, rec.curveKey) >= 0;
@@ -672,6 +681,9 @@ export class MarketState {
     const quoteMint = normalizeQuoteMint(info.quoteMint);
     const known = this.tokens.get(info.baseMint);
     if (known && info.isCanonical) this.adoptCanonicalPool(known, info);
+    // Mayhem pools pay the reserved (mayhem) fee recipients; their events' base_supply is a fixed 1e15
+    // basis while the mint holds ~2e15 (tx 4L4LjiEv...), so it must not replace the supply.
+    const mayhemPool = info.isMayhemMode === true || known?.isMayhem === true || MAYHEM_FEE_RECIPIENTS.includes(ev.protocolFeeRecipient);
     const rec =
       known ??
       this.getOrCreate(info.baseMint, {
@@ -685,12 +697,20 @@ export class MarketState {
         migrated: info.isCanonical === true,
         complete: info.isCanonical === true,
         pool: info.pool,
-        supply: info.baseSupply ? BigInt(info.baseSupply) : 1_000_000_000_000_000n,
+        isMayhem: mayhemPool,
+        // the pool registry's base supply comes from the mint account
+        supply: info.baseSupply
+          ? BigInt(info.baseSupply)
+          : curveMintSupply({ tokenTotalSupply: ONE_BILLION_SUPPLY, isMayhemMode: mayhemPool }),
+        supplyExact: !!info.baseSupply,
       });
     if (!known && rec.createdAt === null) this.requestBootstrap(rec, false);
     rec.pool ??= info.pool;
     if (info.isCanonical && rec.pool !== info.pool) rec.pool = info.pool;
-    if (ev.baseSupply > 0n) rec.supply = ev.baseSupply;
+    if (ev.baseSupply > 0n && !mayhemPool) {
+      rec.supply = ev.baseSupply;
+      rec.supplyExact = true;
+    }
     const poolAfter: PoolReserves = isBuy
       ? {
           base: ev.poolBaseReserves - ev.baseAmount,
@@ -1001,7 +1021,10 @@ export class MarketState {
     if (!rec) return;
     rec.tokenProgram = info.tokenProgram;
     rec.decimals = info.decimals;
-    if (info.supply > 0n) rec.supply = info.supply;
+    if (info.supply > 0n) {
+      rec.supply = info.supply;
+      rec.supplyExact = true;
+    }
     rec.dangers = info.dangers;
     if (info.metadata) this.applyOnchainMetadata(rec, info.metadata);
     this.touch(rec);
@@ -1022,7 +1045,11 @@ export class MarketState {
     rec.creatorFeeBps = r.curve.creatorFeeBps;
     rec.canEditCreatorFee = r.curve.canEditCreatorFee;
     rec.isMayhem = r.curve.isMayhemMode;
-    if (r.curve.tokenTotalSupply > 0n) rec.supply = r.curve.tokenTotalSupply;
+    if (r.curve.tokenTotalSupply > 0n) {
+      rec.curveTokenTotalSupply = r.curve.tokenTotalSupply;
+      // The mint account (often resolved in the same batch, just before) wins over the curve's figure.
+      if (!rec.supplyExact) rec.supply = curveMintSupply(r.curve);
+    }
     if (r.curve.complete && !rec.complete) rec.complete = true;
     if (!rec.creator) this.setCreator(rec, r.curve.creator, "curve");
     this.touch(rec);
@@ -1158,6 +1185,8 @@ export class MarketState {
 
   /** Restores a persisted record (startup). */
   restore(rec: TokenRecord): void {
+    // Records saved before supplyExact existed kept a mayhem coin's curve supply (1e15) as its supply.
+    if (rec.isMayhem && !rec.supplyExact && rec.supply === ONE_BILLION_SUPPLY) rec.supply = 2n * ONE_BILLION_SUPPLY;
     this.tokens.set(rec.mint, rec);
     if (rec.creator) this.setCreator(rec, rec.creator, rec.migrated ? "pool" : "curve");
   }

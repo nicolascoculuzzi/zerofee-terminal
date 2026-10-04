@@ -5,6 +5,7 @@
 import {
   BPS_DENOMINATOR,
   DEFAULT_INITIAL_REAL_TOKEN_RESERVES,
+  ONE_BILLION_SUPPLY,
   TOKEN_PROGRAM_ID,
   type Token2022Danger,
   USDC_MINT,
@@ -62,7 +63,18 @@ export interface TokenRecord {
   quoteTokenProgram: string | null;
   tokenProgram: string | null;
   decimals: number;
+  /**
+   * Mint supply (base units): what market caps multiply by. 2e15 for mayhem coins, whose curve says 1e15
+   * (core curveMintSupply); the mint account (or a non-mayhem pool event's base_supply) replaces it, burns included.
+   */
   supply: bigint;
+  /** True once `supply` was read from the mint (account or base_supply) rather than derived from the curve. */
+  supplyExact: boolean;
+  /**
+   * The curve's own token_total_supply (CreateEvent / BondingCurve): 1e15 for mayhem coins too. Curve trade
+   * contexts pass it through (migration estimates subtract the initial real reserves from it). null = unseen.
+   */
+  curveTokenTotalSupply: bigint | null;
   createdAt: number | null;
   createdSlot: number | null;
   createSignature: string | null;
@@ -129,6 +141,8 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
     tokenProgram: null,
     decimals: 6,
     supply: 1_000_000_000_000_000n,
+    supplyExact: false,
+    curveTokenTotalSupply: null,
     createdAt: null,
     createdSlot: null,
     createSignature: null,
@@ -330,7 +344,7 @@ export function buildTradeContext(rec: TokenRecord, pool: PoolInfo | undefined):
     virtualQuoteReserves: rec.curve.vQuote.toString(),
     realTokenReserves: rec.curve.rToken.toString(),
     realQuoteReserves: rec.curve.rQuote.toString(),
-    tokenTotalSupply: rec.supply.toString(),
+    tokenTotalSupply: (rec.curveTokenTotalSupply ?? ONE_BILLION_SUPPLY).toString(),
     complete: rec.complete,
     creator: rec.creator,
     creatorVault: rec.creatorVault,
