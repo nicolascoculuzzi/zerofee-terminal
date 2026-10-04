@@ -30,8 +30,8 @@ describe("migrations through Bun.sql (production path)", () => {
     const t = await bunSqlDb({ migrate: false });
     try {
       expect(await t.db.query("SELECT to_regclass('public.users') AS t")).toEqual([{ t: null }]);
-      expect(await migrate(t.db, MIGRATIONS, () => T0)).toEqual({ applied: [1], version: 1 });
-      expect(await migrate(t.db)).toEqual({ applied: [], version: 1 });
+      expect(await migrate(t.db, MIGRATIONS, () => T0)).toEqual({ applied: [1, 2], version: 2 });
+      expect(await migrate(t.db)).toEqual({ applied: [], version: 2 });
       const tables = (await t.db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).map(
         (r) => r.tablename,
       );
@@ -39,6 +39,7 @@ describe("migrations through Bun.sql (production path)", () => {
         "admin_audit_log",
         "alert_deliveries",
         "alerts",
+        "armed_order_events",
         "armed_orders",
         "blacklists",
         "nonce_slots",
@@ -57,10 +58,10 @@ describe("migrations through Bun.sql (production path)", () => {
       await t.db.query("INSERT INTO admin_audit_log (at, actor, action, ok) VALUES (now(), 'x', 'y', true)");
       await expect(t.db.query("DELETE FROM admin_audit_log")).rejects.toThrow("append-only");
       // A failing migration rolls back entirely.
-      const broken = [...MIGRATIONS, { version: 2, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" }];
+      const broken = [...MIGRATIONS, { version: 3, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" }];
       await expect(migrate(t.db, broken)).rejects.toThrow();
       expect(await t.db.query("SELECT to_regclass('public.ok_part') AS t")).toEqual([{ t: null }]);
-      expect((await t.db.query("SELECT max(version) AS v FROM schema_migrations"))[0]?.v).toBe(1);
+      expect((await t.db.query("SELECT max(version) AS v FROM schema_migrations"))[0]?.v).toBe(2);
     } finally {
       await t.close();
     }
@@ -82,7 +83,7 @@ describe.each(DRIVERS)("$name", ({ open }) => {
   describe("driver", () => {
     test("migrations are recorded and idempotent; a newer schema refuses to start", async () => {
       const again = await migrate(t.db);
-      expect(again).toEqual({ applied: [], version: 1 });
+      expect(again).toEqual({ applied: [], version: 2 });
       const rows = await t.db.query("SELECT version, name FROM schema_migrations ORDER BY version");
       expect(rows.map((r) => toInt(r.version))).toEqual(MIGRATIONS.map((m) => m.version));
       await expect(migrate(t.db, [])).rejects.toThrow("newer than this server");
@@ -188,19 +189,6 @@ describe.each(DRIVERS)("$name", ({ open }) => {
       expect(await store.users.ownsWallet(u.id, addr("someone-else"))).toBe(false);
       expect(await store.users.deleteTradingWallet(u.id, k1)).toBe(true);
       expect(await store.users.ownsWallet(u.id, k1)).toBe(false);
-    });
-
-    test("armed orders (placeholder table) feed the orders snapshot", async () => {
-      const u = await store.users.upsertOnLogin(addr("pg-user-orders"), T0);
-      expect(await store.users.listOrders(u.id)).toEqual([]);
-      await t.db.query(
-        `INSERT INTO armed_orders (id, user_id, kind, status, mint, side, amount, trigger, created_at, updated_at)
-         VALUES ($1::uuid, $2::uuid, 'take_profit', 'armed', $3, 'sell', '1000', $4::text::jsonb, $5::timestamptz, $5::timestamptz)`,
-        [crypto.randomUUID(), u.id, addr("mint"), JSON.stringify({ metric: "mc_sol", op: "gte", value: 500 }), iso(T0)],
-      );
-      const [o] = await store.users.listOrders(u.id);
-      expect(o).toMatchObject({ kind: "take_profit", status: "armed", side: "sell", amount: "1000", nonceAccount: null });
-      expect(o?.trigger).toEqual({ metric: "mc_sol", op: "gte", value: 500 });
     });
   });
 

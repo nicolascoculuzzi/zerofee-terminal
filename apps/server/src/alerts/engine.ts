@@ -12,7 +12,7 @@
  * Hooks for sources wired later (AlertHooks):
  *  - onWalletActivity: the firehose matcher (Phase 6) reports a trade or launch by a wallet in
  *    trackedAddresses(), the deduplicated union of every user's alerting tracked wallets;
- *  - onOrderEvent: the armed-orders engine (Phase 5) reports fills, failures and re-arm needs.
+ *  - onOrderEvent: the armed-orders engine (orders/engine.ts) reports fills, failures and re-arm needs.
  * Both route to the channels in the user's notification settings.
  */
 import type {
@@ -61,11 +61,20 @@ export interface WalletActivity {
   ts: number;
 }
 
+/**
+ * What happened to an armed order (the status machine's notify kinds, plus "held": the trigger was met
+ * but the wallet no longer holds what the order needs).
+ */
+export type OrderNotifyKind = "filled" | "consumed" | "ladder-continues" | "missed" | "stale" | "cancelled" | "flagged" | "held";
+
 export interface OrderEvent {
   userId: string;
   orderId: string;
   kind: OrderKind;
+  /** Order status after the event. */
   status: OrderStatus;
+  /** Defaults from `status` when omitted. */
+  event?: OrderNotifyKind;
   mint: string;
   symbol?: string;
   side: "buy" | "sell";
@@ -97,12 +106,41 @@ export interface AlertEngineOptions {
 }
 
 const ORDER_LABEL: Record<OrderKind, string> = {
-  limit: "Limit order",
-  take_profit: "Take profit",
-  stop_loss: "Stop loss",
-  trailing_stop: "Trailing stop",
-  migration: "Migration order",
+  "limit-buy": "Limit buy",
+  "limit-sell": "Limit sell",
+  "take-profit": "Take profit",
+  "stop-loss": "Stop loss",
+  "trailing-stop": "Trailing stop",
+  "dca-tranche": "DCA tranche",
+  "migration-snipe": "Migration snipe",
+  "dev-sell-exit": "Dev-sell exit",
 };
+
+const ORDER_WORDING: Record<OrderNotifyKind, [string, AlertPriority]> = {
+  filled: ["filled", "high"],
+  consumed: ["failed, re-arm it", "high"],
+  stale: ["can no longer fill, re-arm it", "high"],
+  held: ["triggered but not sent", "high"],
+  flagged: ["needs a check, re-arm it", "normal"],
+  missed: ["missed, cancelling", "normal"],
+  "ladder-continues": ["attempt failed, next attempt armed", "normal"],
+  cancelled: ["cancelled", "low"],
+};
+
+function defaultNotifyKind(status: OrderStatus): OrderNotifyKind | null {
+  switch (status) {
+    case "filled":
+      return "filled";
+    case "failed-consumed":
+      return "consumed";
+    case "stale":
+      return "stale";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return null;
+  }
+}
 
 export class AlertEngine implements AlertHooks {
   private readonly now: () => number;
@@ -322,17 +360,9 @@ export class AlertEngine implements AlertHooks {
 
   onOrderEvent(ev: OrderEvent): void {
     const sym = sanitizeUntrusted(ev.symbol, 16) || shortAddress(ev.mint);
-    const label = ORDER_LABEL[ev.kind];
-    const [verb, priority]: [string, AlertPriority] =
-      ev.status === "filled"
-        ? ["filled", "high"]
-        : ev.status === "failed"
-          ? ["failed, re-arm it", "high"]
-          : ev.status === "stranded"
-            ? ["stranded by an interface change, re-arm it", "high"]
-            : ev.status === "triggered" || ev.status === "submitted"
-              ? [ev.status, "normal"]
-              : [ev.status, "low"];
+    const label = ORDER_LABEL[ev.kind] ?? "Order";
+    const what = ev.event ?? defaultNotifyKind(ev.status);
+    const [verb, priority]: [string, AlertPriority] = what ? ORDER_WORDING[what] : [ev.status, "low"];
     const body = [
       ev.side === "buy" ? "Buy" : "Sell",
       ev.signature ? `tx ${shortAddress(ev.signature)}` : null,

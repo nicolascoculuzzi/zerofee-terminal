@@ -1,7 +1,6 @@
 /**
- * `wallet:<address>` and `orders` topics (user topics: they need a signed-in session, see topics.ts).
- * `orders` snapshots come from the server's armed-orders table (empty until the Phase 5 engine exists);
- * `wallet:` balances are not published yet, so subscribing to an allowed wallet answers `unavailable`.
+ * `wallet:<address>` topic (a user topic: it needs a signed-in session, see topics.ts). Balances are not
+ * published yet, so subscribing to an allowed wallet answers `unavailable`. The `orders` topic is in orders.ts.
  */
 import type { Trade } from "./market";
 
@@ -34,41 +33,4 @@ export interface WalletDelta {
   /** New fills, oldest first. */
   fills?: Trade[];
   slot?: number;
-}
-
-export type OrderKind = "limit" | "take_profit" | "stop_loss" | "trailing_stop" | "migration";
-export type OrderStatus = "armed" | "triggered" | "submitted" | "filled" | "failed" | "cancelled" | "expired" | "stranded";
-
-export interface OrderTrigger {
-  /** What the trigger compares. */
-  metric: "price_sol" | "mc_sol" | "mc_usd" | "migration";
-  op: "gte" | "lte";
-  value: number;
-}
-
-export interface Order {
-  id: string;
-  kind: OrderKind;
-  status: OrderStatus;
-  mint: string;
-  side: "buy" | "sell";
-  /** buy: quote base units to spend; sell: base units to sell. */
-  amount: string;
-  trigger: OrderTrigger;
-  /** Durable-nonce account the pre-signed variants are bound to. */
-  nonceAccount: string | null;
-  /** Signature of the landed variant, once filled. */
-  signature: string | null;
-  createdAt: number;
-  updatedAt: number;
-  error: string | null;
-}
-
-export interface OrdersSnapshot {
-  orders: Order[];
-}
-
-export interface OrdersDelta {
-  upsert: Order[];
-  remove: string[];
 }

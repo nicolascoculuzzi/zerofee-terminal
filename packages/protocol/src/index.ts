@@ -8,6 +8,7 @@ export * from "./alerts";
 export * from "./chain";
 export * from "./market";
 export * from "./messages";
+export * from "./orders";
 export * from "./rest";
 export * from "./topics";
 export * from "./user";

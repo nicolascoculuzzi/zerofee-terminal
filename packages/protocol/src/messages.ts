@@ -14,7 +14,7 @@
  * Re-sending `subscribe` for a topic you already hold re-sends the snapshot (cheap resync).
  */
 
-import type { OrdersDelta, OrdersSnapshot, WalletDelta, WalletSnapshot } from "./account";
+import type { WalletDelta, WalletSnapshot } from "./account";
 import type { ChainDelta, ChainSnapshot } from "./chain";
 import type {
   CandlesCorrection,
@@ -29,6 +29,7 @@ import type {
   TradesDelta,
   TradesSnapshot,
 } from "./market";
+import type { OrdersDelta, OrdersSnapshot } from "./orders";
 import type {
   CandlesTopic,
   ChainTopic,
