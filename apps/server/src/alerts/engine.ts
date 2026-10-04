@@ -9,9 +9,11 @@
  * alerts disarm and re-arm only after the value moves back past the threshold by 1% (hysteresis), and
  * never fire more often than their cooldown. Armed state is persisted, so a restart does not re-fire.
  *
- * Hooks for sources wired later (AlertHooks):
- *  - onWalletActivity: the firehose matcher (Phase 6) reports a trade or launch by a wallet in
- *    trackedAddresses(), the deduplicated union of every user's alerting tracked wallets;
+ * Hooks (AlertHooks):
+ *  - onWalletActivity: the firehose matcher (trackers/service.ts) reports every trade or launch by a
+ *    tracked wallet; this engine keeps its own index of the alerting ones (trackedAddresses(), the
+ *    deduplicated union of every user's alerting tracked wallets) and applies each wallet's flags:
+ *    buy / sell / create, minimum size, and first-buy-only;
  *  - onOrderEvent: the armed-orders engine (Phase 5) reports fills, failures and re-arm needs.
  * Both route to the channels in the user's notification settings.
  */
@@ -59,6 +61,8 @@ export interface WalletActivity {
   amountSol: number;
   signature: string;
   ts: number;
+  /** Buys: the wallet's opening buy of this token (see TrackedTradeRow.firstBuy); null / absent = not known. */
+  firstBuy?: boolean | null;
 }
 
 export interface OrderEvent {
@@ -296,13 +300,14 @@ export class AlertEngine implements AlertHooks {
     for (const e of entries) {
       if (!e.alerts[ev.kind]) continue;
       if (ev.kind !== "create" && ev.amountSol < e.alerts.minSol) continue;
+      if (ev.kind === "buy" && e.alerts.firstBuyOnly && ev.firstBuy !== true) continue;
       const key = `${e.userId}:${ev.signature}:${ev.address}:${ev.kind}:${ev.mint}`;
       if (!this.seen.add(key)) continue; // the same event twice (duplicate delivery from the feed)
       const who = `${e.emoji ? `${e.emoji} ` : ""}${sanitizeUntrusted(e.label, 32) || shortAddress(ev.address)}`;
       const title =
         ev.kind === "create"
           ? `${who} launched ${sym}`
-          : `${who} ${ev.kind === "buy" ? "bought" : "sold"} ${fmtSol(ev.amountSol)} of ${sym}`;
+          : `${who} ${ev.kind === "buy" ? "bought" : "sold"} ${fmtSol(ev.amountSol)} of ${sym}${ev.kind === "buy" && ev.firstBuy === true ? " (first buy)" : ""}`;
       void this.prefsOf(e.userId)
         .then((p) =>
           this.emit(
