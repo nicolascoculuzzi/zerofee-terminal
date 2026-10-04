@@ -7,6 +7,10 @@
  *   2. canonical PumpSwap pool
  *   3. Raydium LaunchLab pool [mint, wSOL] (or `quoteMint`): funding -> LaunchLab; migrated -> its CPMM
  *      pool, the canonical PDA [pool, PlatformConfig.cpswap_config, token0, token1]
+ *   4. none of these (or a LaunchLab coin that graduated to Raydium AMM v4, which we do not build):
+ *      Jupiter `/build`, the long-tail fallback (venue "jupiter"; `jupiterFallback: false` throws instead).
+ *      A venue PDA only counts when the venue program owns it: anyone can send SOL to the address of a
+ *      curve or pool that does not exist (BONK's would-be pump curve PDA held 1.12 SOL on 2026-10-03).
  * An explicit `poolAddress` is resolved by its owner program (PumpSwap, LaunchLab or CPMM).
  * Creator, fee tiers, reserves and fee recipients always come from these live accounts.
  */
@@ -18,6 +22,7 @@ import {
   PUMP_AMM_PROGRAM_ID,
   PUMP_FEE_CONFIG,
   PUMP_GLOBAL,
+  PUMP_PROGRAM_ID,
   RAYDIUM_CPMM_PROGRAM_ID,
   RAYDIUM_LAUNCHLAB_PROGRAM_ID,
   SYSVAR_CLOCK_ID,
@@ -172,8 +177,30 @@ export interface CpmmState extends CommonState {
   launchLabPool?: Address;
 }
 
-export type TokenState = PumpCurveState | PumpSwapState | LaunchLabState | CpmmState;
+/**
+ * No local venue matched: trades go through Jupiter `/build` (packages/core/src/jupiter), quoted by
+ * Jupiter at build time. `quoteMint` is what buys spend and sells receive (wSOL unless asked otherwise).
+ */
+export interface JupiterState extends CommonState {
+  venue: "jupiter";
+  /** Why no local venue matched (for the UI and logs). */
+  reason: string;
+  /** The user's base-token ATA exists. */
+  userBaseAtaExists: boolean;
+}
+
+export type TokenState = PumpCurveState | PumpSwapState | LaunchLabState | CpmmState | JupiterState;
 export type TradeVenue = TokenState["venue"];
+/** The venues core builds locally (everything but the Jupiter fallback). */
+export type LocalTokenState = Exclude<TokenState, JupiterState>;
+
+/** Thrown inside venue resolution when the token trades on no venue core builds locally. */
+export class NoLocalVenueError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoLocalVenueError";
+  }
+}
 
 const NO_EXTENSIONS: Token2022Extensions = {
   types: [],
@@ -193,14 +220,38 @@ async function loadMintInfo(rpc: StateRpc, mint: Address): Promise<MintInfo> {
   return decodeMint(acc.data, acc.owner);
 }
 
+export interface LoadTokenStateArgs {
+  mint: Address;
+  user: Address;
+  /** Forces a specific PumpSwap, LaunchLab or CPMM pool. */
+  poolAddress?: Address;
+  /** LaunchLab pair and Jupiter quote asset (default wSOL). */
+  quoteMint?: Address;
+  /** Fall back to Jupiter `/build` when no local venue matches (default true); false throws NoLocalVenueError. */
+  jupiterFallback?: boolean;
+}
+
+/** The Jupiter fallback state: the common fields plus the quote asset buys spend and sells receive. */
+async function jupiterState(rpc: StateRpc, common: Common, quoteMint: Address, reason: string, ataExists: boolean): Promise<JupiterState> {
+  const qi = await loadMintInfo(rpc, quoteMint);
+  if (quoteMint === common.mint) throw new Error(`${common.mint} cannot be quoted in itself`);
+  return {
+    venue: "jupiter",
+    ...common,
+    quoteMint,
+    quoteTokenProgram: qi.tokenProgram,
+    quoteDecimals: qi.decimals,
+    reason,
+    userBaseAtaExists: ataExists,
+  };
+}
+
 /**
  * Resolves where `mint` trades and loads everything a quote + build needs.
- * `quoteMint` selects the LaunchLab pair (default wSOL); `poolAddress` forces a specific pool.
+ * `quoteMint` selects the LaunchLab pair (default wSOL); `poolAddress` forces a specific pool. With no
+ * local venue the result is the Jupiter fallback (see the header).
  */
-export async function loadTokenState(
-  rpc: StateRpc,
-  args: { mint: Address; user: Address; poolAddress?: Address; quoteMint?: Address },
-): Promise<TokenState> {
+export async function loadTokenState(rpc: StateRpc, args: LoadTokenStateArgs): Promise<TokenState> {
   const { mint, user } = args;
   const [curveAddr, canonicalPool, ataToken, ataToken2022, launchLabPoolAddr] = await Promise.all([
     bondingCurvePda(mint),
@@ -229,7 +280,9 @@ export async function loadTokenState(
   const mintInfo = decodeMint(mintAcc.data, mintAcc.owner);
   const is2022 = mintInfo.tokenProgram === TOKEN_2022_PROGRAM_ID;
   const userBaseAta = is2022 ? ataToken2022 : ataToken;
-  const ataAcc = is2022 ? ata22Acc : ataTAcc;
+  // An ATA address can hold lamports before the account exists; only a token-program account counts.
+  const ataAccRaw = is2022 ? ata22Acc : ataTAcc;
+  const ataAcc = ataAccRaw && ataAccRaw.owner === mintInfo.tokenProgram ? ataAccRaw : null;
   const common = {
     mint,
     mintInfo,
@@ -240,16 +293,32 @@ export async function loadTokenState(
     userBaseWithheld: ataAcc && is2022 ? decodeToken2022AccountWithheld(ataAcc.data) : 0n,
     clock: clockAcc ? decodeClock(clockAcc.data) : null,
   };
+  const quoteAsset = args.quoteMint ?? WSOL_MINT;
+  /** No local venue: the Jupiter fallback, unless the caller turned it off. */
+  const noLocalVenue = (reason: string): Promise<JupiterState> => {
+    if (args.jupiterFallback === false) throw new NoLocalVenueError(reason);
+    return jupiterState(rpc, common, quoteAsset, reason, ataAcc !== null);
+  };
+  const viaLaunchLab = async (pool: Address, data: Uint8Array): Promise<TokenState> => {
+    try {
+      return await loadLaunchLab(rpc, common, pool, data);
+    } catch (e) {
+      if (e instanceof NoLocalVenueError) return noLocalVenue(e.message);
+      throw e;
+    }
+  };
 
   // Explicit pool: dispatch on its owner program.
   if (args.poolAddress) {
     if (!poolAcc) throw new Error(`pool ${args.poolAddress} not found`);
-    if (poolAcc.owner === RAYDIUM_LAUNCHLAB_PROGRAM_ID) return loadLaunchLab(rpc, common, args.poolAddress, poolAcc.data);
+    if (poolAcc.owner === RAYDIUM_LAUNCHLAB_PROGRAM_ID) return viaLaunchLab(args.poolAddress, poolAcc.data);
     if (poolAcc.owner === RAYDIUM_CPMM_PROGRAM_ID) return loadCpmm(rpc, common, args.poolAddress, decodeCpmmPool(poolAcc.data));
     if (poolAcc.owner !== PUMP_AMM_PROGRAM_ID) throw new Error(`pool ${args.poolAddress} is owned by ${poolAcc.owner} (unsupported venue)`);
   }
 
-  const curve = curveAcc ? decodeBondingCurve(curveAcc.data) : null;
+  // Venue PDAs count only when their program owns them (anyone can fund a non-existent PDA's address).
+  const curve = curveAcc && curveAcc.owner === PUMP_PROGRAM_ID ? decodeBondingCurve(curveAcc.data) : null;
+  const ammPoolAcc = poolAcc && poolAcc.owner === PUMP_AMM_PROGRAM_ID ? poolAcc : null;
   if (curve && !curve.complete && curve.virtualTokenReserves > 0n && !args.poolAddress) {
     if (!globalAcc) throw new Error("pump Global account missing");
     const quoteMint = curveQuoteMint(curve);
@@ -273,19 +342,17 @@ export async function loadTokenState(
     };
   }
 
-  if (!poolAcc && !args.poolAddress && llPoolAcc && llPoolAcc.owner === RAYDIUM_LAUNCHLAB_PROGRAM_ID) {
-    return loadLaunchLab(rpc, common, launchLabPoolAddr, llPoolAcc.data);
+  if (!ammPoolAcc && !args.poolAddress && llPoolAcc && llPoolAcc.owner === RAYDIUM_LAUNCHLAB_PROGRAM_ID) {
+    return viaLaunchLab(launchLabPoolAddr, llPoolAcc.data);
   }
 
-  if (!poolAcc) {
-    throw new Error(
-      curve
-        ? `bonding curve for ${mint} is complete but canonical pool ${poolAddress} was not found (migration pending?)`
-        : `${mint} has no pump bonding curve, PumpSwap pool or Raydium LaunchLab ${args.quoteMint ? "" : "SOL "}pair (pass a pool address)`,
-    );
+  if (!ammPoolAcc) {
+    if (curve)
+      throw new Error(`bonding curve for ${mint} is complete but canonical pool ${poolAddress} was not found (migration pending?)`);
+    return noLocalVenue(`${mint} has no pump bonding curve, PumpSwap pool or Raydium LaunchLab ${args.quoteMint ? "" : "SOL "}pair`);
   }
   if (!ammCfgAcc) throw new Error("PumpSwap GlobalConfig missing");
-  const pool = decodePool(poolAcc.data);
+  const pool = decodePool(ammPoolAcc.data);
   if (pool.baseMint !== mint) throw new Error(`pool ${poolAddress} base mint ${pool.baseMint} != ${mint}`);
   const [baseVault, quoteVault, quoteMintAcc] = await fetchRawAccounts(rpc, [
     pool.poolBaseTokenAccount,
@@ -333,7 +400,7 @@ async function loadLaunchLab(rpc: StateRpc, common: Common, poolAddress: Address
     throw new Error(`LaunchLab curve of ${common.mint} is complete and waiting for migration to CPMM (Raydium's wallet signs it)`);
   }
   if (pool.status !== LAUNCHLAB_POOL_STATUS.fund) {
-    if (pool.migrateType !== 1) throw new Error(`${common.mint} graduated to Raydium AMM v4, which is not supported`);
+    if (pool.migrateType !== 1) throw new NoLocalVenueError(`${common.mint} graduated to Raydium AMM v4, which core does not build`);
     const cpmmPool = await cpmmPoolPda(platformConfig.cpswapConfig, pool.baseMint, pool.quoteMint);
     const [cpmmAcc] = await fetchRawAccounts(rpc, [cpmmPool]);
     if (!cpmmAcc || cpmmAcc.owner !== RAYDIUM_CPMM_PROGRAM_ID) {

@@ -6,6 +6,7 @@
  */
 import {
   type Address,
+  type AddressesByLookupTableAddress,
   appendTransactionMessageInstructions,
   type Blockhash,
   compileTransaction,
@@ -22,6 +23,7 @@ import {
 } from "@solana/kit";
 import { PACKET_DATA_SIZE } from "../constants";
 import { setComputeUnitLimitInstruction, setComputeUnitPriceInstruction } from "./computeBudget";
+import { compressKeepingStatic, firewallStaticAccounts } from "./lookupTables";
 import type { FeePlan } from "./policy";
 import { type TipAccountSets, tipInstruction } from "./tip";
 
@@ -36,6 +38,11 @@ export interface AssembleParams {
   blockhash: BlockhashInfo;
   fees: Pick<FeePlan, "cuLimit" | "cuPriceMicroLamports" | "tips" | "jitoDontFront">;
   tipAccounts?: TipAccountSets;
+  /**
+   * Lookup tables the trade needs (BuiltTrade.lookupTables, Jupiter routes). Accounts the signer firewall
+   * requires as static keys stay static (tx/lookupTables.ts); the signer must be handed the same tables.
+   */
+  lookupTables?: AddressesByLookupTableAddress;
 }
 
 /** Full ordered instruction list (compute budget + trade + tips). */
@@ -58,11 +65,13 @@ export function withBudgetAndTips(p: Omit<AssembleParams, "blockhash">): Instruc
 }
 
 export function assembleTransaction(p: AssembleParams): Transaction {
+  const instructions = withBudgetAndTips(p);
   const message = pipe(
     createTransactionMessage({ version: 0 }),
     (m) => setTransactionMessageFeePayer(p.feePayer, m),
     (m) => setTransactionMessageLifetimeUsingBlockhash(p.blockhash, m),
-    (m) => appendTransactionMessageInstructions(withBudgetAndTips(p), m),
+    (m) => appendTransactionMessageInstructions(instructions, m),
+    (m) => compressKeepingStatic(m, p.lookupTables, firewallStaticAccounts(p.feePayer, instructions, p.tipAccounts)),
   );
   const tx = compileTransaction(message);
   const size = transactionSize(tx);

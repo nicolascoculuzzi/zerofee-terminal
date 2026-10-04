@@ -32,6 +32,9 @@ export interface CliConfig {
   jitoRegion: JitoRegion;
   heliusSenderApiKey?: string;
   jitoUuid?: string;
+  /** Jupiter /build (long-tail fallback). Never printed. */
+  jupiterApiKey?: string;
+  jupiterBaseUrl?: string;
   heliusMevProtect: boolean;
   cuLimitOverride?: number;
   minCuPriceMicroLamports: bigint;
@@ -92,6 +95,8 @@ export function loadConfig(): CliConfig {
     jitoRegion: oneOf("JITO_REGION", "frankfurt", Object.keys(JITO_BLOCK_ENGINES) as JitoRegion[]),
     heliusSenderApiKey: process.env.HELIUS_SENDER_API_KEY?.trim() || undefined,
     jitoUuid: process.env.JITO_UUID?.trim() || undefined,
+    jupiterApiKey: process.env.JUPITER_API_KEY?.trim() || undefined,
+    jupiterBaseUrl: process.env.JUPITER_BASE_URL?.trim() || undefined,
     heliusMevProtect: bool("HELIUS_MEV_PROTECT", false),
     cuLimitOverride: process.env.CU_LIMIT?.trim() ? int("CU_LIMIT", 200_000, 10_000, 1_400_000) : undefined,
     minCuPriceMicroLamports: BigInt(int("PRIORITY_FEE_FLOOR_MICROLAMPORTS", 100_000, 0, 100_000_000)),
