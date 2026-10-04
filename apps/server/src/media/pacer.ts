@@ -27,10 +27,13 @@ export interface HostLimit {
 
 /** Conservative defaults: Pinata's gateways rate-limit per client IP; pump's image CDN (Cloudflare) is generous. */
 export const DEFAULT_HOST_LIMITS: Record<string, HostLimit> = {
-  "pump.mypinata.cloud": { concurrency: 4, rps: 3, burst: 6 },
+  // pump's dedicated Pinata gateway: ~3 req/s sustained drew no 429 live, bursts of 16+ did
+  "pump.mypinata.cloud": { concurrency: 5, rps: 5, burst: 10 },
+  // the public Pinata gateway answers 429 to nearly everything now
   "gateway.pinata.cloud": { concurrency: 2, rps: 1, burst: 2 },
-  "images.pump.fun": { concurrency: 6, rps: 8, burst: 16 },
-  "imagedelivery.net": { concurrency: 6, rps: 8, burst: 16 },
+  // Cloudflare (pump's image CDN redirects to Cloudflare Images): no 429 seen at 20+ req/s
+  "images.pump.fun": { concurrency: 12, rps: 25, burst: 40 },
+  "imagedelivery.net": { concurrency: 12, rps: 25, burst: 40 },
 };
 export const DEFAULT_LIMIT: HostLimit = { concurrency: 3, rps: 3, burst: 6 };
 

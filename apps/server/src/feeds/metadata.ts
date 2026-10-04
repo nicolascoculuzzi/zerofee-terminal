@@ -399,7 +399,8 @@ export class MetadataFetcher {
         signal,
         trusted: c.trusted,
         pacer: this.opts.pacer,
-        priority: prio,
+        // a launch's metadata gates everything else about it: same host priority as on-screen images
+        priority: prio === PRIORITY.background ? PRIORITY.background : PRIORITY.visible,
         onStart: started,
         check: (r) => {
           const type = (r.headers.get("content-type") ?? "").toLowerCase();
