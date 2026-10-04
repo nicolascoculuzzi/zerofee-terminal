@@ -128,7 +128,7 @@ export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
 
 export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const startedAt = Date.now();
-  const rpc = o.rpc ?? new RpcClient({ url: cfg.rpcUrl, fetchFn: o.fetchFn });
+  const rpc = o.rpc ?? new RpcClient({ url: cfg.rpcUrl, fetchFn: o.fetchFn, maxConcurrent: cfg.rpcMaxConcurrent });
   const db = o.db ?? openDb(cfg.dbPath);
   const writer = new StorageWriter(db, {
     flushMs: cfg.flushIntervalMs,

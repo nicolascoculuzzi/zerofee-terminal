@@ -111,8 +111,17 @@ function preloadCriticalPath(apiOrigin: string, live: boolean): Plugin {
         for (const f of files) links.push(`<link rel="modulepreload" crossorigin href="${base}${f}" />`);
         const mono = Object.keys(bundle).find((f) => /ibm-plex-mono-latin-400-normal.*\.woff2$/.test(f));
         if (mono) links.push(`<link rel="preload" as="font" type="font/woff2" href="${base}${mono}" crossorigin />`);
-        // the data fetch goes first in <head> so it starts before the stylesheet and scripts
-        return html.replace(/<meta name="description"[^>]*>/, (m) => `${m}\n    ${links.join("\n    ")}`);
+        // after the stylesheet: on a slow link the render-blocking CSS (and with it the boot skeleton) must not
+        // share its bandwidth with the preloads
+        // and the stylesheet itself goes ahead of the entry script and Vite's modulepreloads
+        const sheets: string[] = [];
+        const rest = html.replace(/\s*<link rel="stylesheet"[^>]*>/g, (m) => {
+          sheets.push(m.trim());
+          return "";
+        });
+        return rest
+          .replace(/(<meta name="viewport"[^>]*>)/, (m) => `${m}\n    ${sheets.join("\n    ")}`)
+          .replace("</head>", `    ${links.join("\n    ")}\n  </head>`);
       },
     },
   };
