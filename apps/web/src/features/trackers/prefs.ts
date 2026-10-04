@@ -1,71 +1,112 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import type { Launchpad } from "../../protocol";
 
-/** UI-only preferences for the trackers page and dock (tabs, feed filters). */
+/** UI-only preferences for the Trackers page and the docks (tabs, filters, sorts). */
 
-export type WalletTab = "manager" | "trades" | "monitor";
-export type XTab = "feed" | "customize";
-export type MobilePanel = "wallets" | "x";
+/** Below 1280 px one pane shows the chosen tab; from 1280 px the wallet manager is always on the left. */
+export type TrackerTab = "wallets" | "trades" | "monitor" | "x";
+/** The right pane at 1280 px and up. */
+export type TrackerPane = Exclude<TrackerTab, "wallets">;
 export type SideFilter = "all" | "buy" | "sell";
-export type MonitorSort = "wallets" | "net" | "recent";
 export type FeedScope = "all" | "mine";
+export type XView = "feed" | "handles";
+export type SortDir = "asc" | "desc";
+
+export type WalletSortKey = "name" | "added" | "lastTrade";
+export type MonitorSortKey = "holders" | "flow" | "firstBuy" | "mc";
 
 export interface TradeFilters {
   side: SideFilter;
   minSol: number | null;
-  /** USD market cap at trade time. */
-  maxMc: number | null;
+  /** Market cap at trade time, USD. */
+  mcMin: number | null;
+  mcMax: number | null;
+  /** Empty = every launchpad. */
+  launchpads: Launchpad[];
+  /** Only tokens created less than an hour ago. */
+  under1h: boolean;
 }
 
-export const NO_TRADE_FILTERS: TradeFilters = { side: "all", minSol: null, maxMc: null };
+export const NO_TRADE_FILTERS: TradeFilters = { side: "all", minSol: null, mcMin: null, mcMax: null, launchpads: [], under1h: false };
 
 interface TrackerPrefsState {
-  walletTab: WalletTab;
-  xTab: XTab;
-  mobilePanel: MobilePanel;
+  tab: TrackerTab;
+  pane: TrackerPane;
   trades: TradeFilters;
-  monitorSort: MonitorSort;
+  walletSort: { key: WalletSortKey; dir: SortDir };
+  monitorSort: { key: MonitorSortKey; dir: SortDir };
   feedScope: FeedScope;
-  setWalletTab(tab: WalletTab): void;
-  setXTab(tab: XTab): void;
-  setMobilePanel(panel: MobilePanel): void;
+  xView: XView;
+  setTab(tab: TrackerTab): void;
   setTrades(patch: Partial<TradeFilters>): void;
-  setMonitorSort(sort: MonitorSort): void;
+  resetTrades(): void;
+  setWalletSort(sort: { key: WalletSortKey; dir: SortDir }): void;
+  setMonitorSort(sort: { key: MonitorSortKey; dir: SortDir }): void;
   setFeedScope(scope: FeedScope): void;
+  setXView(view: XView): void;
 }
+
+const TABS: readonly TrackerTab[] = ["wallets", "trades", "monitor", "x"];
 
 export const useTrackerPrefs = create<TrackerPrefsState>()(
   persist(
     (set) => ({
-      walletTab: "trades",
-      xTab: "feed",
-      mobilePanel: "wallets",
+      tab: "trades",
+      pane: "trades",
       trades: NO_TRADE_FILTERS,
-      monitorSort: "wallets",
+      walletSort: { key: "added", dir: "desc" },
+      monitorSort: { key: "holders", dir: "desc" },
       feedScope: "all",
-      setWalletTab: (walletTab) => set({ walletTab }),
-      setXTab: (xTab) => set({ xTab }),
-      setMobilePanel: (mobilePanel) => set({ mobilePanel }),
+      xView: "feed",
+      setTab: (tab) => set(tab === "wallets" ? { tab } : { tab, pane: tab }),
       setTrades: (patch) => set((s) => ({ trades: { ...s.trades, ...patch } })),
+      resetTrades: () => set({ trades: NO_TRADE_FILTERS }),
+      setWalletSort: (walletSort) => set({ walletSort }),
       setMonitorSort: (monitorSort) => set({ monitorSort }),
       setFeedScope: (feedScope) => set({ feedScope }),
+      setXView: (xView) => set({ xView }),
     }),
     {
       name: "zerofee.trackers.ui",
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
-        walletTab: s.walletTab,
-        xTab: s.xTab,
-        mobilePanel: s.mobilePanel,
+        tab: s.tab,
+        pane: s.pane,
         trades: s.trades,
+        walletSort: s.walletSort,
         monitorSort: s.monitorSort,
         feedScope: s.feedScope,
+        xView: s.xView,
       }),
+      // v1 stored { walletTab, xTab, mobilePanel, trades: { side, minSol, maxMc }, monitorSort: string }.
+      migrate: (persisted) => {
+        const p = (persisted ?? {}) as Record<string, unknown>;
+        const old = (p.trades ?? {}) as Partial<TradeFilters> & { maxMc?: number | null };
+        return {
+          trades: { ...NO_TRADE_FILTERS, side: old.side ?? "all", minSol: old.minSol ?? null, mcMax: old.maxMc ?? null },
+          feedScope: p.feedScope === "mine" ? "mine" : "all",
+        } as Partial<TrackerPrefsState>;
+      },
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<TrackerPrefsState>;
-        return { ...current, ...p, trades: { ...current.trades, ...(p.trades ?? {}) } };
+        const tab = p.tab && TABS.includes(p.tab) ? p.tab : current.tab;
+        const pane = p.pane && p.pane !== ("wallets" as TrackerTab) && TABS.includes(p.pane) ? p.pane : current.pane;
+        return {
+          ...current,
+          ...p,
+          tab,
+          pane,
+          trades: { ...current.trades, ...(p.trades ?? {}) },
+          walletSort: { ...current.walletSort, ...(p.walletSort ?? {}) },
+          monitorSort: { ...current.monitorSort, ...(p.monitorSort ?? {}) },
+        };
       },
     },
   ),
 );
+
+export function tradeFiltersActive(f: TradeFilters): boolean {
+  return f.side !== "all" || f.minSol !== null || f.mcMin !== null || f.mcMax !== null || f.launchpads.length > 0 || f.under1h;
+}

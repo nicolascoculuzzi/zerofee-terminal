@@ -20,8 +20,8 @@ const WINDOW_MS: Record<TrendWindow, number> = {
  * estimated:
  *
  * 5m:        score = change5mPct × activity × confidence
- *            activity   = e^(−secondsSinceLastTrade / 90)   1 for a trade just now, ≈0.5 after a
- *                                                           minute, ≈0.04 after five
+ *            activity   = e^(−secondsSinceLastTrade / 90)   1 for a trade just now, about 0.5
+ *                                                           after a minute, 0.04 after five
  *            confidence = min(1, txns / 25)                  so a two-trade coin can't top the
  *                                                           list on a single print
  *

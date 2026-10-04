@@ -1,77 +1,105 @@
-import { AtSign, Info, Plus, Trash2, Upload } from "lucide-react";
-import { type FormEvent, memo, useDeferredValue, useMemo, useState } from "react";
+import { AtSign, Plus, Upload } from "lucide-react";
+import { type FormEvent, memo, type ReactNode, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { Age } from "../../components/ui/Age";
-import { Button, IconButton } from "../../components/ui/Button";
+import { Button } from "../../components/ui/Button";
+import { EmptyState } from "../../components/ui/bits";
 import { Switch } from "../../components/ui/controls";
 import { Modal } from "../../components/ui/Modal";
+import { WalletAvatar } from "../../components/ui/TokenAvatar";
+import { copyText } from "../../lib/clipboard";
+import { cn } from "../../lib/cn";
+import { useCssPx } from "../../lib/cssVar";
 import { normalizeHandle } from "../../lib/filters";
+import { fmtInt } from "../../lib/format";
 import { useSettings } from "../../state/settings";
-import { useToasts } from "../../state/toasts";
 import { type TrackedHandle, useTrackers } from "../../state/trackers";
-import { SearchField } from "./bits";
+import { MetaCount, PaneToolbar } from "./bits";
 import { ExportMenu, jsonExportActions } from "./ExportMenu";
-import { blockedHandles } from "./feedFilters";
+import { blockedHandles, normalizeQuery } from "./feedFilters";
 import { HANDLE_RE, handlesToJson, parseHandleImport } from "./handleImport";
-import { useRowHeight } from "./hooks";
-import { VirtualList } from "./VirtualList";
+import { MOBILE_ROW_PX, useIsMobile } from "./hooks";
+import { removeHandle } from "./socialActions";
+import { Cell, CursorBar, HeaderCell, HeaderRow, rowTone } from "./table";
+import { VirtualGrid } from "./VirtualList";
+
+const handleKey = (h: TrackedHandle): string => h.handle;
 
 function plural(n: number, noun: string): string {
-  return `${n.toLocaleString("en-US")} ${noun}${n === 1 ? "" : "s"}`;
+  return `${fmtInt(n)} ${noun}${n === 1 ? "" : "s"}`;
 }
 
-function removeWithUndo(h: TrackedHandle): void {
-  useTrackers.getState().removeHandle(h.handle);
-  useToasts.getState().push({
-    kind: "info",
-    title: `Removed @${h.handle}`,
-    action: {
-      label: "Undo",
-      run: () => {
-        const s = useTrackers.getState();
-        if (s.addHandle(h.handle))
-          s.updateHandle(h.handle, { tweets: h.tweets, profile: h.profile, follows: h.follows, addedAt: h.addedAt });
-      },
-    },
-  });
-}
+const COL = {
+  handle: "min-w-0 flex-1",
+  sw: "w-[8ch] justify-center",
+  added: "w-[5ch] justify-end @max-[480px]:hidden",
+  remove: "w-[9ch] justify-end",
+} as const;
 
-const HandleRow = memo(function HandleRow({ h, blacklisted }: { h: TrackedHandle; blacklisted: boolean }) {
+const ROW = "flex items-center gap-2 px-2";
+
+const HandleRow = memo(function HandleRow({
+  h,
+  blacklisted,
+  active,
+  mobile,
+}: {
+  h: TrackedHandle;
+  blacklisted: boolean;
+  active: boolean;
+  mobile: boolean;
+}) {
   const update = (patch: Partial<TrackedHandle>) => useTrackers.getState().updateHandle(h.handle, patch);
+  const tab = mobile || active ? 0 : -1;
   return (
-    <div className="flex h-7 items-center gap-2 px-3 text-label hover:bg-surface-3">
-      <span className="flex min-w-0 flex-1 items-center gap-2">
+    <div className={cn(ROW, "relative h-full text-data max-md:px-3", active ? "bg-surface-2" : rowTone({}))}>
+      <CursorBar show={active} />
+      <Cell className={cn("items-center gap-1", COL.handle)}>
+        <WalletAvatar seed={h.handle} label={h.handle} size={16} />
         <span className="truncate font-medium text-fg-1">@{h.handle}</span>
         {blacklisted && (
-          <span className="shrink-0 text-micro text-warn" title="Blacklisted in Settings: its posts stay hidden">
+          <span className="shrink-0 text-micro font-medium text-warn" title="Blacklisted in Settings, so its posts stay hidden">
             Blacklisted
           </span>
         )}
-        <Age ts={h.addedAt} className="hidden shrink-0 text-fg-3 @sm:inline" />
-      </span>
-      <span className="flex w-14 shrink-0 justify-center">
-        <Switch
-          checked={h.tweets}
-          onChange={(tweets) => update({ tweets })}
-          label={`Tweets, replies, quotes and retweets from @${h.handle}`}
-        />
-      </span>
-      <span className="flex w-14 shrink-0 justify-center">
-        <Switch checked={h.profile} onChange={(profile) => update({ profile })} label={`Profile updates from @${h.handle}`} />
-      </span>
-      <span className="flex w-14 shrink-0 justify-center">
-        <Switch checked={h.follows} onChange={(follows) => update({ follows })} label={`Accounts @${h.handle} follows`} />
-      </span>
-      <span className="flex w-6 shrink-0 justify-end">
-        <IconButton size="xs" label={`Remove @${h.handle}`} onClick={() => removeWithUndo(h)}>
-          <Trash2 className="icon-sm" />
-        </IconButton>
-      </span>
+      </Cell>
+      <Cell className={cn("shrink-0", COL.sw)}>
+        <SwitchCell>
+          <Switch
+            checked={h.tweets}
+            onChange={(tweets) => update({ tweets })}
+            label={`Tweets, replies, quotes and reposts from @${h.handle}`}
+          />
+        </SwitchCell>
+      </Cell>
+      <Cell className={cn("shrink-0", COL.sw)}>
+        <SwitchCell>
+          <Switch checked={h.profile} onChange={(profile) => update({ profile })} label={`Profile updates from @${h.handle}`} />
+        </SwitchCell>
+      </Cell>
+      <Cell className={cn("shrink-0", COL.sw)}>
+        <SwitchCell>
+          <Switch checked={h.follows} onChange={(follows) => update({ follows })} label={`Accounts @${h.handle} follows`} />
+        </SwitchCell>
+      </Cell>
+      <Cell className={cn("shrink-0", COL.added)}>
+        <Age ts={h.addedAt} />
+      </Cell>
+      <Cell className={cn("shrink-0", COL.remove)}>
+        <Button size="xs" variant="ghost" tabIndex={tab} onClick={() => removeHandle(h)} className="max-md:h-11">
+          Remove
+        </Button>
+      </Cell>
     </div>
   );
 });
 
-/* Paste-a-list import, same anatomy as the wallet import (Gemini Notebook paste dialog). */
-function ImportHandlesForm({ onClose }: { onClose: () => void }) {
+/** Switches keep their 28 × 16 track; on phones the cell pads them to a 44 px target. */
+function SwitchCell({ children }: { children: ReactNode }) {
+  return <span className="flex items-center justify-center max-md:size-11">{children}</span>;
+}
+
+/* Paste-a-list import for handles; same anatomy as the wallet import. */
+function ImportHandlesDialog({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState("");
   const deferred = useDeferredValue(text);
   const handles = useTrackers((s) => s.handles);
@@ -80,89 +108,93 @@ function ImportHandlesForm({ onClose }: { onClose: () => void }) {
     const have = new Set(handles.map((h) => h.handle));
     return parsed.handles.filter((h) => !have.has(h.handle));
   }, [parsed, handles]);
-
-  const commit = () => {
-    // One store write and one feed sync for the whole paste.
-    const added = useTrackers.getState().importHandles(fresh);
-    useToasts
-      .getState()
-      .push({ kind: added > 0 ? "success" : "info", title: added > 0 ? `Imported ${plural(added, "handle")}` : "Nothing new to import" });
-    onClose();
-  };
-
   return (
-    <div className="flex flex-col gap-3">
-      <textarea
-        data-autofocus
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        spellCheck={false}
-        aria-label="Handle list"
-        placeholder={"@handle, one per line or comma-separated\nx.com links work too\nor a zerofee JSON export"}
-        className="h-32 w-full resize-y rounded-sm border border-hairline-strong bg-bg p-2 font-mono text-label outline-none placeholder:text-fg-3 focus:border-accent"
-      />
-      {parsed.error ? (
-        <p role="alert" className="text-label text-sell">
-          {parsed.error}
-        </p>
-      ) : (
-        deferred.trim() && (
-          <div className="flex flex-col gap-1 text-label">
-            <div className="flex flex-wrap gap-x-3">
-              <span className="font-semibold text-fg-1">{plural(parsed.handles.length, "handle")} found</span>
-              <span className="text-fg-2">{fresh.length.toLocaleString("en-US")} new</span>
-              {parsed.duplicates > 0 && <span className="text-fg-2">{plural(parsed.duplicates, "duplicate")}</span>}
-              {parsed.invalid.length > 0 && <span className="text-warn">{parsed.invalid.length.toLocaleString("en-US")} invalid</span>}
+    <Modal
+      open
+      onClose={onClose}
+      title="Import X handles"
+      description="Paste handles, x.com links or a zerofee export."
+      width={560}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" size="md" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={fresh.length === 0}
+            onClick={() => {
+              useTrackers.getState().importHandles(fresh);
+              onClose();
+            }}
+          >
+            {fresh.length > 0 ? `Import ${plural(fresh.length, "handle")}` : "Import handles"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <textarea
+          data-autofocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          spellCheck={false}
+          aria-label="Handle list"
+          placeholder={"@handle, one per line or comma-separated\nx.com links work too\nor a zerofee JSON export"}
+          className="h-32 w-full resize-y rounded-sm border border-dashed border-hairline-strong bg-surface-2 p-2 font-mono text-label text-fg-1 placeholder:text-fg-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        />
+        {parsed.error ? (
+          <p role="alert" className="text-label text-sell">
+            {parsed.error}
+          </p>
+        ) : (
+          deferred.trim() && (
+            <div className="flex flex-col gap-1 text-label">
+              <div className="flex flex-wrap gap-x-3">
+                <span className="font-semibold text-fg-1">{plural(parsed.handles.length, "handle")} found</span>
+                <span className="text-fg-2">{fmtInt(fresh.length)} new</span>
+                {parsed.duplicates > 0 && <span className="text-fg-2">{plural(parsed.duplicates, "duplicate")}</span>}
+                {parsed.invalid.length > 0 && <span className="text-warn">{fmtInt(parsed.invalid.length)} invalid</span>}
+              </div>
+              {parsed.invalid.length > 0 && (
+                <p className="truncate font-mono text-fg-3" title={parsed.invalid.join(", ")}>
+                  Skipped: {parsed.invalid.slice(0, 8).join(", ")}
+                  {parsed.invalid.length > 8 ? "…" : ""}
+                </p>
+              )}
             </div>
-            {parsed.invalid.length > 0 && (
-              <p className="truncate font-mono text-fg-3" title={parsed.invalid.join(", ")}>
-                Skipped: {parsed.invalid.slice(0, 8).join(", ")}
-                {parsed.invalid.length > 8 ? "…" : ""}
-              </p>
-            )}
-          </div>
-        )
-      )}
-      <div className="flex justify-end gap-2 border-t border-hairline pt-3">
-        <Button variant="ghost" size="md" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button variant="primary" size="md" disabled={fresh.length === 0} onClick={commit}>
-          {fresh.length > 0 ? `Import ${plural(fresh.length, "handle")}` : "Import"}
-        </Button>
+          )
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }
 
-/*
- * Customize Feed: the handle list with per-handle toggles. Anatomy follows Twenty's dense table
- * (toolbar with count and actions, compact header, inline row actions) with on/off controls like
- * Coinbase's "Customize table" menu:
- * https://mobbin.com/screens/f8bd66b5-e935-465b-93d6-cf2f74b3c078
+/**
+ * Handles: the X list with per-handle switches (tweets, profile updates, follows). Data grid with
+ * a header row and inline switches, after Twenty's table and Coinbase's "Customize table":
+ * https://mobbin.com/screens/36b0d5c8-9550-44ee-b7a0-30f8d10f2eed
  * https://mobbin.com/screens/fee6499f-1bb8-47b4-a971-607d22e0f20a
  */
-export function CustomizeFeed() {
+export function CustomizeFeed({ query, toolbarStart }: { query: string; toolbarStart?: ReactNode }) {
   const handles = useTrackers((s) => s.handles);
   const xBlacklist = useSettings((s) => s.blacklists.xHandles);
   const blocked = useMemo(() => blockedHandles(xBlacklist), [xBlacklist]);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
   const [importOpen, setImportOpen] = useState(false);
-  const rowHeight = useRowHeight();
-
-  const rows = useMemo(() => {
-    const q = normalizeHandle(query);
-    return q ? handles.filter((h) => h.handle.includes(q)) : handles;
-  }, [handles, query]);
+  const mobile = useIsMobile();
+  const rowPx = useCssPx("--zf-row", 24) + 4;
+  const q = normalizeQuery(query);
+  const rows = useMemo(() => (q ? handles.filter((h) => h.handle.includes(q)) : handles), [handles, q]);
 
   const add = (e: FormEvent) => {
     e.preventDefault();
     const h = normalizeHandle(input);
     if (!h) return;
     if (!HANDLE_RE.test(h)) {
-      setError("Handles are 1–15 letters, numbers or underscores.");
+      setError("Handles are 1 to 15 letters, digits or underscores.");
       return;
     }
     if (useTrackers.getState().handles.some((x) => x.handle === h)) {
@@ -174,18 +206,11 @@ export function CustomizeFeed() {
       return;
     }
     setInput("");
-    setError(null);
-    if (blocked.has(h)) {
-      useToasts
-        .getState()
-        .push({ kind: "warn", title: `@${h} is blacklisted`, body: "Its posts stay hidden until you remove it in Settings → Blacklists." });
-    }
+    setError(blocked.has(h) ? `@${h} is blacklisted in Settings, so its posts stay hidden.` : null);
   };
 
   const exportActions = jsonExportActions({
     filename: "zerofee-x-handles.json",
-    noun: "handle",
-    count: handles.length,
     json: () => handlesToJson(useTrackers.getState().handles),
     lines: {
       label: "Copy as @handles",
@@ -196,90 +221,84 @@ export function CustomizeFeed() {
           .join("\n"),
     },
   });
+  const copy = useCallback((h: TrackedHandle) => void copyText(`@${h.handle}`), []);
 
   return (
-    <div className="@container flex min-h-0 flex-1 flex-col">
-      <form onSubmit={add} className="flex flex-col gap-1 border-b border-hairline p-2">
-        <div className="flex items-center gap-2">
-          <label className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-sm border border-hairline-strong bg-bg px-2 text-data focus-within:border-accent">
-            <AtSign className="icon-sm shrink-0 text-fg-3" />
+    <div className="@container flex min-h-0 min-w-0 flex-1 flex-col">
+      <PaneToolbar>
+        {toolbarStart}
+        <form onSubmit={add} className="flex items-center gap-1">
+          <label className="flex h-control w-48 items-center gap-1 rounded-sm border border-hairline-strong bg-surface-2 px-2 text-data focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-focus max-md:h-11 max-md:w-40">
+            <AtSign className="icon-xs shrink-0 text-fg-3" />
             <input
-              className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-fg-3"
+              className="min-w-0 flex-1 bg-transparent placeholder:text-fg-4 focus-visible:outline-none max-md:text-title"
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
                 setError(null);
               }}
-              placeholder="handle or x.com/handle"
+              placeholder="handle or x.com link"
               aria-label="X handle to track"
               aria-invalid={error ? true : undefined}
               autoComplete="off"
               spellCheck={false}
             />
           </label>
-          <Button type="submit" size="md" variant="primary" icon={<Plus className="icon-sm" />}>
+          <Button type="submit" size="xs" variant="secondary" icon={<Plus />} className="max-md:h-11">
             Add handle
           </Button>
-        </div>
+        </form>
         {error && (
-          <p role="alert" className="text-label text-sell">
+          <span role="alert" className={cn("truncate text-label", error.includes("blacklisted") ? "text-warn" : "text-sell")}>
             {error}
-          </p>
+          </span>
         )}
-      </form>
-
-      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
-        <SearchField
-          className="flex-1 basis-32"
-          value={query}
-          onChange={setQuery}
-          placeholder="Search handle"
-          label="Search tracked handles"
-        />
-        <span className="text-label whitespace-nowrap text-fg-3">{plural(handles.length, "handle")}</span>
-        <div className="flex items-center gap-2">
-          <Button size="md" variant="secondary" title="Import" icon={<Upload className="icon-sm" />} onClick={() => setImportOpen(true)}>
-            <span className="hidden @lg:inline">Import</span>
+        <span className="ml-auto flex items-center gap-2 pl-2">
+          <MetaCount>{plural(handles.length, "handle")}</MetaCount>
+          <Button size="xs" variant="ghost" icon={<Upload />} onClick={() => setImportOpen(true)} className="max-md:h-11">
+            Import
           </Button>
-          <ExportMenu actions={exportActions} disabled={handles.length === 0} compactLabel />
-        </div>
-      </div>
-
-      <div className="zf-label flex h-6 shrink-0 items-center gap-2 border-b border-hairline px-3">
-        <span className="min-w-0 flex-1">Handle</span>
-        <span className="w-14 shrink-0 text-center" title="Tweets, replies, quotes and retweets">
-          Tweets
+          <ExportMenu actions={exportActions} disabled={handles.length === 0} size="xs" />
         </span>
-        <span className="w-14 shrink-0 text-center">Profile</span>
-        <span className="w-14 shrink-0 text-center">Follows</span>
-        <span className="w-6 shrink-0" />
-      </div>
-
-      {handles.length === 0 ? (
-        <p className="px-3 py-4 text-data text-fg-3">No handles yet. Add one above or import a list.</p>
-      ) : rows.length === 0 ? (
-        <p className="px-3 py-4 text-data text-fg-3">No handles match “{query.trim()}”.</p>
-      ) : (
-        <VirtualList
-          label="Tracked X handles"
-          count={rows.length}
-          rowHeight={rowHeight}
-          getKey={(i) => rows[i]?.handle ?? i}
-          renderRow={(i) => {
-            const h = rows[i];
-            return h ? <HandleRow h={h} blacklisted={blocked.has(h.handle)} /> : null;
-          }}
-        />
-      )}
-
-      <p className="flex items-center gap-2 border-t border-hairline px-3 py-2 text-label text-fg-3">
-        <Info className="icon-sm" />
-        Keyword and trend alerts are planned. Untracked handles show everything in “All posts”.
-      </p>
-
-      <Modal open={importOpen} onClose={() => setImportOpen(false)} title="Import X handles" width={480}>
-        <ImportHandlesForm onClose={() => setImportOpen(false)} />
-      </Modal>
+      </PaneToolbar>
+      <VirtualGrid
+        items={rows}
+        getKey={handleKey}
+        rowHeight={mobile ? MOBILE_ROW_PX : rowPx}
+        label="Tracked X handles"
+        header={
+          <HeaderRow className={cn(ROW, "max-md:px-3")}>
+            <HeaderCell className={COL.handle}>Handle</HeaderCell>
+            <HeaderCell className={COL.sw} align="center" title="Tweets, replies, quotes and reposts">
+              Tweets
+            </HeaderCell>
+            <HeaderCell className={COL.sw} align="center">
+              Profile
+            </HeaderCell>
+            <HeaderCell className={COL.sw} align="center">
+              Follows
+            </HeaderCell>
+            <HeaderCell className={COL.added} align="right">
+              Added
+            </HeaderCell>
+            <HeaderCell className={COL.remove} />
+          </HeaderRow>
+        }
+        empty={
+          handles.length === 0 ? (
+            <EmptyState
+              icon={<AtSign />}
+              title="No handles yet"
+              body="Add a handle above or import a list. Untracked accounts still show under All posts."
+            />
+          ) : (
+            <EmptyState title={`No handles match “${query.trim()}”`} body="Search by handle." />
+          )
+        }
+        onCopy={copy}
+        renderRow={(h, { active }) => <HandleRow h={h} blacklisted={blocked.has(h.handle)} active={active} mobile={mobile} />}
+      />
+      {importOpen && <ImportHandlesDialog onClose={() => setImportOpen(false)} />}
     </div>
   );
 }

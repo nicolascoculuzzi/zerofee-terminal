@@ -56,7 +56,10 @@ function cleanName(raw: string): string {
   return chars.length > MAX_NAME ? chars.slice(0, MAX_NAME).join("").trim() : s;
 }
 
-/** Splits a leading emoji off a name ("🐋 Whale" → emoji 🐋, name Whale). */
+/**
+ * Splits a leading emoji off a name: "<emoji> Whale" gives the tag <emoji> and the name "Whale".
+ * Other tools export emoji labels; the tag is user data and only shows inside the wallet avatar.
+ */
 function splitName(raw: string): { name: string; emoji: string } {
   const s = raw.trim();
   const m = LEADING_EMOJI.exec(s);
@@ -120,7 +123,7 @@ function splitFields(line: string): string[] | null {
   return out;
 }
 
-/** One text line → wallet, or null when the line holds no Solana address. */
+/** Parses one text line into a wallet, or null when the line holds no Solana address. */
 export function parseWalletLine(line: string): ImportedWallet | null {
   const fields = splitFields(line);
   if (fields) {

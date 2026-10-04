@@ -1,86 +1,51 @@
-import type { ReactNode } from "react";
-import { XGlyph } from "../../components/ui/bits";
-import { cn } from "../../lib/cn";
+import { Segmented } from "../../components/ui/controls";
+import { fmtInt } from "../../lib/format";
 import { useTrackers } from "../../state/trackers";
+import { MetaCount, PaneToolbar, ToolbarSep } from "./bits";
 import { CustomizeFeed } from "./CustomizeFeed";
-import { LiveTrades } from "./LiveTrades";
-import { Monitor } from "./Monitor";
-import { useTrackerPrefs, type WalletTab, type XTab } from "./prefs";
+import { useTrackerPrefs, type XView } from "./prefs";
 import { SocialFeed } from "./SocialFeed";
-import { TabBar } from "./TabBar";
-import { WalletManager } from "./WalletManager";
+import { WalletCount } from "./WalletManager";
 
-function PanelShell({ label, header, children, className }: { label: string; header: ReactNode; children: ReactNode; className?: string }) {
-  return (
-    <section
-      aria-label={label}
-      className={cn("@container flex min-h-0 min-w-0 flex-col rounded-md border border-hairline bg-surface-1", className)}
-    >
-      <header className="flex h-10 shrink-0 items-center gap-3 border-b border-hairline px-3">{header}</header>
-      {children}
-    </section>
+/** X tab: the live feed, or the handle list with its switches. */
+export function XPane({ query }: { query: string }) {
+  const view = useTrackerPrefs((s) => s.xView);
+  const setView = useTrackerPrefs((s) => s.setXView);
+  const handles = useTrackers((s) => s.handles.length);
+  const start = (
+    <>
+      <Segmented<XView>
+        size="xs"
+        value={view}
+        onChange={setView}
+        label="X view"
+        className="max-md:h-13"
+        options={[
+          { value: "feed", label: "Feed" },
+          {
+            value: "handles",
+            label: (
+              <span className="flex items-center gap-1">
+                Handles <span className="zf-num text-fg-3">{fmtInt(handles)}</span>
+              </span>
+            ),
+          },
+        ]}
+      />
+      <ToolbarSep />
+    </>
   );
+  return view === "feed" ? <SocialFeed query={query} toolbarStart={start} /> : <CustomizeFeed query={query} toolbarStart={start} />;
 }
 
-/** Wallet tracker: Wallet Manager | Live Trades | Monitor. */
-export function WalletTracker({ className }: { className?: string }) {
-  const tab = useTrackerPrefs((s) => s.walletTab);
-  const setTab = useTrackerPrefs((s) => s.setWalletTab);
-  const unread = useTrackers((s) => s.unreadTrades);
+/** Wallet pane toolbar (28 px): count against the limit and how many have alerts on. */
+export function WalletPaneToolbar() {
+  const alerts = useTrackers((s) => s.wallets.reduce((n, w) => n + (w.alerts ? 1 : 0), 0));
   return (
-    <PanelShell
-      label="Wallet tracker"
-      className={className}
-      header={
-        <>
-          <h2 className="hidden text-heading font-semibold whitespace-nowrap @2xl:block">Wallet tracker</h2>
-          <TabBar<WalletTab>
-            label="Wallet tracker views"
-            value={tab}
-            onChange={setTab}
-            tabs={[
-              { id: "manager", label: "Wallet Manager" },
-              { id: "trades", label: "Live Trades", badge: unread },
-              { id: "monitor", label: "Monitor" },
-            ]}
-          />
-        </>
-      }
-    >
-      {tab === "manager" && <WalletManager />}
-      {tab === "trades" && <LiveTrades />}
-      {tab === "monitor" && <Monitor />}
-    </PanelShell>
-  );
-}
-
-/** X tracker: Live feed | Customize Feed. */
-export function XTracker({ className }: { className?: string }) {
-  const tab = useTrackerPrefs((s) => s.xTab);
-  const setTab = useTrackerPrefs((s) => s.setXTab);
-  const unread = useTrackers((s) => s.unreadPosts);
-  return (
-    <PanelShell
-      label="X tracker"
-      className={className}
-      header={
-        <>
-          <h2 className="hidden items-center gap-1 text-heading font-semibold whitespace-nowrap @lg:flex">
-            <XGlyph /> tracker
-          </h2>
-          <TabBar<XTab>
-            label="X tracker views"
-            value={tab}
-            onChange={setTab}
-            tabs={[
-              { id: "feed", label: "Live feed", badge: unread },
-              { id: "customize", label: "Customize Feed" },
-            ]}
-          />
-        </>
-      }
-    >
-      {tab === "feed" ? <SocialFeed /> : <CustomizeFeed />}
-    </PanelShell>
+    <PaneToolbar>
+      <WalletCount />
+      <ToolbarSep />
+      <MetaCount>{alerts === 1 ? "1 with alerts on" : `${fmtInt(alerts)} with alerts on`}</MetaCount>
+    </PaneToolbar>
   );
 }

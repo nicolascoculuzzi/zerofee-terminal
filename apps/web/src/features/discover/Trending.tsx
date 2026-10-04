@@ -1,27 +1,36 @@
-import { ArrowDown, ArrowUp, Check, Info } from "lucide-react";
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Info, ListFilter, SlidersHorizontal } from "lucide-react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Age } from "../../components/ui/Age";
-import { Button } from "../../components/ui/Button";
-import { SocialLinks } from "../../components/ui/bits";
-import { NumberInput, Segmented } from "../../components/ui/controls";
+import { Button, IconButton } from "../../components/ui/Button";
+import { EmptyState, SocialLinks } from "../../components/ui/bits";
+import { Checkbox, NumberInput, Segmented } from "../../components/ui/controls";
+import { BottomSheet } from "../../components/ui/Modal";
+import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { Tooltip } from "../../components/ui/Tooltip";
+import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
+import { useCssPx } from "../../lib/cssVar";
 import { compileBlacklists, isBlacklisted } from "../../lib/filters";
-import { fmtCount, fmtPct, fmtUsd, fmtUsdPrice } from "../../lib/format";
-import { METRICS, riskTone, TONE_TEXT } from "../../lib/metrics";
+import { fmtInt, fmtRiskPct } from "../../lib/format";
+import { bandsText, riskTone, TONE_TEXT } from "../../lib/metrics";
+import { navigateTo } from "../../lib/nav";
 import type { TokenSummary } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
-import { PauseStatus, SearchField } from "../trackers/bits";
-import { QuickBuyButton, WatchStar } from "../trackers/QuickBuyButton";
+import { MetaCount, PaneToolbar, PausedChip, SearchField } from "../trackers/bits";
+import { hoverTarget, MOBILE_ROW_PX, useIsMobile, useLivePause } from "../trackers/hooks";
+import { QuoteValue, useQuote } from "../trackers/money";
+import { QuickBuyPill, WatchStar } from "../trackers/QuickBuyButton";
+import { Cell, CursorBar, HeaderCell, HeaderRow, rowTone, SortHeaderCell } from "../trackers/table";
+import { VirtualGrid } from "../trackers/VirtualList";
 import { discoverFiltersActive, useDiscoverPrefs } from "./prefs";
 import {
   defaultDir,
   matchesTrendFilters,
+  type RankedToken,
   rankTrending,
-  type SortKey,
   sortRanked,
   TREND_EXPLAINER,
   TREND_WINDOWS,
@@ -29,17 +38,16 @@ import {
 } from "./ranking";
 
 const TOP_N = 100;
-const RERANK_MS = 2500;
+/** Sorted lists re-sort at most every 2 s (DESIGN.md 6.7); rows keep updating in place. */
+const RERANK_MS = 2000;
 
-/**
- * Market snapshot for ranking, refreshed at most every `intervalMs` (rows still update live) and
- * frozen while `frozen` is set, so the order doesn't reshuffle under the cursor.
- */
-function useRankingSnapshot(intervalMs: number, frozen: boolean): Record<string, TokenSummary> {
+const rankedKey = (r: RankedToken): string => r.token.mint;
+
+/** Market snapshot for ranking, refreshed at most every `intervalMs` (row values stay live). */
+function useRankingSnapshot(intervalMs: number): Record<string, TokenSummary> {
   const [snap, setSnap] = useState(() => useMarket.getState().tokens);
   const empty = useRef(Object.keys(snap).length === 0);
   useEffect(() => {
-    if (frozen) return;
     let last = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const flush = () => {
@@ -59,149 +67,270 @@ function useRankingSnapshot(intervalMs: number, frozen: boolean): Record<string,
       unsub();
       if (timer) clearTimeout(timer);
     };
-  }, [intervalMs, frozen]);
+  }, [intervalMs]);
   return snap;
 }
 
-/** Column layout shared by the header and the rows; hidden columns follow the container width. */
+/*
+ * Trending columns (DESIGN.md 4.9: fixed `ch` widths, one flexible label column, numbers
+ * right-aligned). Lower-priority columns drop as the panel narrows (container queries).
+ */
 const COL = {
-  rank: "w-6",
-  price: "hidden w-20 @2xl:flex",
-  change: "flex w-14",
-  mc: "flex w-16",
-  liq: "hidden w-16 @xl:flex",
-  vol: "hidden w-16 @lg:flex",
-  txns: "hidden w-14 @3xl:flex",
-  holders: "hidden w-14 @4xl:flex",
-  top10: "hidden w-14 @3xl:flex",
-  dex: "hidden w-10 @4xl:flex",
-  buy: "flex w-14",
-  star: "flex w-5",
+  rank: "w-[4ch] justify-end",
+  token: "min-w-0 flex-1",
+  name: "@max-[720px]:hidden",
+  socials: "@max-[960px]:hidden",
+  price: "w-[11ch] justify-end @max-[1040px]:hidden",
+  change: "w-[8ch] justify-end",
+  mc: "w-[9ch] justify-end",
+  liq: "w-[9ch] justify-end @max-[640px]:hidden",
+  vol: "w-[9ch] justify-end @max-[560px]:hidden",
+  txns: "w-[7ch] justify-end @max-[880px]:hidden",
+  holders: "w-[7ch] justify-end @max-[940px]:hidden",
+  top10: "w-[6ch] justify-end @max-[800px]:hidden",
+  dex: "w-[5ch] justify-center @max-[1120px]:hidden",
+  pill: "w-16 justify-end",
+  star: "w-6 justify-center",
 } as const;
 
-const TrendingRow = memo(function TrendingRow({ mint, rank, fallback }: { mint: string; rank: number; fallback: TokenSummary }) {
-  const t = useMarket((s) => s.tokens[mint]) ?? fallback;
-  const up = t.change5mPct >= 0;
+const ROW = "flex items-center gap-2 px-2";
+
+/** "DEX" in a neutral outline chip (Dex Paid says nothing about safety, DESIGN.md 3.11). */
+function DexChip({ paid }: { paid: boolean }) {
+  if (!paid) return <Num kind="count" value={null} />;
   return (
-    <div className="relative flex h-7 items-center gap-1 px-3 text-label hover:bg-surface-3 @md:gap-2">
+    <span className="inline-flex h-4 items-center rounded-xs border border-hairline-strong px-1 text-micro font-semibold text-fg-2">
+      DEX
+    </span>
+  );
+}
+
+function Top10({ pct }: { pct: number }) {
+  const thresholds = useSettings((s) => s.display.riskThresholds);
+  return <span className={cn("zf-num", TONE_TEXT[riskTone("top10", pct, thresholds)])}>{fmtRiskPct(pct)}</span>;
+}
+
+/**
+ * Trending row (24 / 28 px): rank, token, then live numbers; quick-buy and star at the end.
+ * Values update in place; only the order is throttled.
+ */
+const TrendingRow = memo(function TrendingRow({ fallback, rank, active }: { fallback: TokenSummary; rank: number; active: boolean }) {
+  const t = useMarket((s) => s.tokens[fallback.mint]) ?? fallback;
+  const quote = useQuote();
+  const tab = active ? 0 : -1;
+  return (
+    <div {...hoverTarget(t.mint)} className={cn(ROW, "relative h-full text-data", active ? "bg-surface-2" : rowTone({}))}>
+      <CursorBar show={active} />
+      <Cell className={cn("shrink-0 text-fg-3", COL.rank)}>
+        <span className="zf-num">{rank}</span>
+      </Cell>
+      <Cell className={cn("items-center gap-1", COL.token)}>
+        <Link to={`/t/${t.mint}`} tabIndex={-1} className="absolute inset-0">
+          <span className="sr-only">
+            Open {t.symbol}, {t.name}
+          </span>
+        </Link>
+        <TokenAvatar mint={t.mint} symbol={t.symbol} imageUri={t.imageUri} size="2xs" />
+        <span className="max-w-[10ch] shrink-0 truncate font-semibold text-fg-1">{t.symbol}</span>
+        <span className={cn("min-w-0 truncate text-fg-3", COL.name)}>{t.name}</span>
+        <Age ts={t.createdAt} className="shrink-0" />
+        <span className={cn("relative shrink-0", COL.socials)}>
+          <SocialLinks socials={t.socials} />
+        </span>
+      </Cell>
+      <Cell className={cn("shrink-0 text-fg-1", COL.price)}>
+        <Num kind="price" value={quote === "USD" ? t.priceUsd : t.priceSol} usd={quote === "USD"} />
+      </Cell>
+      <Cell className={cn("shrink-0", COL.change)}>
+        <Num kind="pct" value={t.change5mPct} signed />
+      </Cell>
+      <Cell className={cn("shrink-0 font-medium text-fg-1", COL.mc)}>
+        <QuoteValue usd={t.marketCapUsd} sol={t.marketCapSol} />
+      </Cell>
+      <Cell className={cn("shrink-0 text-fg-2", COL.liq)}>
+        <QuoteValue usd={t.liquidityUsd} />
+      </Cell>
+      <Cell className={cn("shrink-0 text-fg-2", COL.vol)}>
+        <QuoteValue usd={t.volumeUsd} />
+      </Cell>
+      <Cell className={cn("shrink-0 text-fg-2", COL.txns)}>
+        <Num kind="count" value={t.txns} />
+      </Cell>
+      <Cell className={cn("shrink-0 text-fg-2", COL.holders)}>
+        <Num kind="count" value={t.holders} />
+      </Cell>
+      <Cell className={cn("shrink-0", COL.top10)}>
+        <Top10 pct={t.risk.top10Pct} />
+      </Cell>
+      <Cell className={cn("shrink-0", COL.dex)}>
+        <DexChip paid={t.dexPaid} />
+      </Cell>
+      <Cell className={cn("shrink-0", COL.pill)}>
+        <QuickBuyPill mint={t.mint} symbol={t.symbol} source="discover" size="row" tabIndex={tab} />
+      </Cell>
+      <Cell className={cn("relative flex shrink-0", COL.star)}>
+        <WatchStar mint={t.mint} symbol={t.symbol} tabIndex={tab} />
+      </Cell>
+    </div>
+  );
+});
+
+/** Phone row (64 px): rank and avatar; ticker and age over MC and 5m; quick-buy and star at 44 px. */
+const MobileTrendingRow = memo(function MobileTrendingRow({ fallback, rank }: { fallback: TokenSummary; rank: number }) {
+  const t = useMarket((s) => s.tokens[fallback.mint]) ?? fallback;
+  return (
+    <div {...hoverTarget(t.mint)} className="relative flex h-full items-center gap-2 pr-1 pl-3">
       <Link to={`/t/${t.mint}`} className="absolute inset-0">
         <span className="sr-only">
           Open {t.symbol}, {t.name}
         </span>
       </Link>
-      <span className={cn(COL.rank, "shrink-0 text-right text-fg-3")}>{rank}</span>
-      <span className="flex min-w-0 flex-1 items-center gap-1 @md:gap-2">
-        <TokenAvatar mint={t.mint} symbol={t.symbol} imageUri={t.imageUri} size="xs" />
-        <span className="truncate font-semibold text-fg-1">{t.symbol}</span>
-        <span className="hidden min-w-0 truncate text-fg-3 @lg:inline">{t.name}</span>
-        <Age ts={t.createdAt} className="hidden shrink-0 text-fg-3 @sm:inline" />
-        <span className="relative hidden shrink-0 @xl:inline-flex">
-          <SocialLinks socials={t.socials} />
+      <span className="zf-num w-[3ch] shrink-0 text-right text-data text-fg-3">{rank}</span>
+      <TokenAvatar mint={t.mint} symbol={t.symbol} imageUri={t.imageUri} size="sm" />
+      <Cell className="min-w-0 flex-1 flex-col gap-1">
+        <span className="flex h-5 min-w-0 items-center gap-2">
+          <span className="truncate text-amount font-semibold text-fg-1">{t.symbol}</span>
+          <Age ts={t.createdAt} className="shrink-0 text-data" />
         </span>
-      </span>
-      <span className={cn(COL.price, "shrink-0 justify-end text-fg-1")}>{fmtUsdPrice(t.priceUsd)}</span>
-      <span className={cn(COL.change, "shrink-0 justify-end", up ? "text-buy" : "text-sell")}>
-        {fmtPct(t.change5mPct, { signed: true })}
-      </span>
-      <span className={cn(COL.mc, "shrink-0 justify-end font-medium text-fg-1")}>{fmtUsd(t.marketCapUsd)}</span>
-      <span className={cn(COL.liq, "shrink-0 justify-end text-fg-2")}>{fmtUsd(t.liquidityUsd)}</span>
-      <span className={cn(COL.vol, "shrink-0 justify-end text-fg-2")}>{fmtUsd(t.volumeUsd)}</span>
-      <span className={cn(COL.txns, "shrink-0 justify-end text-fg-2")}>{fmtCount(t.txns)}</span>
-      <span className={cn(COL.holders, "shrink-0 justify-end text-fg-2")}>{fmtCount(t.holders)}</span>
-      <span className={cn(COL.top10, "shrink-0 justify-end", TONE_TEXT[riskTone("top10", t.risk.top10Pct)])}>
-        {fmtPct(t.risk.top10Pct)}
-      </span>
-      <span className={cn(COL.dex, "shrink-0 justify-center")}>
-        {t.dexPaid ? <Check className="icon-sm text-fg-1" aria-label="Dex paid" /> : <span className="text-fg-3">—</span>}
-      </span>
-      <span className={cn(COL.buy, "shrink-0 justify-end")}>
-        <QuickBuyButton mint={t.mint} symbol={t.symbol} source="discover" />
-      </span>
-      <span className={cn(COL.star, "shrink-0 justify-end")}>
-        <WatchStar mint={t.mint} symbol={t.symbol} />
-      </span>
+        <span className="flex h-5 min-w-0 items-center gap-2 text-data">
+          <span className="font-medium text-fg-1">
+            <QuoteValue usd={t.marketCapUsd} sol={t.marketCapSol} />
+          </span>
+          <Num kind="pct" value={t.change5mPct} signed />
+        </span>
+      </Cell>
+      <QuickBuyPill mint={t.mint} symbol={t.symbol} source="discover" size="touch" />
+      <WatchStar mint={t.mint} symbol={t.symbol} touch />
     </div>
   );
 });
 
-function SortHeader({ k, label, col, title }: { k: SortKey; label: string; col: string; title?: string }) {
-  const sort = useDiscoverPrefs((s) => s.sort);
-  const setSort = useDiscoverPrefs((s) => s.setSort);
-  const active = sort.key === k;
-  const Arrow = sort.dir === "asc" ? ArrowUp : ArrowDown;
+/** Phones: a Filters button with a bottom sheet of touch-size fields (44 px rows, 16 px inputs). */
+function MobileTrendFilters({ count }: { count: number }) {
+  const filters = useDiscoverPrefs((s) => s.filters);
+  const setFilters = useDiscoverPrefs((s) => s.setFilters);
+  const resetFilters = useDiscoverPrefs((s) => s.resetFilters);
+  const [open, setOpen] = useState(false);
+  const active =
+    (filters.dexPaid ? 1 : 0) + (filters.minLiq !== null ? 1 : 0) + (filters.minVol !== null ? 1 : 0) + (filters.maxTop10 !== null ? 1 : 0);
   return (
-    <button
-      type="button"
-      title={title}
-      onClick={() => setSort(active ? { key: k, dir: sort.dir === "asc" ? "desc" : "asc" } : { key: k, dir: defaultDir(k) })}
-      className={cn(col, "shrink-0 items-center justify-end gap-1 hover:text-fg-1", active && "text-fg-1")}
+    <>
+      <Button
+        size="md"
+        variant={active > 0 ? "secondary" : "ghost"}
+        icon={<SlidersHorizontal />}
+        className="max-md:h-11"
+        onClick={() => setOpen(true)}
+      >
+        Filters
+        {active > 0 && <span className="zf-num text-fg-2">{active}</span>}
+      </Button>
+      <BottomSheet open={open} onClose={() => setOpen(false)} title="Trending filters">
+        <div className="flex flex-col gap-4 p-4">
+          <Checkbox checked={filters.dexPaid} onChange={(dexPaid) => setFilters({ dexPaid })} label="Dex paid only" className="py-3.5" />
+          <div className="flex flex-col gap-1">
+            <span className="zf-label">Minimum liquidity, USD</span>
+            <NumberInput
+              size="amount"
+              value={filters.minLiq}
+              onChange={(minLiq) => setFilters({ minLiq })}
+              prefix="$"
+              placeholder="Any"
+              min={0}
+              inputClassName="text-title"
+              ariaLabel="Minimum liquidity in USD (accepts 10k)"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="zf-label">Minimum volume, USD</span>
+            <NumberInput
+              size="amount"
+              value={filters.minVol}
+              onChange={(minVol) => setFilters({ minVol })}
+              prefix="$"
+              placeholder="Any"
+              min={0}
+              inputClassName="text-title"
+              ariaLabel="Minimum volume in USD (accepts 50k)"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="zf-label">Maximum top 10 holders share</span>
+            <NumberInput
+              size="amount"
+              value={filters.maxTop10}
+              onChange={(maxTop10) => setFilters({ maxTop10 })}
+              suffix="%"
+              placeholder="Any"
+              min={0}
+              max={100}
+              inputClassName="text-title"
+              ariaLabel="Maximum top 10 holders share in percent"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button size="xl" variant="secondary" onClick={resetFilters}>
+              Reset filters
+            </Button>
+            <Button size="xl" variant="primary" onClick={() => setOpen(false)}>
+              Show {fmtInt(count)} tokens
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
+    </>
+  );
+}
+
+function WindowInfo() {
+  return (
+    <Tooltip
+      maxWidth={320}
+      content={
+        <span className="flex flex-col gap-1">
+          <span className="text-data font-semibold text-fg-1">How trending is ranked</span>
+          {TREND_WINDOWS.map((w) => (
+            <span key={w} className="text-fg-2">
+              {TREND_EXPLAINER[w]}
+            </span>
+          ))}
+          <span className="text-micro text-fg-3">Estimated from cumulative live stats until windowed stats are served.</span>
+        </span>
+      }
     >
-      {active && <Arrow className="icon-xs" />}
-      {label}
-    </button>
+      <IconButton label="How trending is ranked" className="max-md:size-11">
+        <Info />
+      </IconButton>
+    </Tooltip>
   );
 }
 
-function TrendingHeader() {
-  return (
-    <div className="zf-label sticky top-0 z-10 flex h-6 items-center gap-1 border-b border-hairline bg-surface-1 px-3 @md:gap-2">
-      <SortHeader k="rank" label="#" col={cn(COL.rank, "flex")} title="Trending rank for the selected window" />
-      <span className="min-w-0 flex-1">Token</span>
-      <SortHeader k="price" label="Price" col={COL.price} title={METRICS.price.definition} />
-      <SortHeader k="change" label="5m" col={COL.change} title={METRICS.change5m.definition} />
-      <SortHeader k="mc" label="MC" col={COL.mc} title={METRICS.marketCap.definition} />
-      <SortHeader k="liq" label="Liq" col={COL.liq} title={METRICS.liquidity.definition} />
-      <SortHeader k="vol" label="Vol" col={COL.vol} title={METRICS.volume.definition} />
-      <SortHeader k="txns" label="Txns" col={COL.txns} title={METRICS.txns.definition} />
-      <SortHeader k="holders" label="Holders" col={COL.holders} title={METRICS.holders.definition} />
-      <SortHeader k="top10" label="Top 10" col={COL.top10} title={METRICS.top10.definition} />
-      <span className={cn(COL.dex, "shrink-0 justify-center")} title={METRICS.dexPaid.definition}>
-        Dex
-      </span>
-      <span className={cn(COL.buy, "shrink-0")} />
-      <span className={cn(COL.star, "shrink-0")} />
-    </div>
-  );
-}
-
-function ToggleChip({ pressed, onClick, children, title }: { pressed: boolean; onClick: () => void; children: string; title?: string }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={pressed}
-      title={title}
-      onClick={onClick}
-      className={cn(
-        "flex h-7 shrink-0 items-center gap-1 rounded-sm border px-2 text-data transition-colors",
-        pressed ? "border-hairline-strong bg-surface-3 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
-      )}
-    >
-      {pressed && <Check className="icon-sm" />}
-      {children}
-    </button>
-  );
-}
-
-/*
- * Trending. Anatomy follows Kraken Pro's markets panel (window/category tabs, right-aligned numeric
- * columns, star column at the end) and Binance Wallet's trending list (time-window selector):
- * https://mobbin.com/screens/fe204312-8607-4018-b0dd-a36dc71f4978
- * https://mobbin.com/screens/f9e12f4b-794b-4deb-be96-4a3d3ff62e6a
- * Ranking heuristic: see ranking.ts. Order refreshes every few seconds and freezes on hover;
- * the numbers in each row stay live.
+/**
+ * Trending: the live set ranked for the chosen window, top 100, as a dense table (DESIGN.md 4.9)
+ * with the Pulse quick-buy pill. Re-ranks at most every 2 s and freezes while hovered or
+ * focused. Sortable headers and tabular numbers in every column after OpenSea's tokens table;
+ * a dense dark screener after Fey; the star column after OpenSea collections; window tabs after
+ * OKX markets' category tabs:
+ * https://mobbin.com/screens/a2072a4d-d59f-4b22-92be-ddcc3100db61
+ * https://mobbin.com/screens/08c97ee6-5818-4bcc-ae01-2e2a751c1323
+ * https://mobbin.com/screens/3c43da7c-1aa1-4e4f-8a8d-cdf85c546240
+ * https://mobbin.com/screens/d8d401bd-925d-490d-b367-0fcbf7628c0f
  */
-export function TrendingSection({ className }: { className?: string }) {
+export function TrendingPanel() {
   const trendWindow = useDiscoverPrefs((s) => s.window);
   const setWindow = useDiscoverPrefs((s) => s.setWindow);
   const sort = useDiscoverPrefs((s) => s.sort);
+  const setSort = useDiscoverPrefs((s) => s.setSort);
   const filters = useDiscoverPrefs((s) => s.filters);
   const setFilters = useDiscoverPrefs((s) => s.setFilters);
   const resetFilters = useDiscoverPrefs((s) => s.resetFilters);
   const blacklists = useSettings((s) => s.blacklists);
+  const thresholds = useSettings((s) => s.display.riskThresholds);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
-  const [hovered, setHovered] = useState(false);
-  const snapshot = useRankingSnapshot(RERANK_MS, hovered);
+  const snapshot = useRankingSnapshot(RERANK_MS);
+  const mobile = useIsMobile();
+  const rowPx = useCssPx("--zf-row", 24);
 
   const ranked = useMemo(() => {
     const compiled = compileBlacklists(blacklists);
@@ -209,133 +338,165 @@ export function TrendingSection({ className }: { className?: string }) {
     return rankTrending(Object.values(snapshot), trendWindow, Date.now(), (t) => !isBlacklisted(t, compiled) && matchesTrendFilters(t, f));
   }, [snapshot, trendWindow, filters, deferredQuery, blacklists]);
   const rows = useMemo(() => sortRanked(ranked.slice(0, TOP_N), sort.key, sort.dir), [ranked, sort]);
+  const { shown, paused, pending, bind, release } = useLivePause(rows, rankedKey);
   const total = Object.keys(snapshot).length;
-  const active = discoverFiltersActive(filters) || deferredQuery.trim() !== "";
+  const filtered = discoverFiltersActive(filters);
+  const searching = deferredQuery.trim() !== "";
+
+  const open = useCallback((r: RankedToken, how: { newTab: boolean }) => {
+    const to = `/t/${r.token.mint}`;
+    if (how.newTab) window.open(to, "_blank", "noopener");
+    else navigateTo(to);
+  }, []);
+  const copy = useCallback((r: RankedToken) => void copyText(r.token.mint), []);
+  const sortProps = (k: Parameters<typeof defaultDir>[0]) => ({
+    k,
+    sort,
+    onSort: setSort,
+    defaultDir: defaultDir(k),
+    align: "right" as const,
+  });
 
   return (
-    <section
-      aria-label="Trending"
-      className={cn("@container flex min-w-0 flex-col rounded-md border border-hairline bg-surface-1", className)}
-    >
-      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
-        <h2 className="pl-1 text-heading font-semibold">Trending</h2>
+    <div className="@container flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex h-topbar shrink-0 items-center gap-2 border-b border-hairline px-2 max-md:h-auto max-md:flex-wrap max-md:px-3 max-md:py-2">
+        <h2 className="pl-1 text-data font-semibold text-fg-1 max-md:pl-0">Trending</h2>
         <Segmented<TrendWindow>
           value={trendWindow}
           onChange={setWindow}
           options={TREND_WINDOWS.map((w) => ({ value: w, label: w, title: TREND_EXPLAINER[w] }))}
           label="Trending window"
+          className="max-md:h-13"
         />
-        <Tooltip
-          maxWidth={320}
-          content={
-            <span className="flex flex-col gap-1">
-              <span className="font-semibold">How trending is ranked</span>
-              {TREND_WINDOWS.map((w) => (
-                <span key={w} className="text-fg-2">
-                  {TREND_EXPLAINER[w]}
-                </span>
-              ))}
-              <span className="text-fg-3">Estimated from cumulative live stats until windowed stats are served.</span>
-            </span>
-          }
-        >
-          <button
-            type="button"
-            aria-label="How trending is ranked"
-            className="flex size-6 items-center justify-center rounded-sm text-fg-3 hover:text-fg-1"
-          >
-            <Info className="icon-sm" />
-          </button>
-        </Tooltip>
-        <span className="ml-auto">
-          <PauseStatus
-            paused={hovered}
-            pending={0}
-            idle={`Top ${Math.min(TOP_N, ranked.length).toLocaleString("en-US")} of ${total.toLocaleString("en-US")} live`}
+        <WindowInfo />
+        <span className="ml-auto flex items-center gap-2 max-md:order-last max-md:ml-0 max-md:w-full">
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            placeholder="Search name, ticker or CA"
+            label="Search trending tokens"
+            mobile={mobile}
+            className={mobile ? "min-w-0 flex-1" : "w-60"}
           />
         </span>
       </div>
-
-      <div className="flex flex-wrap items-center gap-2 border-b border-hairline p-2">
-        <SearchField
-          className="flex-1 basis-40 sm:max-w-64"
-          value={query}
-          onChange={setQuery}
-          placeholder="Search name, ticker or CA"
-          label="Search trending tokens"
-        />
-        <ToggleChip pressed={filters.dexPaid} onClick={() => setFilters({ dexPaid: !filters.dexPaid })} title={METRICS.dexPaid.definition}>
-          Dex paid
-        </ToggleChip>
-        <NumberInput
-          value={filters.minLiq}
-          onChange={(minLiq) => setFilters({ minLiq })}
-          prefix="Min liq $"
-          min={0}
-          placeholder="any"
-          alignRight
-          className="w-32"
-          ariaLabel="Minimum liquidity in USD (accepts 10k)"
-        />
-        <NumberInput
-          value={filters.minVol}
-          onChange={(minVol) => setFilters({ minVol })}
-          prefix="Min vol $"
-          min={0}
-          placeholder="any"
-          alignRight
-          className="w-32"
-          ariaLabel="Minimum volume in USD (accepts 50k)"
-        />
-        <NumberInput
-          value={filters.maxTop10}
-          onChange={(maxTop10) => setFilters({ maxTop10 })}
-          prefix="Max T10"
-          suffix="%"
-          min={0}
-          max={100}
-          placeholder="any"
-          alignRight
-          className="w-28"
-          ariaLabel="Maximum top 10 holders share in percent"
-        />
-        {active && (
-          <Button
-            size="md"
-            variant="ghost"
-            onClick={() => {
-              resetFilters();
-              setQuery("");
-            }}
-          >
-            Reset
-          </Button>
+      <PaneToolbar>
+        {mobile ? (
+          <MobileTrendFilters count={Math.min(TOP_N, ranked.length)} />
+        ) : (
+          <>
+            <Checkbox
+              checked={filters.dexPaid}
+              onChange={(dexPaid) => setFilters({ dexPaid })}
+              label="Dex paid only"
+              className="shrink-0"
+            />
+            <NumberInput
+              value={filters.minLiq}
+              onChange={(minLiq) => setFilters({ minLiq })}
+              prefix="Liq $"
+              placeholder="Min"
+              min={0}
+              className="w-28"
+              ariaLabel="Minimum liquidity in USD (accepts 10k)"
+            />
+            <NumberInput
+              value={filters.minVol}
+              onChange={(minVol) => setFilters({ minVol })}
+              prefix="Vol $"
+              placeholder="Min"
+              min={0}
+              className="w-28"
+              ariaLabel="Minimum volume in USD (accepts 50k)"
+            />
+            <NumberInput
+              value={filters.maxTop10}
+              onChange={(maxTop10) => setFilters({ maxTop10 })}
+              prefix="Top 10"
+              suffix="%"
+              placeholder="Max"
+              min={0}
+              max={100}
+              className="w-28"
+              ariaLabel="Maximum top 10 holders share in percent"
+            />
+            {filtered && (
+              <Button size="xs" variant="ghost" onClick={resetFilters}>
+                Reset filters
+              </Button>
+            )}
+          </>
         )}
-      </div>
-
-      <div className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-        <TrendingHeader />
-        <div
-          onPointerEnter={(e) => {
-            if (e.pointerType === "mouse") setHovered(true);
-          }}
-          onPointerLeave={() => setHovered(false)}
-        >
-          {rows.length === 0 ? (
-            <p className="px-3 py-4 text-data text-fg-3">
-              {total === 0 ? "Waiting for the live market." : active ? "No tokens match these filters." : "No tokens are trending yet."}
-            </p>
+        <span className="ml-auto flex items-center gap-2 pl-2">
+          <PausedChip paused={paused} />
+          <MetaCount>
+            Top {fmtInt(Math.min(TOP_N, ranked.length))} of {fmtInt(total)}
+          </MetaCount>
+        </span>
+      </PaneToolbar>
+      <VirtualGrid
+        items={shown}
+        getKey={rankedKey}
+        rowHeight={mobile ? MOBILE_ROW_PX : rowPx}
+        label="Trending tokens"
+        header={
+          mobile ? undefined : (
+            <HeaderRow className={ROW}>
+              <SortHeaderCell {...sortProps("rank")} label="#" className={COL.rank} title="Trending rank for the window" />
+              <HeaderCell className={COL.token}>Token</HeaderCell>
+              <SortHeaderCell {...sortProps("price")} label="Price" className={COL.price} metric="price" />
+              <SortHeaderCell {...sortProps("change")} label="5m" className={COL.change} metric="change5m" />
+              <SortHeaderCell {...sortProps("mc")} label="MC" className={COL.mc} metric="marketCap" />
+              <SortHeaderCell {...sortProps("liq")} label="Liq" className={COL.liq} metric="liquidity" />
+              <SortHeaderCell {...sortProps("vol")} label="Vol" className={COL.vol} metric="volume" />
+              <SortHeaderCell {...sortProps("txns")} label="Txns" className={COL.txns} metric="txns" />
+              <SortHeaderCell {...sortProps("holders")} label="Holders" className={COL.holders} metric="holders" />
+              <SortHeaderCell
+                {...sortProps("top10")}
+                label="Top 10"
+                className={COL.top10}
+                metric="top10"
+                bands={bandsText("top10", thresholds)}
+              />
+              <HeaderCell className={COL.dex} align="center" metric="dexPaid">
+                Dex
+              </HeaderCell>
+              <HeaderCell className={COL.pill} />
+              <HeaderCell className={COL.star} />
+            </HeaderRow>
+          )
+        }
+        empty={
+          total === 0 ? (
+            <EmptyState title="Waiting for the live market" body="Tokens show up as soon as the feed connects." />
+          ) : filtered || searching ? (
+            <EmptyState
+              icon={<ListFilter />}
+              title={searching ? `No tokens match “${deferredQuery.trim()}”` : "No tokens match these filters"}
+              body="Loosen a filter or clear the search."
+              action={
+                filtered ? (
+                  <Button size="sm" variant="secondary" onClick={resetFilters}>
+                    Reset filters
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
-            <ul aria-label="Trending tokens">
-              {rows.map((r) => (
-                <li key={r.token.mint}>
-                  <TrendingRow mint={r.token.mint} rank={r.rank} fallback={r.token} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </section>
+            <EmptyState title="Nothing is trending yet" body="The ranking fills in as tokens trade." />
+          )
+        }
+        paused={paused}
+        pending={pending}
+        onRelease={release}
+        bind={bind}
+        onOpen={open}
+        onCopy={copy}
+        mintOf={rankedKey}
+        renderRow={(r, { active }) =>
+          mobile ? <MobileTrendingRow fallback={r.token} rank={r.rank} /> : <TrendingRow fallback={r.token} rank={r.rank} active={active} />
+        }
+      />
+    </div>
   );
 }

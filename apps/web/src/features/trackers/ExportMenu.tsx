@@ -1,110 +1,136 @@
-import { ClipboardCopy, Download, FileDown } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { Check, ClipboardCopy, Download, FileDown } from "lucide-react";
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { Popover } from "../../components/ui/Popover";
+import { MenuItem, Popover } from "../../components/ui/Popover";
 import { copyText, downloadText } from "../../lib/clipboard";
-import { useToasts } from "../../state/toasts";
+import { cn } from "../../lib/cn";
 
 export interface ExportAction {
   label: string;
   icon: ReactNode;
-  run: () => void | Promise<void>;
+  /** Resolves false when it failed (e.g. clipboard blocked). */
+  run: () => boolean | Promise<boolean>;
+  /** Word shown on the button for 1,200 ms after it ran: "Copied", "Saved". */
+  done: string;
 }
 
-/** "Export" button with a small menu of download / copy actions. */
+/**
+ * Menu body with Up/Down, Home/End and type-ahead over its items, focusing the first item on
+ * open (DESIGN.md 4.17 menu keyboard).
+ */
+export function MenuList({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const t = setTimeout(() => ref.current?.querySelector<HTMLElement>("[role^='menuitem']:not([disabled])")?.focus(), 0);
+    return () => clearTimeout(t);
+  }, []);
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>("[role^='menuitem']:not([disabled])") ?? []);
+    if (items.length === 0) return;
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    let next = -1;
+    if (e.key === "ArrowDown") next = (i + 1) % items.length;
+    else if (e.key === "ArrowUp") next = (i - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    else if (e.key.length === 1 && /\S/.test(e.key)) {
+      const ch = e.key.toLowerCase();
+      next = items.findIndex((el, j) => j > i && el.textContent?.trim().toLowerCase().startsWith(ch));
+      if (next < 0) next = items.findIndex((el) => el.textContent?.trim().toLowerCase().startsWith(ch));
+    }
+    if (next < 0) return;
+    e.preventDefault();
+    items[next]?.focus();
+  };
+  return (
+    <div ref={ref} role="menu" aria-label={label} onKeyDown={onKeyDown} className={cn("flex flex-col", className)}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Export button with a menu of download and copy actions. The result shows on the button
+ * itself (Check plus "Copied" for 1,200 ms), never as a toast (DESIGN.md 4.13, 4.23).
+ */
 export function ExportMenu({
   actions,
   disabled,
-  compactLabel,
+  size = "md",
+  className,
 }: {
   actions: ExportAction[];
   disabled?: boolean;
-  /** Hide the text label in narrow containers (needs an @container ancestor). */
-  compactLabel?: boolean;
+  /** md in the 40 px page toolbar, xs in 28 px pane toolbars. */
+  size?: "md" | "xs";
+  className?: string;
 }) {
-  const anchor = useRef<HTMLSpanElement>(null);
+  const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; word: string } | null>(null);
+  useEffect(() => {
+    if (!result) return;
+    const t = setTimeout(() => setResult(null), 1200);
+    return () => clearTimeout(t);
+  }, [result]);
   return (
     <>
-      <span ref={anchor} className="inline-flex">
-        <Button
-          size="md"
-          variant="secondary"
-          disabled={disabled}
-          onClick={() => setOpen((o) => !o)}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          title="Export"
-          icon={<Download className="icon-sm" />}
-        >
-          <span className={compactLabel ? "hidden @lg:inline" : undefined}>Export</span>
-        </Button>
-      </span>
-      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} align="end" width={200} className="p-1">
-        <div role="menu" className="flex flex-col">
+      <Button
+        ref={anchor}
+        size={size}
+        variant={size === "xs" ? "ghost" : "secondary"}
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={disabled ? "Nothing to export yet" : "Export"}
+        icon={result?.ok ? <Check /> : <Download />}
+        className={cn("max-md:h-11", className)}
+      >
+        {/* The 40 px page toolbar drops labels below 1024 px, like Import and Add wallet; pane toolbars keep them. */}
+        <span className={cn(size === "md" ? "max-lg:sr-only" : "max-md:sr-only", result && !result.ok && "text-sell")}>
+          {result ? result.word : "Export"}
+        </span>
+      </Button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} align="end" width={208}>
+        <MenuList label="Export">
           {actions.map((a) => (
-            <button
+            <MenuItem
               key={a.label}
-              type="button"
-              role="menuitem"
-              onClick={() => {
+              icon={a.icon}
+              onSelect={() => {
                 setOpen(false);
-                void a.run();
+                void Promise.resolve(a.run()).then((ok) => setResult(ok ? { ok, word: a.done } : { ok, word: "Copy failed" }));
               }}
-              className="flex h-7 items-center gap-2 rounded-sm px-2 text-left text-data text-fg-1 hover:bg-surface-3"
             >
-              <span className="flex text-fg-2">{a.icon}</span>
               {a.label}
-            </button>
+            </MenuItem>
           ))}
-        </div>
+        </MenuList>
       </Popover>
     </>
   );
 }
 
-/** Standard actions: download a JSON file, copy JSON, and optionally copy plain lines. */
+/** Standard actions: download a JSON file, copy the JSON, and optionally copy plain lines. */
 export function jsonExportActions(opts: {
   filename: string;
-  noun: string;
-  count: number;
   json: () => string;
   lines?: { label: string; text: () => string };
 }): ExportAction[] {
-  const toast = useToasts.getState().push;
-  const plural = `${opts.count.toLocaleString("en-US")} ${opts.noun}${opts.count === 1 ? "" : "s"}`;
   const actions: ExportAction[] = [
     {
       label: "Download JSON",
-      icon: <FileDown className="icon-sm" />,
+      icon: <FileDown />,
+      done: "Saved",
       run: () => {
         downloadText(opts.filename, opts.json());
-        toast({ kind: "success", title: `Exported ${plural}`, body: opts.filename, ttl: 2500 });
+        return true;
       },
     },
-    {
-      label: "Copy JSON",
-      icon: <ClipboardCopy className="icon-sm" />,
-      run: async () => {
-        const ok = await copyText(opts.json());
-        toast(
-          ok ? { kind: "success", title: `Copied ${plural} as JSON`, ttl: 2000 } : { kind: "error", title: "Couldn't copy to clipboard" },
-        );
-      },
-    },
+    { label: "Copy JSON", icon: <ClipboardCopy />, done: "Copied", run: () => copyText(opts.json()) },
   ];
   const lines = opts.lines;
-  if (lines) {
-    actions.push({
-      label: lines.label,
-      icon: <ClipboardCopy className="icon-sm" />,
-      run: async () => {
-        const ok = await copyText(lines.text());
-        toast(
-          ok ? { kind: "success", title: `Copied ${plural} as text`, ttl: 2000 } : { kind: "error", title: "Couldn't copy to clipboard" },
-        );
-      },
-    });
-  }
+  if (lines) actions.push({ label: lines.label, icon: <ClipboardCopy />, done: "Copied", run: () => copyText(lines.text()) });
   return actions;
 }

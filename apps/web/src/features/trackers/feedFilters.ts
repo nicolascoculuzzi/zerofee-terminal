@@ -1,11 +1,20 @@
 import { type BlacklistEntry, type Blacklists, compileBlacklists, isBlacklisted, normalizeHandle } from "../../lib/filters";
-import type { SocialPost, TrackedTrade } from "../../protocol";
+import type { SocialPost, TokenRef, TrackedTrade, Trade } from "../../protocol";
 import { useMarket } from "../../state/market";
-import type { TrackedHandle } from "../../state/trackers";
+import type { TrackedHandle, TrackedWallet } from "../../state/trackers";
 import type { FeedScope, TradeFilters } from "./prefs";
 
-export function tradeFiltersActive(f: TradeFilters): boolean {
-  return f.side !== "all" || f.minSol !== null || f.maxMc !== null;
+const HOUR_MS = 3_600_000;
+
+/** Trade-size bar width in % of the row (DESIGN.md 4.9): 60 × min(1, log10(1 + sol) / log10(11)); 10 SOL fills it. */
+export function sizeBarPct(sol: number): number {
+  if (!(sol > 0)) return 0;
+  return 60 * Math.min(1, Math.log10(1 + sol) / Math.log10(11));
+}
+
+/** Market cap at trade time in SOL, exact from the trade's own SOL and USD prices. */
+export function mcSol(trade: Pick<Trade, "marketCapUsd" | "priceSol" | "priceUsd">): number | null {
+  return trade.priceUsd > 0 ? (trade.marketCapUsd * trade.priceSol) / trade.priceUsd : null;
 }
 
 /**
@@ -24,11 +33,46 @@ export function tokenBlocker(blacklists: Blacklists): (mint: string) => boolean 
   };
 }
 
-export function filterTrades(items: TrackedTrade[], f: TradeFilters, blocked: (mint: string) => boolean): TrackedTrade[] {
+/** The toolbar search, lower-cased and trimmed; a leading "$" or "@" is ignored. */
+export function normalizeQuery(raw: string): string {
+  return raw.trim().toLowerCase().replace(/^[$@]/, "");
+}
+
+export function walletMatches(w: Pick<TrackedWallet, "name" | "address">, q: string): boolean {
+  return !q || w.name.toLowerCase().includes(q) || w.address.toLowerCase().includes(q);
+}
+
+export function tokenMatches(t: Pick<TokenRef, "symbol" | "name" | "mint">, q: string): boolean {
+  return (
+    !q || t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || (q.length >= 4 && t.mint.toLowerCase().startsWith(q))
+  );
+}
+
+/**
+ * Live trades after the toolbar filters, the blacklists and the search (wallet name or address,
+ * token ticker, name or CA). `now` is only read for "Only tokens under 1h".
+ */
+export function filterTrades(
+  items: readonly TrackedTrade[],
+  f: TradeFilters,
+  blocked: (mint: string) => boolean,
+  opts: { query?: string; wallets?: ReadonlyMap<string, TrackedWallet>; now?: number } = {},
+): TrackedTrade[] {
+  const q = opts.query ?? "";
+  const now = opts.now ?? Date.now();
+  const pads = f.launchpads.length > 0 ? new Set(f.launchpads) : null;
   return items.filter(({ trade, token }) => {
     if (f.side !== "all" && trade.side !== f.side) return false;
     if (f.minSol !== null && trade.solAmount < f.minSol) return false;
-    if (f.maxMc !== null && trade.marketCapUsd > f.maxMc) return false;
+    if (f.mcMin !== null && trade.marketCapUsd < f.mcMin) return false;
+    if (f.mcMax !== null && trade.marketCapUsd > f.mcMax) return false;
+    if (pads && !pads.has(token.launchpad)) return false;
+    if (f.under1h && now - token.createdAt >= HOUR_MS) return false;
+    if (q) {
+      const w = opts.wallets?.get(trade.maker);
+      const byWallet = walletMatches({ name: w?.name ?? "", address: trade.maker }, q);
+      if (!byWallet && !tokenMatches(token, q)) return false;
+    }
     return !blocked(token.mint);
   });
 }
@@ -47,23 +91,30 @@ export function blockedHandles(xHandles: readonly BlacklistEntry[]): Set<string>
 /**
  * Posts the user wants to see: blacklisted handles never show; tracked handles follow their
  * Tweets / Profile updates / Follows toggles; untracked handles show everything unless the
- * feed is scoped to "My list".
+ * feed is scoped to "My list". The search matches handle, display name, text or a mentioned ticker.
  */
 export function visiblePosts(
-  posts: SocialPost[],
+  posts: readonly SocialPost[],
   handles: ReadonlyMap<string, TrackedHandle>,
   blocked: ReadonlySet<string>,
   scope: FeedScope,
+  query = "",
 ): SocialPost[] {
   return posts.filter((p) => {
     const handle = normalizeHandle(p.handle);
     if (blocked.has(handle)) return false;
     const tracked = handles.get(handle);
-    if (!tracked) return scope === "all";
-    return tracked[postToggle(p.kind)];
+    if (!tracked ? scope !== "all" : !tracked[postToggle(p.kind)]) return false;
+    if (!query) return true;
+    return (
+      handle.includes(query) ||
+      p.displayName.toLowerCase().includes(query) ||
+      p.text.toLowerCase().includes(query) ||
+      p.mentions.some((m) => tokenMatches(m, query))
+    );
   });
 }
 
-export function handleMap(handles: TrackedHandle[]): Map<string, TrackedHandle> {
+export function handleMap(handles: readonly TrackedHandle[]): Map<string, TrackedHandle> {
   return new Map(handles.map((h) => [h.handle, h]));
 }

@@ -1,65 +1,69 @@
 import { ArrowUpRight, ListFilter, Wallet, X } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useCallback, useMemo } from "react";
 import { Link } from "react-router";
 import { IconButton } from "../../components/ui/Button";
-import { XGlyph } from "../../components/ui/bits";
-import { normalizeHandle } from "../../lib/filters";
+import { EmptyState } from "../../components/ui/bits";
+import { copyText } from "../../lib/clipboard";
+import { useCssPx } from "../../lib/cssVar";
+import { navigateTo } from "../../lib/nav";
 import { BREAKPOINT, useMediaQuery } from "../../lib/useMediaQuery";
+import type { TrackedTrade } from "../../protocol";
 import { useSettings } from "../../state/settings";
 import { useTrackedMap, useTrackers } from "../../state/trackers";
-import { PauseStatus } from "./bits";
-import { filterTrades, tokenBlocker, tradeFiltersActive } from "./feedFilters";
-import { useArrivals, useHoverPause, useMarkRead } from "./hooks";
-import { PostItem, postId } from "./PostItem";
-import { useTrackerPrefs } from "./prefs";
+import { PausedChip } from "./bits";
+import { filterTrades, tokenBlocker } from "./feedFilters";
+import { useInsertions, useLivePause, useMarkRead } from "./hooks";
+import { postId } from "./PostItem";
+import { tradeFiltersActive, useTrackerPrefs } from "./prefs";
+import { PostList } from "./SocialFeed";
 import { useVisiblePosts } from "./socialActions";
-import { TradeRow, tradeId } from "./TradeRow";
+import { TradeHeader, TradeRow, tradeId, tradeMint } from "./TradeRow";
+import { VirtualGrid } from "./VirtualList";
 
-const DOCK_TRADES = 30;
-const DOCK_POSTS = 20;
+const DOCK_TRADES = 60;
+const DOCK_POSTS = 30;
 
 /*
- * Floating dock panel. Anatomy follows Kraken Pro's Activity side panel (title row, compact list,
- * "see all" link) and Coinbase Advanced's watchlist sidebar; flat bg-surface-1 with a strong hairline,
- * no shadow:
- * https://mobbin.com/screens/fe204312-8607-4018-b0dd-a36dc71f4978
- * https://mobbin.com/screens/faec9f03-a00c-4718-ab12-44a3053cdac3
+ * Floating dock (DESIGN.md 5.4): 360 × 420 px, 6 px radius, the floating surface with a
+ * hairline-strong border and e2, z-dock, bottom-left above the status bar (Axiom's tracker
+ * placement). Header 28 px like the Instant Trade window (4.12). Movable widget panels with a
+ * title row after Kraken Pro: https://mobbin.com/screens/25b67ef9-d56e-4f69-865f-16a702da74b7
  */
 function DockPanel({
   title,
   icon,
   extra,
-  status,
+  paused,
   onClose,
   children,
 }: {
   title: string;
   icon: ReactNode;
   extra?: ReactNode;
-  status: ReactNode;
+  paused: boolean;
   onClose: () => void;
   children: ReactNode;
 }) {
   return (
     <section
       aria-label={title}
-      className="@container pointer-events-auto flex max-h-[50vh] w-85 flex-col overflow-hidden rounded-md border border-hairline-strong bg-surface-1"
+      className="@container pointer-events-auto flex h-105 max-h-[calc(100dvh-var(--zf-topbar)-var(--zf-statusbar)-16px)] w-90 flex-col overflow-hidden rounded-md border border-hairline-strong bg-floating shadow-e2"
     >
-      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline pr-1 pl-3">
-        <span className="flex text-fg-2">{icon}</span>
-        <h2 className="text-data font-semibold">{title}</h2>
+      <header className="flex h-7 shrink-0 items-center gap-2 border-b border-hairline pr-1 pl-2">
+        <span className="flex text-fg-3">{icon}</span>
+        <h2 className="text-data font-semibold text-fg-1">{title}</h2>
         {extra}
-        <span className="ml-auto">{status}</span>
+        <PausedChip paused={paused} />
         <Link
           to="/trackers"
-          className="flex h-6 items-center gap-1 rounded-sm px-1 text-label text-fg-2 hover:bg-surface-3 hover:text-fg-1"
-          title="Open the Trackers page"
+          className="ml-auto flex h-5 items-center gap-1 rounded-xs px-1 text-label text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1"
+          title="Open the Trackers page (G then T)"
         >
           Trackers
           <ArrowUpRight className="icon-xs" />
         </Link>
         <IconButton label={`Close ${title}`} onClick={onClose}>
-          <X className="icon-sm" />
+          <X />
         </IconButton>
       </header>
       {children}
@@ -69,40 +73,59 @@ function DockPanel({
 
 function TradesDock() {
   const live = useTrackers((s) => s.live);
+  const walletCount = useTrackers((s) => s.wallets.length);
   const tracked = useTrackedMap();
   const filters = useTrackerPrefs((s) => s.trades);
   const blacklists = useSettings((s) => s.blacklists);
   const setDocks = useSettings((s) => s.setDocks);
+  const dense = useCssPx("--zf-row-dense", 20);
   const items = useMemo(() => filterTrades(live, filters, tokenBlocker(blacklists)).slice(0, DOCK_TRADES), [live, filters, blacklists]);
-  const { shown, paused, pending, bind } = useHoverPause(items);
-  const isFresh = useArrivals(live, tradeId);
+  const { shown, paused, pending, bind, release } = useLivePause(items, tradeId);
+  const isFresh = useInsertions(shown, tradeId);
   useMarkRead("trades");
-  const filtered = tradeFiltersActive(filters);
+  const open = useCallback((item: TrackedTrade, how: { newTab: boolean }) => {
+    const to = `/t/${item.token.mint}`;
+    if (how.newTab) window.open(to, "_blank", "noopener");
+    else navigateTo(to);
+  }, []);
+  const copy = useCallback((item: TrackedTrade) => void copyText(item.token.mint), []);
   return (
     <DockPanel
       title="Live trades"
       icon={<Wallet className="icon-sm" />}
+      paused={paused}
       extra={
-        filtered ? (
-          <span className="flex text-fg-3" title="Live Trades filters from the Trackers page apply here">
-            <ListFilter className="icon-sm" />
+        tradeFiltersActive(filters) ? (
+          <span className="flex text-fg-3" title="The Live trades filters from the Trackers page apply here">
+            <ListFilter className="icon-xs" />
           </span>
         ) : null
       }
-      status={<PauseStatus paused={paused} pending={pending} />}
       onClose={() => setDocks({ tracker: false })}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto" {...bind}>
-        {shown.length === 0 ? (
-          <p className="px-3 py-3 text-data text-fg-3">
-            {live.length === 0 ? "Waiting for tracked wallets to trade." : "No trades match the filters."}
-          </p>
-        ) : (
-          shown.map((item) => (
-            <TradeRow key={item.trade.id} item={item} wallet={tracked.get(item.trade.maker)} fresh={isFresh(item.trade.id)} />
-          ))
+      <VirtualGrid
+        items={shown}
+        getKey={tradeId}
+        rowHeight={dense}
+        label="Trades by tracked wallets"
+        header={<TradeHeader />}
+        empty={
+          <EmptyState
+            title={walletCount === 0 ? "No wallets tracked" : live.length === 0 ? "No trades yet" : "No trades match the filters"}
+            body={walletCount === 0 ? "Add wallets on the Trackers page." : "New trades appear within about a second of landing."}
+          />
+        }
+        paused={paused}
+        pending={pending}
+        onRelease={release}
+        bind={bind}
+        onOpen={open}
+        onCopy={copy}
+        mintOf={tradeMint}
+        renderRow={(item, { active }) => (
+          <TradeRow item={item} wallet={tracked.get(item.trade.maker)} fresh={isFresh(item.trade.id)} active={active} floating />
         )}
-      </div>
+      />
     </DockPanel>
   );
 }
@@ -112,39 +135,47 @@ function SocialDock() {
   const scope = useTrackerPrefs((s) => s.feedScope);
   const { posts, visible, tracked } = useVisiblePosts(scope);
   const items = useMemo(() => visible.slice(0, DOCK_POSTS), [visible]);
-  const { shown, paused, pending, bind } = useHoverPause(items);
-  const isFresh = useArrivals(posts, postId);
+  const { shown, paused, pending, bind, release } = useLivePause(items, postId);
   useMarkRead("posts");
   return (
     <DockPanel
-      title="Social"
-      icon={<XGlyph />}
-      status={<PauseStatus paused={paused} pending={pending} />}
+      title="X feed"
+      icon={<span className="flex w-3.5 justify-center text-data font-semibold">X</span>}
+      extra={<span className="text-label text-fg-3">{scope === "mine" ? "My list" : "All posts"}</span>}
+      paused={paused}
       onClose={() => setDocks({ social: false })}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto" {...bind}>
-        {shown.length === 0 ? (
-          <p className="px-3 py-3 text-data text-fg-3">{posts.length === 0 ? "Waiting for posts." : "No posts match your feed toggles."}</p>
-        ) : (
-          shown.map((post) => (
-            <PostItem key={post.id} post={post} fresh={isFresh(post.id)} compact tracked={tracked.has(normalizeHandle(post.handle))} />
-          ))
-        )}
-      </div>
+      <PostList
+        posts={shown}
+        tracked={tracked}
+        paused={paused}
+        pending={pending}
+        onRelease={release}
+        bind={bind}
+        compact
+        floating
+        label="X posts"
+        empty={
+          <EmptyState
+            title={posts.length === 0 ? "No posts yet" : "No posts match your switches"}
+            body="Manage handles on the Trackers page, X tab."
+          />
+        }
+      />
     </DockPanel>
   );
 }
 
 /**
- * Wallet-tracker and social docks, bottom-left above the status bar (desktop only). The status
- * bar buttons toggle `docks.tracker` / `docks.social`; both open sit side by side.
+ * Wallet-tracker and X docks (desktop only; the status-bar toggles set `docks.tracker` and
+ * `docks.social`). With both open they sit side by side, 8 px apart.
  */
 export function TrackerDock() {
   const docks = useSettings((s) => s.docks);
   const desktop = useMediaQuery(BREAKPOINT.md);
   if (!desktop || (!docks.tracker && !docks.social)) return null;
   return (
-    <div className="pointer-events-none fixed bottom-statusbar left-0 z-dock flex items-end gap-2 p-2">
+    <div className="pointer-events-none fixed bottom-[calc(var(--zf-statusbar)+8px)] left-2 z-dock flex items-end gap-2">
       {docks.tracker && <TradesDock />}
       {docks.social && <SocialDock />}
     </div>
