@@ -1,5 +1,30 @@
-/** Wallet Standard providers offered at login. */
-export type WalletProvider = "phantom" | "solflare" | "backpack";
+/** Wallets the connect step always lists, with a bundled logo and an install link when missing. */
+export const KNOWN_WALLETS = ["phantom", "solflare", "backpack", "coinbase", "okx", "trust"] as const;
+export type KnownWallet = (typeof KNOWN_WALLETS)[number];
+
+/**
+ * A wallet offered at login: one of the known wallets, or any other installed Wallet Standard wallet that
+ * can sign Solana messages and transactions, as "std:" plus the name it registered.
+ */
+export type WalletProvider = KnownWallet | `std:${string}`;
+
+export const KNOWN_WALLET_NAME: Record<KnownWallet, string> = {
+  phantom: "Phantom",
+  solflare: "Solflare",
+  backpack: "Backpack",
+  coinbase: "Coinbase Wallet",
+  okx: "OKX Wallet",
+  trust: "Trust Wallet",
+};
+
+export function isKnownWallet(provider: string): provider is KnownWallet {
+  return (KNOWN_WALLETS as readonly string[]).includes(provider);
+}
+
+/** Display name for a provider id ("Phantom", or the registered name of a "std:" wallet). */
+export function walletProviderName(provider: WalletProvider): string {
+  return isKnownWallet(provider) ? KNOWN_WALLET_NAME[provider] : provider.slice(4);
+}
 
 export interface ConnectedWallet {
   provider: WalletProvider;

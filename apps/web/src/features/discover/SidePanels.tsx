@@ -28,14 +28,15 @@ const identity = (mint: string): string => mint;
 const COL = {
   token: "min-w-0 flex-1",
   age: "@max-[340px]:hidden",
-  // Tight numeric columns ("$12.6K", "+95.2%") leave the ticker room in the 320 / 360 px side column.
+  // Tight columns sized to their content ("$12.6K"; "+95.2%" / "+1,234%"; the 56 px pill; the 20 px
+  // star) and 6 px gaps leave a 10-character ticker room in the 320 / 360 px side column.
   mc: "w-[7ch] justify-end",
-  change: "w-[7ch] justify-end",
-  pill: "w-16 justify-end",
-  star: "w-6 justify-center",
+  change: "w-[6.5ch] justify-end",
+  pill: "w-14 justify-end",
+  star: "w-5 justify-center",
 } as const;
 
-const ROW = "flex items-center gap-2 px-2";
+const ROW = "flex items-center gap-1.5 px-2";
 
 /**
  * Compact token row (24 / 28 px): avatar, ticker and age; MC and 5m right-aligned; quick-buy and

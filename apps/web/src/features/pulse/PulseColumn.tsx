@@ -4,7 +4,7 @@ import { COLUMN_TITLE, columnDefinition } from "../../config";
 import { cn } from "../../lib/cn";
 import { useCssPx } from "../../lib/cssVar";
 import { activeFilterCount, emptyFilter } from "../../lib/filters";
-import { fmtMs } from "../../lib/format";
+import { fmtMs, isKnown } from "../../lib/format";
 import { isTypingTarget, registerHotkey } from "../../lib/hotkeys";
 import { useYoungerThan } from "../../lib/useNow";
 import type { PulseColumnId } from "../../protocol";
@@ -170,7 +170,19 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
   const ctx = { quote: display.quote, solUsd, showRing: display.showProgressRing, thresholds: display.riskThresholds };
   const cursorShown = cursor !== null && list.shown.includes(cursor);
   const loading = !anyTokens;
-  const showLegend = legend || variant === "narrow";
+  // Narrow cards show risk values without icons, and so do wide cards whose risk strip is under
+  // 20.5em (RiskChips): columns under 450 px compact, 482 px comfortable.
+  const showLegend = legend || variant === "narrow" || (variant === "wide" && width < (rowH >= 80 ? 482 : 450));
+  // Wide+ fees / net-buy track only while a card on screen reports either (the live feed may
+  // report neither): decided per column so every card keeps the same tracks (DESIGN.md 4.4).
+  const feesShown =
+    fields.feesNetBuy &&
+    variant === "wideplus" &&
+    virtualizer.getVirtualItems().some((item) => {
+      const mint = list.shown[item.index];
+      const t = mint ? list.token(mint) : undefined;
+      return !!t && (isKnown(t.feesPaidSol) || isKnown(t.netBuyUsd));
+    });
 
   return (
     <section
@@ -198,6 +210,7 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
       <ColumnHeader
         column={column}
         count={list.incoming.length}
+        loading={loading}
         paused={pause.paused}
         width={width}
         loadingNote={loading && slow ? `Still loading · feed lag ${fmtMs(lag)}` : null}
@@ -273,8 +286,9 @@ export function PulseColumn({ column, titleSlot }: { column: PulseColumnId; titl
                     socials={fields.socials}
                     counters={fields.counters}
                     miniChart={fields.miniChart}
-                    feesNetBuy={fields.feesNetBuy}
+                    feesNetBuy={feesShown}
                     colored={display.metricColors}
+                    comfortable={rowH >= 80}
                     cursor={cursor === mint}
                     open={focusedMint === mint}
                     insertedAt={list.inserted.get(mint) ?? 0}

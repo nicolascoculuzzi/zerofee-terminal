@@ -1,23 +1,25 @@
 import { fmtSol } from "../../lib/format";
-import type {
-  ApprovalRequest,
-  ConnectedWallet,
-  ProviderInfo,
-  SiwsSession,
-  TradingWallet,
-  UnlockMethod,
-  WalletBalances,
-  WalletProvider,
-  WalletService,
-  WalletServiceState,
+import {
+  type ApprovalRequest,
+  type ConnectedWallet,
+  KNOWN_WALLET_NAME,
+  KNOWN_WALLETS,
+  type KnownWallet,
+  type ProviderInfo,
+  type SiwsSession,
+  type TradingWallet,
+  type UnlockMethod,
+  type WalletBalances,
+  type WalletProvider,
+  type WalletService,
+  type WalletServiceState,
+  walletProviderName,
 } from "../walletService";
 import { fakeAddress, fakeSignature, randomBase58 } from "./addresses";
 import { requestApproval } from "./approvalBroker";
 import type { SimEngine } from "./engine";
 import { mockBackupPhrase } from "./names";
 import { simulatedSecretKey } from "./simulatedKey";
-
-const MOCK_NAMES: Record<WalletProvider, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
 
 export interface DemoWalletSeed {
   id: string;
@@ -96,19 +98,24 @@ export class MockWalletService implements WalletService {
     return { address, domain, nonce: n, issuedAt, expiresAt, message, signature: fakeSignature(this.engine.rng) };
   }
 
-  /** The simulation offers every provider as installed; none has a real logo. */
+  /**
+   * The simulation offers Phantom, Solflare and Backpack as installed and the other known wallets as not
+   * installed, so both rows show. No extension supplies a logo here; the bundled ones stand in.
+   */
   providers(): ProviderInfo[] {
-    // The simulation has no extensions to read logos from: letter squares stand in.
-    return [
-      { provider: "phantom", name: "Phantom", icon: null, installed: true },
-      { provider: "solflare", name: "Solflare", icon: null, installed: true },
-      { provider: "backpack", name: "Backpack", icon: null, installed: true },
-    ];
+    const installed = new Set<KnownWallet>(["phantom", "solflare", "backpack"]);
+    const rows = KNOWN_WALLETS.map((provider) => ({
+      provider,
+      name: KNOWN_WALLET_NAME[provider],
+      icon: null,
+      installed: installed.has(provider),
+    }));
+    return [...rows.filter((r) => r.installed), ...rows.filter((r) => !r.installed)];
   }
 
   async connect(provider: WalletProvider): Promise<ConnectedWallet> {
     await wait(650);
-    const connected: ConnectedWallet = { provider, address: fakeAddress(this.engine.rng), name: MOCK_NAMES[provider], icon: null };
+    const connected: ConnectedWallet = { provider, address: fakeAddress(this.engine.rng), name: walletProviderName(provider), icon: null };
     this.connectedSol = 25 + Math.round(this.engine.rng.next() * 4000) / 100;
     this.set({ connected, session: null });
     return connected;
