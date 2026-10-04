@@ -271,16 +271,19 @@ export function WalletsTable({ mobile, empty }: { mobile: boolean; empty?: React
                 <Money sol={st?.solBalance ?? null} unit={false} quote="SOL" />
               </td>
               <td className={cn(TD, "text-right")}>
-                <Num value={holdings} kind="count" className="text-fg-3" /> <Money sol={value} unit={false} />
+                {/* An empty wallet shows nothing here rather than "0 $0.00". */}
+                {holdings > 0 && (
+                  <>
+                    <Num value={holdings} kind="count" className="text-fg-3" /> <Money sol={value} unit={false} />
+                  </>
+                )}
               </td>
               <td className={cn(TD, "text-right")}>
                 {st && st.reservedSol > 0 ? (
                   <Link to="/orders" className="hover:underline" title="Open armed orders">
                     <Money sol={st.reservedSol} unit={false} quote="SOL" />
                   </Link>
-                ) : (
-                  <Money sol={st?.reservedSol ?? null} unit={false} quote="SOL" className="text-fg-3" />
-                )}
+                ) : null}
               </td>
               <td className={cn(TD, "text-right")}>
                 <Actions wallet={w} active={active} onExport={() => setExporting(w)} onArchive={() => setArchiving(w)} />

@@ -6,8 +6,11 @@
  *   1. slots: the wallet's derived slots read from chain through GET /api/orders/nonce-probe; missing ones
  *      are created (CreateAccountWithSeed + InitializeNonceAccount, signed by the signer, POST /api/tx) and
  *      polled until they are live. DRY_RUN never lands anything, so arming stops there with the reason;
- *   2. build with @zerofee/core: the same TokenState the instant trades use (tradeState.ts), the trigger
- *      as a quote-out threshold at the target market cap (quoteOutAtMarketCap), a min-out grid under the
+ *   2. build with @zerofee/core: the same TokenState the instant trades use (tradeState.ts: pump.fun, PumpSwap,
+ *      Raydium LaunchLab and Raydium CPMM coins quoted in SOL), the trigger engine's market view of it
+ *      (liveMarketFromState, what the server quotes with), the venue's templates (Raydium: core's
+ *      armed/raydium.ts, which signs what the firewall's Raydium rules accept), the trigger as a quote-out
+ *      threshold at the target market cap (quoteOutAtMarketCap), a min-out grid under the
  *      server's grid-depth limit, Jito bundle-only tip levels within its tip and priority caps, the
  *      operator lookup tables (GET /api/orders/limits, contents from GET /api/lookup-tables);
  *   3. sign every variant and the cancel in the signer worker (armOrders through a kit signer over the
@@ -35,16 +38,20 @@ import {
   armedOrderToJson,
   armOrders,
   assembleTransaction,
+  cpmmBuyTemplate,
+  cpmmSellTemplate,
   createNonceSlotInstructions,
   type DurableNonceRef,
   estimateMigrationPoolReserves,
   jitoTipLevels,
   type LiveMarketState,
+  type LocalTokenState,
+  launchLabBuyTemplate,
+  launchLabSellTemplate,
+  liveMarketFromState,
   liveQuoteOut,
   MAX_NONCE_SLOT_LAMPORTS,
   migrationPoolContext,
-  type PumpCurveState,
-  type PumpSwapState,
   pumpBuyTemplate,
   pumpSellTemplate,
   quoteOutAtMarketCap,
@@ -68,7 +75,7 @@ import type { LiveDataSource } from "./LiveDataSource";
 import { planLanding } from "./landingFees";
 import type { ProgramAccounts } from "./programs";
 import type { TradeContexts } from "./tradeContexts";
-import { isSolQuoted, tokenStateFromContext } from "./tradeState";
+import { hasLocalBuilder, tokenStateFromContext } from "./tradeState";
 import { recentBlockhash, simulationError, submitSigned } from "./transfers";
 
 export class ArmingRefused extends Error {}
@@ -79,7 +86,7 @@ const PROBE_COUNT = 16;
 const SLOTS_PER_TX = 4;
 const SLOT_POLL_MS = 1_500;
 const SLOT_WAIT_MS = 45_000;
-/** Rent the first buy may pay: the base token account and, on PumpSwap, the temporary wSOL account. */
+/** Rent the first buy may pay: the base token account and, on PumpSwap / LaunchLab / CPMM, the temporary wSOL account. */
 const ATA_RENT_LAMPORTS = 2_039_280n;
 /** Jito's minimum tip; armed variants go bundle-only. */
 const JITO_MIN_TIP = 1_000n;
@@ -141,20 +148,6 @@ export function workerSigner(
       }
       return out;
     },
-  };
-}
-
-/** The trigger engine's market view from the state the trades build with. */
-export function liveMarketOf(s: PumpCurveState | PumpSwapState): LiveMarketState {
-  if (s.venue === "pump") return { venue: "pump", curve: s.curve, global: s.global, feeConfig: s.feeConfig, mintSupply: s.mintInfo.supply };
-  return {
-    venue: "pumpswap",
-    pool: s.pool,
-    reserves: s.reserves,
-    isCanonical: s.isCanonical,
-    baseMintSupply: s.mintInfo.supply,
-    feeConfig: s.feeConfig,
-    globalConfig: s.globalConfig,
   };
 }
 
@@ -273,7 +266,13 @@ export class LiveArmedOrders {
     if (req.size.kind !== "sol") throw new ArmingRefused("Size a migration buy in SOL");
     const env = await this.prepare(req.wallet, req.mint);
     const s = env.state;
-    if (s.venue !== "pump") throw new ArmingRefused("This coin already trades on PumpSwap");
+    if (s.venue === "pumpswap") throw new ArmingRefused("This coin already trades on PumpSwap");
+    if (s.venue === "cpmm") throw new ArmingRefused("This coin already trades on Raydium CPMM");
+    if (s.venue === "launchlab") {
+      // Core can pre-sign the CPMM buy (launchLabGraduationPoolContext), but centring its grid needs the
+      // graduation AmmConfig's rates, the curve's migrate_fee and vesting lock, which the trade context lacks.
+      throw new ArmingRefused("Migration snipes on Raydium LaunchLab coins aren't available yet: arm a limit order on the curve instead");
+    }
     const spend = lamportsOf(req.size.sol);
     if (spend <= 0n) throw new ArmingRefused("Enter an amount");
     const ctx = await migrationPoolContext({
@@ -457,14 +456,20 @@ export class LiveArmedOrders {
 
   private async prepare(wallet: string, mint: string): Promise<Env> {
     const [{ ctx }, programs, limits] = await Promise.all([this.d.contexts.get(mint), this.d.programs.get(), this.limits()]);
-    if (!ctx || !isSolQuoted(ctx)) throw new ArmingRefused("Armed orders work on pump.fun and PumpSwap coins quoted in SOL");
+    if (!ctx || !hasLocalBuilder(ctx)) {
+      throw new ArmingRefused("Armed orders work on pump.fun, PumpSwap, Raydium LaunchLab and Raydium CPMM coins quoted in SOL");
+    }
     const held = this.d.data.wallet(wallet)?.balanceOf(mint) ?? null;
-    const state = await tokenStateFromContext(ctx, programs, {
-      user: wallet as Address,
-      balance: held ? { amount: held.amount, account: held.account } : null,
-    });
+    const state = await tokenStateFromContext(
+      ctx,
+      programs,
+      { user: wallet as Address, balance: held ? { amount: held.amount, account: held.account } : null },
+      { slot: this.d.data.chain()?.slot ?? null, nowMs: this.now() },
+    );
     const tables = await this.operatorTables(limits);
-    return { wallet: wallet as Address, state, market: liveMarketOf(state), programs, limits, tables, ownedNonceAccounts: [] };
+    // The trigger engine's view of the same state (what the server's engine quotes the order with).
+    const market = liveMarketFromState(state);
+    return { wallet: wallet as Address, state, market, programs, limits, tables, ownedNonceAccounts: [] };
   }
 
   async limits(): Promise<OrderLimits> {
@@ -494,8 +499,11 @@ export class LiveArmedOrders {
     }
     const holding = env.state.userBaseBalance;
     if (holding <= 0n) throw new ArmingRefused("Nothing to sell: the wallet holds none of this coin in its token account");
+    // A full exit closes the base token account; one that may hold withheld Token-2022 fees cannot be
+    // closed (CloseAccount fails), so selling all of it keeps the account.
+    const fullExit = env.state.userBaseWithheld === 0n;
     if (size.kind === "pct") {
-      if (size.pct >= 100) return { amount: holding, fullExit: true };
+      if (size.pct >= 100) return { amount: holding, fullExit };
       const amount = (holding * BigInt(Math.round(size.pct * 100))) / 10_000n;
       if (amount <= 0n) throw new ArmingRefused("Sell amount rounds to zero");
       return { amount, fullExit: false };
@@ -503,13 +511,13 @@ export class LiveArmedOrders {
     if (size.kind === "tokens") {
       const units = BigInt(Math.floor(size.tokens * 10 ** env.state.mintInfo.decimals));
       if (units <= 0n) throw new ArmingRefused("Sell amount rounds to zero");
-      return units >= holding ? { amount: holding, fullExit: true } : { amount: units, fullExit: false };
+      return units >= holding ? { amount: holding, fullExit } : { amount: units, fullExit: false };
     }
     throw new ArmingRefused("Size a limit sell as a share or a token amount");
   }
 
   /** The target market cap in lamports (price targets are SOL per token; market-cap targets are USD). */
-  private targetMarketCap(trigger: LimitOrderRequest["trigger"], state: PumpCurveState | PumpSwapState): bigint {
+  private targetMarketCap(trigger: LimitOrderRequest["trigger"], state: LocalTokenState): bigint {
     const value = trigger.value;
     if (value === null || !(value > 0)) throw new ArmingRefused("Enter a trigger");
     const supply = Number(state.mintInfo.supply) / 10 ** state.mintInfo.decimals;
@@ -548,7 +556,7 @@ export class LiveArmedOrders {
     const tipLevels = this.tipLevels(o.settings, cuLimit, env.limits, o.side === "buy" ? 1 : 2);
     const levels = o.side === "buy" ? Math.max(1, Math.floor(buyCap / tipLevels.length)) : 3;
     const minOuts = gridUnder(o.reference, armingQuoteOut, slippageBps, env.limits.maxGridDepthBps, levels);
-    const ataRent = o.side === "buy" ? ATA_RENT_LAMPORTS * (env.market.venue === "pumpswap" ? 2n : 1n) : 0n;
+    const ataRent = o.side === "buy" ? ATA_RENT_LAMPORTS * (env.market.venue === "pump" ? 1n : 2n) : 0n;
     return {
       id: crypto.randomUUID(),
       kind: o.kind,
@@ -570,11 +578,21 @@ export class LiveArmedOrders {
     };
   }
 
-  private async template(
-    s: PumpCurveState | PumpSwapState,
-    side: "buy" | "sell",
-    amount: { amount: bigint; fullExit: boolean },
-  ): Promise<TradeTemplate> {
+  private async template(s: LocalTokenState, side: "buy" | "sell", amount: { amount: bigint; fullExit: boolean }): Promise<TradeTemplate> {
+    if (s.venue === "launchlab") {
+      // Pool PDA and status checked by core (launchLabPinned); share_fee_rate 0, the wallet's own ATAs.
+      const ctx = { poolAddress: s.poolAddress, pool: s.pool, user: s.user };
+      return side === "buy"
+        ? launchLabBuyTemplate(ctx, { spend: amount.amount })
+        : launchLabSellTemplate(ctx, { amount: amount.amount, closeBaseAccount: amount.fullExit, userBaseWithheld: s.userBaseWithheld });
+    }
+    if (s.venue === "cpmm") {
+      // Vault and observation PDAs checked by core (cpmmSides) before anything is signed.
+      const ctx = { poolAddress: s.poolAddress, pool: s.pool, user: s.user, baseMint: s.mint };
+      return side === "buy"
+        ? cpmmBuyTemplate(ctx, { spend: amount.amount })
+        : cpmmSellTemplate(ctx, { amount: amount.amount, closeBaseAccount: amount.fullExit, userBaseWithheld: s.userBaseWithheld });
+    }
     if (s.venue === "pump") {
       const ctx = {
         mint: s.mint,
@@ -662,7 +680,7 @@ export class LiveArmedOrders {
 
 interface Env {
   wallet: Address;
-  state: PumpCurveState | PumpSwapState;
+  state: LocalTokenState;
   market: LiveMarketState;
   programs: Awaited<ReturnType<ProgramAccounts["get"]>>;
   limits: OrderLimits;

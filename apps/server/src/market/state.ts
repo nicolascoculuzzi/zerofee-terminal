@@ -11,17 +11,30 @@
  * (holders, windows, candles, reserves) and emit corrections.
  *
  * Every mutation records what changed in `changes`; the gateway drains it at its own cadence.
+ *
+ * Raydium: LaunchLab curves (PoolCreateEvent, TradeEvent) and the CPMM pools LaunchLab coins graduate into
+ * (SwapEvent; graduation = migrate_to_cpswap, which has no event). Their events carry no timestamp (block
+ * time when the source has it, else the receive time) and LaunchLab events no mint: the instruction accounts
+ * (IngestTx.raydium) or the registry (accounts/raydium.ts, asynchronous) supply it, and events wait for it
+ * like PumpSwap swaps wait for their pool. The trading wallet comes from the instruction's payer; without
+ * accounts (RPC logs feed, no fetch) a trade is recorded with trader "" and does not move holder balances.
  */
 import type { Address } from "@solana/kit";
 import {
   type AmmCreatePoolEvent,
   type AmmSwapEvent,
+  type CpmmSwapEvent,
   coinCreatorVaultAuthorityPda,
+  cpmmVaultAmountsWithoutFees,
   creatorVaultPda,
   curveMintSupply,
   DEFAULT_PUBKEY,
   type DecodedEvent,
   INCINERATOR,
+  LAUNCHLAB_POOL_STATUS,
+  type LaunchLabPoolCreateEvent,
+  type LaunchLabTradeEvent,
+  MAINNET_SLOTS_PER_EPOCH,
   MAYHEM_FEE_RECIPIENTS,
   ONE_BILLION_SUPPLY,
   type OnchainTokenMetadata,
@@ -30,10 +43,19 @@ import {
   type PumpCreateEvent,
   type PumpMigrationEvent,
   type PumpTradeEvent,
+  RAYDIUM_CPMM_AUTHORITY,
+  RAYDIUM_FEE_RATE_DENOMINATOR,
+  RAYDIUM_LAUNCHLAB_AUTHORITY,
+  TOKEN_2022_PROGRAM_ID,
+  type TransferFeeConfig,
+  transferFeeFor,
+  transferInverseFeeFor,
   USDC_MINT,
 } from "@zerofee/core";
-import type { Candle, Timeframe, TokenSocials, TokenSummary, Trade, TradeContext, TradeTag } from "@zerofee/protocol";
+import type { Candle, Timeframe, TokenSocials, TokenSummary, Trade, TradeContext, TradeTag, TradeVenue } from "@zerofee/protocol";
+import type { CpmmPoolInfo, LaunchLabPoolInfo, RaydiumRegistry } from "../accounts/raydium";
 import { AccountResolver, type CurveResolved, type MintResolved, type PoolInfo } from "../accounts/resolver";
+import type { LaunchLabMigration, RaydiumEventAccounts } from "../ingest/raydium";
 import type { IngestTx } from "../ingest/types";
 import { LruMap } from "../util/lru";
 import { RateCounter, SampleRing } from "../util/stats";
@@ -44,9 +66,11 @@ import {
   buildTradeContext,
   type CurveReserves,
   knownQuoteTokenProgram,
+  type LaunchLabRecord,
   newTokenRecord,
   type PoolReserves,
   priceQuote,
+  type RaydiumContextInputs,
   summarize,
   type TokenRecord,
   type TradeEntry,
@@ -92,6 +116,8 @@ export interface MarketDeps {
   onMigrate?(rec: TokenRecord): void;
   /** Every recorded trade with its transaction (the wallet tracker's firehose matcher). Must not throw. */
   onTrade?(trade: Trade, tx: IngestTx): void;
+  /** Raydium LaunchLab / CPMM account registry; without it Raydium events need instruction accounts. */
+  raydium?: RaydiumRegistry;
 }
 
 /** A launch / migration / trade for the debug feed. */
@@ -108,7 +134,7 @@ export interface FeedItem {
   side?: "buy" | "sell";
   /** null when the trade's quote has no known SOL value. */
   amountSol?: number | null;
-  venue?: "pump" | "pumpswap";
+  venue?: TradeVenue;
 }
 
 export class ChangeLog {
@@ -162,6 +188,14 @@ interface PendingPoolEvent {
   ctx: EvCtx;
 }
 
+interface PendingRaydiumEvent<E> {
+  ev: E;
+  ctx: EvCtx;
+}
+
+const isDefault = (a: string | undefined | null): boolean => !a || a === DEFAULT_PUBKEY;
+const max0 = (v: bigint): bigint => (v < 0n ? 0n : v);
+
 const MAX_PENDING_PER_POOL = 500;
 const MAX_PENDING_TOTAL = 50_000;
 
@@ -174,10 +208,17 @@ export class MarketState {
   private readonly slotTxs = new Map<number, { signature: string; mints: Set<string>; creates: string[]; migrations: string[] }[]>();
   private readonly arrivalSeq = new Map<number, number>();
   private readonly pendingPools = new Map<string, PendingPoolEvent[]>();
+  /** LaunchLab events waiting for their pool's mint (logs-only records). */
+  private readonly pendingLaunchLab = new Map<string, PendingRaydiumEvent<LaunchLabTradeEvent | LaunchLabPoolCreateEvent>[]>();
+  /** CPMM swaps waiting for their pool to be classified as a graduation pool. */
+  private readonly pendingCpmm = new Map<string, PendingRaydiumEvent<CpmmSwapEvent>[]>();
   private pendingTotal = 0;
   /** Non-SOL, non-USDC quote mints whose decimals were requested from the resolver. */
   private readonly quoteRequests = new Set<string>();
-  private readonly quoteMintInfo = new Map<string, { decimals: number; tokenProgram: string }>();
+  private readonly quoteMintInfo = new Map<
+    string,
+    { decimals: number; tokenProgram: string; transferFeeConfig: TransferFeeConfig | null }
+  >();
   private readonly proWallets: Set<string>;
   private readonly proTokenAccounts: Set<string>;
   private readonly recentCap: number;
@@ -202,6 +243,18 @@ export class MarketState {
     deadSlots: 0,
     rolledBackTrades: 0,
     decodeFailures: 0,
+    /** Raydium: LaunchLab launches / trades / completed curves / graduations, CPMM trades on graduation pools. */
+    launchLabLaunches: 0,
+    launchLabTrades: 0,
+    launchLabCompletes: 0,
+    launchLabGraduations: 0,
+    cpmmTrades: 0,
+    /** Graduated LaunchLab coins found through their CPMM pool, graduation time unknown (not counted above). */
+    launchLabGraduatesFound: 0,
+    /** Raydium trades recorded without a wallet (no instruction accounts). */
+    unattributedTrades: 0,
+    /** CPMM swaps on pools that are not graduation pools (ignored). */
+    cpmmIgnored: 0,
     lastEventAt: null as number | null,
   };
 
@@ -280,13 +333,18 @@ export class MarketState {
 
     // distinct buyers per mint in this tx (one tx buying for several wallets = bundle)
     const txBuyers = new Map<string, Set<string>>();
-    for (const ev of tx.events) {
-      if (ev.kind === "pumpTrade" && ev.isBuy) {
-        const s = txBuyers.get(ev.mint) ?? new Set<string>();
-        s.add(ev.user);
-        txBuyers.set(ev.mint, s);
+    const addBuyer = (mint: string, buyer: string) => {
+      const s = txBuyers.get(mint) ?? new Set<string>();
+      s.add(buyer);
+      txBuyers.set(mint, s);
+    };
+    tx.events.forEach((ev, i) => {
+      if (ev.kind === "pumpTrade" && ev.isBuy) addBuyer(ev.mint, ev.user);
+      if (ev.kind === "launchlabTrade" && ev.isBuy) {
+        const acc = tx.raydium?.accounts[i];
+        if (acc?.kind === "launchlabSwap") addBuyer(acc.baseMint, acc.payer);
       }
-    }
+    });
     const record = { signature: tx.signature, mints: new Set<string>(), creates: [] as string[], migrations: [] as string[] };
     const paidFeeWallets = tx.accountKeys ? this.paidFeeWallets(tx) : null;
     tx.events.forEach((ev, i) => {
@@ -294,7 +352,15 @@ export class MarketState {
       const mint = this.applyEvent(ev, { tx, key: [tx.slot, seq as number, i], evIndex: i, txBuyers, paidFeeWallets });
       if (mint) record.mints.add(mint);
       if (ev.kind === "pumpCreate") record.creates.push(ev.mint);
+      if (ev.kind === "launchlabPoolCreate" && mint) record.creates.push(mint);
       if (ev.kind === "pumpMigrate") record.migrations.push(ev.mint);
+    });
+    // LaunchLab graduations carry no event: they come from the migrate_to_cpswap instruction.
+    (tx.raydium?.migrations ?? []).forEach((m, k) => {
+      const i = tx.events.length + k;
+      const mint = this.onLaunchLabMigrate(m, { tx, key: [tx.slot, seq as number, i], evIndex: i, txBuyers, paidFeeWallets });
+      record.mints.add(mint);
+      record.migrations.push(mint);
     });
     if (tx.tokenBalances) {
       for (const b of tx.tokenBalances) {
@@ -327,7 +393,8 @@ export class MarketState {
     rec.quoteMint = quoteMint;
     if (dec !== null) rec.quoteDecimals = dec;
     rec.quoteTokenProgram = program;
-    if (dec === null || program === null) this.requestQuoteMint(quoteMint);
+    // Token-2022 quotes (xStocks) are read for their transfer fee too.
+    if (dec === null || program === null || program === TOKEN_2022_PROGRAM_ID) this.requestQuoteMint(quoteMint);
     this.touch(rec);
     this.changes.tradeCtx.add(rec.mint);
   }
@@ -364,10 +431,12 @@ export class MarketState {
       case "ammBuy":
       case "ammSell":
         return this.onPoolTrade(ev, ctx);
-      case "launchlabTrade":
       case "launchlabPoolCreate":
+        return this.onLaunchLabCreate(ev, ctx);
+      case "launchlabTrade":
+        return this.onLaunchLabTrade(ev, ctx);
       case "cpmmSwap":
-        return null; // Raydium venues are tradeable but not tracked by the market feed yet
+        return this.onCpmmSwap(ev, ctx);
     }
   }
 
@@ -743,7 +812,8 @@ export class MarketState {
         supplyExact: !!info.baseSupply,
       });
     if (!known && rec.createdAt === null) this.requestBootstrap(rec, false);
-    rec.pool ??= info.pool;
+    // A LaunchLab coin's price pool is its CPMM graduation pool, never a PumpSwap listing.
+    if (rec.launchpad !== "launchlab") rec.pool ??= info.pool;
     if (info.isCanonical && rec.pool !== info.pool) rec.pool = info.pool;
     this.alignQuoteWithPool(rec, info);
     if (ev.baseSupply > 0n && !mayhemPool) {
@@ -794,7 +864,7 @@ export class MarketState {
     rec: TokenRecord,
     ctx: EvCtx,
     t: {
-      venue: "pump" | "pumpswap";
+      venue: TradeVenue;
       isBuy: boolean;
       trader: string;
       quoteAmount: bigint;
@@ -807,6 +877,8 @@ export class MarketState {
       curveAfter: CurveReserves | null;
       poolAfter: PoolReserves | null;
       latest: boolean;
+      /** False when tsMs is the receive time (Raydium events have no timestamp): kept out of latency stats. */
+      tsKnown?: boolean;
     },
   ): void {
     const solUsd = this.deps.solUsd();
@@ -818,14 +890,19 @@ export class MarketState {
     const amountSol = rate !== null ? ui(t.quoteAmount, t.quoteDecimals) * rate : null;
     const mcSol = priceSol !== null ? priceSol * supplyUi : null;
 
-    // holders + audit classification
+    // holders + audit classification. A trade without a wallet (Raydium, logs only) leaves the holder book
+    // incomplete: it becomes unknown rather than wrong.
     let holderDelta = 0n;
+    if (!t.trader) {
+      this.stats.unattributedTrades++;
+      if (rec.holders) rec.holders = null;
+    }
     if (rec.holders) {
       holderDelta = t.isBuy ? t.tokenAmount : -t.tokenAmount;
       rec.holders.applyDelta(t.trader, holderDelta);
       if (t.isBuy) rec.holders.classifyBuy(t.trader, ctx.tx.slot, ctx.txBuyers.get(rec.mint) ?? new Set(), t.quoteAmount);
     }
-    if (ctx.paidFeeWallets) {
+    if (ctx.paidFeeWallets && t.trader) {
       rec.proTraders ??= new Set();
       // the fee wallet trading for itself (a sweep, a treasury buy) is not a customer
       if (ctx.paidFeeWallets.some((w) => w !== t.trader)) rec.proTraders.add(t.trader);
@@ -891,7 +968,7 @@ export class MarketState {
 
     this.stats.trades++;
     this.tradeRate.add(1, ctx.tx.receivedAt);
-    this.latency.add(ctx.tx.receivedAt - t.tsMs);
+    if (t.tsKnown !== false) this.latency.add(ctx.tx.receivedAt - t.tsMs);
     this.deps.storage?.trade(trade, ctx.evIndex);
     this.changes.feed.push({ ...this.feedItem("trade", rec, ctx, t.tsMs), side: trade.side, amountSol, venue: t.venue });
     if (this.deps.onTrade) {
@@ -927,6 +1004,653 @@ export class MarketState {
     if (!force && now - rec.lastPersistAt < this.persistIntervalMs) return;
     rec.lastPersistAt = now;
     this.deps.storage.token(rec, this.summary(rec.mint) as TokenSummary);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Raydium LaunchLab / CPMM
+  // ---------------------------------------------------------------------------------------------
+
+  /** Raydium events carry no timestamp: the block time when the source has it, else the receive time. */
+  private raydiumTime(ctx: EvCtx): { tsMs: number; known: boolean } {
+    return ctx.tx.blockTime !== null ? { tsMs: ctx.tx.blockTime * 1000, known: true } : { tsMs: ctx.tx.receivedAt, known: false };
+  }
+
+  private raydiumAccounts(ctx: EvCtx): RaydiumEventAccounts | undefined {
+    return ctx.tx.raydium?.accounts[ctx.evIndex];
+  }
+
+  private parkRaydium<E>(map: Map<string, PendingRaydiumEvent<E>[]>, pool: string, ev: E, ctx: EvCtx, onFirst: () => void): void {
+    let list = map.get(pool);
+    if (!list) {
+      list = [];
+      map.set(pool, list);
+      onFirst();
+    }
+    if (list.length >= MAX_PENDING_PER_POOL || this.pendingTotal >= MAX_PENDING_TOTAL) {
+      this.stats.pendingDropped++;
+      return;
+    }
+    list.push({ ev, ctx });
+    this.pendingTotal++;
+  }
+
+  private takeParked<E>(map: Map<string, PendingRaydiumEvent<E>[]>, pool: string): PendingRaydiumEvent<E>[] {
+    const list = map.get(pool);
+    if (!list) return [];
+    map.delete(pool);
+    this.pendingTotal -= list.length;
+    return list;
+  }
+
+  /** Keeps the slot index complete for events applied after their transaction (dead-slot rollback). */
+  private noteApplied(ctx: EvCtx, mint: string | null, create = false): void {
+    if (!mint) return;
+    const r = this.slotTxs.get(ctx.tx.slot)?.find((x) => x.signature === ctx.tx.signature);
+    r?.mints.add(mint);
+    if (create) r?.creates.push(mint);
+  }
+
+  /** Pump-shaped curve of a LaunchLab PoolState (see market/token.ts). */
+  private launchLabCurveOf(st: NonNullable<LaunchLabPoolInfo["state"]>): CurveReserves {
+    return {
+      vToken: st.virtualBase - st.realBase,
+      vQuote: st.virtualQuote + st.realQuote,
+      rToken: max0(st.totalBaseSell - st.realBase),
+      rQuote: st.realQuote,
+    };
+  }
+
+  /** Merges what an event / account revealed into the coin's LaunchLab constants (label, progress basis). */
+  private launchLabOf(rec: TokenRecord, pool: string, patch: Partial<LaunchLabRecord>): LaunchLabRecord {
+    const prev = rec.launchLab && rec.launchLab.pool === pool ? rec.launchLab : null;
+    const next: LaunchLabRecord = {
+      pool,
+      virtualBase: null,
+      virtualQuote: null,
+      totalBaseSell: null,
+      totalQuoteFundRaising: null,
+      migrateType: null,
+      globalConfig: null,
+      platformConfig: null,
+      graduationPool: null,
+      ...prev,
+      ...(Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== null && v !== undefined)) as Partial<LaunchLabRecord>),
+    };
+    const platformChanged = next.platformConfig !== (prev?.platformConfig ?? null);
+    rec.launchLab = next;
+    if (next.totalBaseSell !== null && next.totalBaseSell > 0n) rec.initialRealTokenReserves = next.totalBaseSell;
+    if (next.platformConfig && (platformChanged || rec.platform === null)) {
+      const label = this.deps.raydium?.platformLabel(next.platformConfig) ?? null;
+      if (label && label !== rec.platform) {
+        rec.platform = label;
+        this.touch(rec);
+      }
+    }
+    if (!rec.migrated && (next.graduationPool === null || platformChanged)) this.deriveGraduation(rec);
+    return next;
+  }
+
+  /** Derives the coin's graduation pool from the live PlatformConfig (asynchronous; cached by the registry). */
+  private deriveGraduation(rec: TokenRecord): void {
+    const reg = this.deps.raydium;
+    const ll = rec.launchLab;
+    if (!reg || !ll) return;
+    const cached = reg.graduationPool(ll.pool);
+    if (cached !== null) {
+      this.setGraduationPool(rec, cached);
+      return;
+    }
+    reg
+      .deriveGraduationPool(ll.pool)
+      .then((p) => {
+        if (p) this.setGraduationPool(rec, p);
+      })
+      .catch(() => {});
+  }
+
+  private setGraduationPool(rec: TokenRecord, pool: string): void {
+    if (!rec.launchLab || rec.launchLab.graduationPool === pool || (rec.migrated && rec.pool !== pool)) return;
+    rec.launchLab = { ...rec.launchLab, graduationPool: pool };
+    this.changes.tradeCtx.add(rec.mint);
+  }
+
+  private setLaunchLabCreator(rec: TokenRecord, creator: string | null | undefined): void {
+    if (!creator || creator === DEFAULT_PUBKEY) return;
+    rec.creator = creator;
+    rec.holders?.addDev(creator);
+  }
+
+  /** What the trader's balance moved by: Token-2022 transfer fees are withheld on the trader's side. */
+  private userTokenAmount(cfg: TransferFeeConfig | null, slot: number, isBuy: boolean, vaultAmount: bigint): bigint {
+    if (!cfg) return vaultAmount;
+    const epoch = BigInt(slot) / MAINNET_SLOTS_PER_EPOCH;
+    try {
+      return isBuy ? vaultAmount - transferFeeFor(cfg, epoch, vaultAmount) : vaultAmount + transferInverseFeeFor(cfg, epoch, vaultAmount);
+    } catch {
+      return vaultAmount;
+    }
+  }
+
+  private onLaunchLabCreate(ev: LaunchLabPoolCreateEvent, ctx: EvCtx): string | null {
+    const acc = this.raydiumAccounts(ctx);
+    const reg = this.deps.raydium;
+    if (acc?.kind === "launchlabCreate") {
+      reg?.learnLaunchLabPool({
+        pool: ev.pool,
+        baseMint: acc.baseMint,
+        quoteMint: acc.quoteMint,
+        globalConfig: acc.globalConfig,
+        platformConfig: acc.platformConfig,
+        baseVault: acc.baseVault,
+        quoteVault: acc.quoteVault,
+        baseTokenProgram: acc.baseTokenProgram,
+        quoteTokenProgram: acc.quoteTokenProgram,
+        creator: ev.creator,
+      });
+      return this.applyLaunchLabCreate(ev, ctx, acc.baseMint, acc.quoteMint, acc);
+    }
+    const info = reg?.launchLabPools.get(ev.pool);
+    if (info) return this.applyLaunchLabCreate(ev, ctx, info.baseMint, info.quoteMint);
+    if (reg) this.parkRaydium(this.pendingLaunchLab, ev.pool, ev, ctx, () => reg.requestLaunchLabPool(ev.pool));
+    return null;
+  }
+
+  private applyLaunchLabCreate(
+    ev: LaunchLabPoolCreateEvent,
+    ctx: EvCtx,
+    baseMint: string,
+    quoteMint: string,
+    acc?: Extract<RaydiumEventAccounts, { kind: "launchlabCreate" }>,
+  ): string {
+    const info = this.deps.raydium?.launchLabPools.get(ev.pool);
+    const { tsMs, known } = this.raydiumTime(ctx);
+    const rec = this.getOrCreate(baseMint);
+    Object.assign(rec, {
+      name: ev.name,
+      symbol: ev.symbol,
+      uri: ev.uri || null,
+      launchpad: "launchlab",
+      decimals: ev.decimals,
+      supply: rec.supplyExact || ev.supply <= 0n ? rec.supply : ev.supply,
+      tokenProgram: acc?.baseTokenProgram ?? info?.baseTokenProgram ?? rec.tokenProgram,
+      createdAt: tsMs,
+      createdSlot: ctx.tx.slot,
+      createSignature: ctx.tx.signature,
+      createUser: acc?.payer ?? ev.creator,
+      creatorAtCreate: ev.creator,
+    } satisfies Partial<TokenRecord>);
+    this.launchLabOf(rec, ev.pool, {
+      totalBaseSell: ev.curveType === 0 && ev.totalBaseSell > 0n ? ev.totalBaseSell : null,
+      totalQuoteFundRaising: ev.totalQuoteFundRaising,
+      migrateType: ev.migrateType,
+      globalConfig: acc?.globalConfig ?? info?.globalConfig ?? ev.config,
+      platformConfig: acc?.platformConfig ?? info?.platformConfig ?? null,
+      ...(info?.state ? { virtualBase: info.state.virtualBase, virtualQuote: info.state.virtualQuote } : {}),
+    });
+    this.setQuote(rec, quoteMint, info?.state?.quoteDecimals ?? null, acc?.quoteTokenProgram ?? info?.quoteTokenProgram ?? null);
+    // A trade that arrived before its create (out of order) already set newer reserves: keep them.
+    if (!rec.curveKey && info?.state) rec.curve = this.launchLabCurveOf(info.state);
+    if (!rec.creator) this.setLaunchLabCreator(rec, ev.creator);
+    if (!rec.holders) {
+      rec.holders = this.newHolderBook(ctx.tx.slot);
+      // vault owners: the LaunchLab authority on the curve, the CPMM authority after graduation
+      rec.holders.exclude(RAYDIUM_LAUNCHLAB_AUTHORITY);
+      rec.holders.exclude(RAYDIUM_CPMM_AUTHORITY);
+    }
+    rec.holders.addDev(ev.creator);
+    if (ctx.tx.accountKeys) rec.proTraders ??= new Set();
+    this.stats.launches++;
+    this.stats.launchLabLaunches++;
+    this.deps.onLaunch?.(rec);
+    const latency = ctx.tx.receivedAt - tsMs;
+    if (known) this.launchLatency.add(latency);
+    this.changes.feed.push({
+      kind: "launch",
+      mint: baseMint,
+      symbol: ev.symbol,
+      name: ev.name,
+      signature: ctx.tx.signature,
+      slot: ctx.tx.slot,
+      blockTime: tsMs,
+      receivedAt: ctx.tx.receivedAt,
+      latencyMs: latency,
+      venue: "launchlab",
+    });
+    if (rec.uri && rec.metadataState === "none") {
+      rec.metadataState = "requested";
+      this.deps.requestMetadata?.(rec.mint, rec.uri);
+    }
+    this.touch(rec);
+    this.changes.tradeCtx.add(rec.mint);
+    this.persist(rec, true);
+    return rec.mint;
+  }
+
+  private onLaunchLabTrade(ev: LaunchLabTradeEvent, ctx: EvCtx): string | null {
+    const acc = this.raydiumAccounts(ctx);
+    const reg = this.deps.raydium;
+    if (acc?.kind === "launchlabSwap") {
+      reg?.learnLaunchLabPool({
+        pool: ev.pool,
+        baseMint: acc.baseMint,
+        quoteMint: acc.quoteMint,
+        globalConfig: acc.globalConfig,
+        platformConfig: acc.platformConfig,
+        baseVault: acc.baseVault,
+        quoteVault: acc.quoteVault,
+        baseTokenProgram: acc.baseTokenProgram,
+        quoteTokenProgram: acc.quoteTokenProgram,
+      });
+      return this.applyLaunchLabTrade(ev, ctx, acc.baseMint, acc.quoteMint, acc);
+    }
+    const info = reg?.launchLabPools.get(ev.pool);
+    if (info) return this.applyLaunchLabTrade(ev, ctx, info.baseMint, info.quoteMint);
+    if (reg) this.parkRaydium(this.pendingLaunchLab, ev.pool, ev, ctx, () => reg.requestLaunchLabPool(ev.pool));
+    return null;
+  }
+
+  private applyLaunchLabTrade(
+    ev: LaunchLabTradeEvent,
+    ctx: EvCtx,
+    baseMint: string,
+    quoteMint: string,
+    acc?: Extract<RaydiumEventAccounts, { kind: "launchlabSwap" }>,
+  ): string {
+    const info = this.deps.raydium?.launchLabPools.get(ev.pool);
+    const { tsMs, known } = this.raydiumTime(ctx);
+    const rec = this.getOrCreate(baseMint, {
+      launchpad: "launchlab",
+      decimals: info?.state?.baseDecimals ?? PUMP_TOKEN_DECIMALS,
+      tokenProgram: acc?.baseTokenProgram ?? info?.baseTokenProgram ?? null,
+      ...(info?.state ? { supply: info.state.supply } : {}),
+    });
+    rec.launchpad = "launchlab";
+    rec.tokenProgram ??= acc?.baseTokenProgram ?? info?.baseTokenProgram ?? null;
+    this.launchLabOf(rec, ev.pool, {
+      virtualBase: ev.virtualBase,
+      virtualQuote: ev.virtualQuote,
+      totalBaseSell: ev.totalBaseSell > 0n ? ev.totalBaseSell : null,
+      globalConfig: acc?.globalConfig ?? info?.globalConfig,
+      platformConfig: acc?.platformConfig ?? info?.platformConfig,
+    });
+    if (rec.quoteMint !== normalizeQuoteMint(quoteMint) || rec.quoteTokenProgram === null) {
+      this.setQuote(rec, quoteMint, info?.state?.quoteDecimals ?? null, acc?.quoteTokenProgram ?? info?.quoteTokenProgram ?? null);
+    }
+    if (rec.createdAt === null) this.requestBootstrap(rec, false);
+    if (!rec.creator && info?.creator) this.setLaunchLabCreator(rec, info.creator);
+    const after: CurveReserves = {
+      vToken: ev.virtualBase - ev.realBaseAfter,
+      vQuote: ev.virtualQuote + ev.realQuoteAfter,
+      rToken: max0(ev.totalBaseSell - ev.realBaseAfter),
+      rQuote: ev.realQuoteAfter,
+    };
+    const latest = !rec.curveKey || cmpKey(ctx.key, rec.curveKey) >= 0;
+    let completedNow = false;
+    if (latest) {
+      rec.curve = after;
+      rec.curveKey = ctx.key;
+      rec.curveSlot = ctx.tx.slot;
+      // pool_status 1: the last base was sold; Raydium's migration wallet graduates it to CPMM.
+      if ((ev.poolStatus !== LAUNCHLAB_POOL_STATUS.fund || after.rToken === 0n) && !rec.complete) {
+        rec.complete = true;
+        rec.completedAt = tsMs;
+        completedNow = true;
+        this.stats.completes++;
+        this.stats.launchLabCompletes++;
+        this.changes.feed.push(this.feedItem("complete", rec, ctx, tsMs));
+        this.deriveGraduation(rec);
+      }
+      this.changes.tradeCtx.add(rec.mint);
+    }
+    // Curve movement excluding fees (the TradeEvent's amounts include them), like pump's sol_amount.
+    const fees = ev.protocolFee + ev.platformFee + ev.creatorFee + ev.shareFee;
+    const quoteAmount = ev.isBuy ? max0(ev.amountIn - fees) : ev.amountOut + fees;
+    const tokenAmount = this.userTokenAmount(rec.transferFeeConfig, ctx.tx.slot, ev.isBuy, ev.isBuy ? ev.amountOut : ev.amountIn);
+    this.stats.launchLabTrades++;
+    this.recordTrade(rec, ctx, {
+      venue: "launchlab",
+      isBuy: ev.isBuy,
+      trader: acc?.payer ?? "",
+      quoteAmount,
+      tokenAmount,
+      tsMs,
+      quoteMint: rec.quoteMint,
+      quoteDecimals: rec.quoteDecimals,
+      priceQuote: after.vToken > 0n ? ui(after.vQuote, rec.quoteDecimals) / ui(after.vToken, rec.decimals) : 0,
+      curveAfter: after,
+      poolAfter: null,
+      latest,
+      tsKnown: known,
+    });
+    if (completedNow) this.persist(rec, true);
+    return rec.mint;
+  }
+
+  /** migrate_to_cpswap (gRPC / fetched transactions): the coin graduated into its CPMM pool. */
+  private onLaunchLabMigrate(m: LaunchLabMigration, ctx: EvCtx): string {
+    const reg = this.deps.raydium;
+    reg?.learnLaunchLabPool(
+      { pool: m.pool, baseMint: m.baseMint, quoteMint: m.quoteMint, globalConfig: m.globalConfig, platformConfig: m.platformConfig },
+      false,
+    );
+    reg?.learnCpmmPool(m.cpmmPool, { baseMint: m.baseMint, quoteMint: m.quoteMint, launchLabPool: m.pool });
+    const known = this.tokens.get(m.baseMint);
+    const rec = known ?? this.getOrCreate(m.baseMint, { launchpad: "launchlab" });
+    rec.launchpad = "launchlab";
+    if (!known) this.requestBootstrap(rec, false);
+    this.launchLabOf(rec, m.pool, { globalConfig: m.globalConfig, platformConfig: m.platformConfig, migrateType: 1 });
+    if (rec.quoteMint !== normalizeQuoteMint(m.quoteMint) || rec.quoteTokenProgram === null) this.setQuote(rec, m.quoteMint);
+    if (m.baseVaultAmount !== null && m.quoteVaultAmount !== null && (!rec.poolKey || cmpKey(ctx.key, rec.poolKey) >= 0)) {
+      // A new pool owes no fees yet: its vault balances are its reserves.
+      rec.poolState = { base: m.baseVaultAmount, quoteVault: m.quoteVaultAmount, virtualQuote: 0n };
+      rec.poolKey = ctx.key;
+    }
+    rec.poolSlot = ctx.tx.slot;
+    this.markGraduated(rec, m.cpmmPool, ctx, this.raydiumTime(ctx).tsMs);
+    return rec.mint;
+  }
+
+  /**
+   * The coin trades on its CPMM graduation pool now. `at` = graduation time (null = unknown: it graduated
+   * before the server watched it); `ctx` = the transaction that showed it (feed item).
+   */
+  private markGraduated(rec: TokenRecord, cpmmPool: string, ctx: EvCtx | null, at: number | null): void {
+    if (rec.migrated && rec.pool === cpmmPool) return;
+    rec.complete = true;
+    rec.completedAt ??= at;
+    rec.migrated = true;
+    rec.migratedAt = at;
+    rec.pool = cpmmPool;
+    if (rec.launchLab) rec.launchLab = { ...rec.launchLab, graduationPool: cpmmPool };
+    rec.holders?.exclude(RAYDIUM_CPMM_AUTHORITY);
+    if (at !== null) {
+      this.stats.migrations++;
+      this.stats.launchLabGraduations++;
+    } else this.stats.launchLabGraduatesFound++;
+    if (ctx) this.changes.feed.push(this.feedItem("migration", rec, ctx, at ?? ctx.tx.receivedAt));
+    this.touch(rec);
+    this.changes.tradeCtx.add(rec.mint);
+    this.persist(rec, true);
+    this.deps.onMigrate?.(rec);
+  }
+
+  /**
+   * The server watched this coin trade on its curve recently, so a graduation found now (pool read, hint)
+   * happened about now; otherwise its time is unknown (null), e.g. it graduated while the server was down.
+   */
+  private watchedOnCurve(rec: TokenRecord): boolean {
+    return rec.launchLab !== null && rec.curve !== null && rec.lastTradeAt !== null && this.now() - rec.lastTradeAt < 30 * 60_000;
+  }
+
+  /** A tracked LaunchLab coin whose derived graduation pool `pool` is (logs-only graduations). */
+  private graduatedInto(pool: string, a: string, b: string): string | undefined {
+    for (const m of [a, b]) {
+      if (isDefault(m)) continue;
+      if (this.tokens.get(m)?.launchLab?.graduationPool === pool) return m;
+    }
+    return undefined;
+  }
+
+  private onCpmmSwap(ev: CpmmSwapEvent, ctx: EvCtx): string | null {
+    const acc = this.raydiumAccounts(ctx);
+    const a = acc?.kind === "cpmmSwap" ? acc : undefined;
+    const reg = this.deps.raydium;
+    const inputMint = a?.inputMint ?? ev.inputMint;
+    const outputMint = a?.outputMint ?? ev.outputMint;
+    const base = reg?.baseMintOf(ev.pool) ?? this.graduatedInto(ev.pool, inputMint, outputMint);
+    if (base) return this.applyCpmmSwap(ev, ctx, base, inputMint, outputMint, a);
+    if (!reg || isDefault(inputMint) || isDefault(outputMint) || reg.isRejected(ev.pool)) {
+      this.stats.cpmmIgnored++;
+      return null;
+    }
+    // Maybe the graduation pool of a LaunchLab coin the server has not seen: classify it once.
+    if (reg.classifyCpmmPool(ev.pool, inputMint, outputMint) === "pending") this.parkRaydium(this.pendingCpmm, ev.pool, ev, ctx, () => {});
+    else this.stats.cpmmIgnored++;
+    return null;
+  }
+
+  private applyCpmmSwap(
+    ev: CpmmSwapEvent,
+    ctx: EvCtx,
+    baseMint: string,
+    inputMint: string,
+    outputMint: string,
+    acc?: Extract<RaydiumEventAccounts, { kind: "cpmmSwap" }>,
+  ): string | null {
+    if (isDefault(inputMint) && isDefault(outputMint)) {
+      this.stats.cpmmIgnored++;
+      return null;
+    }
+    const reg = this.deps.raydium;
+    const info = reg?.cpmmPools.get(ev.pool);
+    const st = info?.state;
+    const { tsMs, known } = this.raydiumTime(ctx);
+    const isBuy = isDefault(outputMint) ? inputMint !== baseMint : outputMint === baseMint;
+    const quoteMint = isBuy ? inputMint : outputMint;
+    const sideOf = (mint: string) =>
+      st
+        ? st.token0Mint === mint
+          ? { dec: st.mint0Decimals, prog: st.token0Program }
+          : { dec: st.mint1Decimals, prog: st.token1Program }
+        : null;
+    let rec = this.tokens.get(baseMint);
+    if (!rec) {
+      const b = sideOf(baseMint);
+      rec = this.getOrCreate(baseMint, { launchpad: "launchlab", decimals: b?.dec ?? PUMP_TOKEN_DECIMALS, tokenProgram: b?.prog ?? null });
+      this.requestBootstrap(rec, false);
+    }
+    rec.launchpad = "launchlab";
+    if (!rec.launchLab) {
+      // First seen on its CPMM pool: link the LaunchLab pool it graduated from (platform label, history).
+      const ll = info?.launchLabPool ?? reg?.poolOfMint(baseMint)?.pool;
+      const llInfo = ll ? reg?.launchLabPools.get(ll) : undefined;
+      if (ll) {
+        this.launchLabOf(rec, ll, {
+          globalConfig: llInfo?.globalConfig,
+          platformConfig: llInfo?.platformConfig,
+          migrateType: 1,
+          graduationPool: ev.pool,
+          ...(llInfo?.state
+            ? {
+                virtualBase: llInfo.state.virtualBase,
+                virtualQuote: llInfo.state.virtualQuote,
+                totalBaseSell: llInfo.state.totalBaseSell,
+                totalQuoteFundRaising: llInfo.state.totalQuoteFundRaising,
+              }
+            : {}),
+        });
+        if (!rec.creator) this.setLaunchLabCreator(rec, llInfo?.creator);
+      }
+    }
+    if (!rec.migrated || rec.pool !== ev.pool) {
+      // First swap on its graduation pool. A coin watched on the curve graduated now (the logs feed saw no
+      // migrate_to_cpswap); otherwise it graduated before the server watched it (time unknown).
+      const at = rec.launchLab && rec.curve && !rec.migrated ? tsMs : null;
+      reg?.learnCpmmPool(ev.pool, { baseMint, quoteMint, launchLabPool: rec.launchLab?.pool ?? null });
+      this.markGraduated(rec, ev.pool, at !== null ? ctx : null, at);
+    }
+    if (!isDefault(quoteMint) && (rec.quoteMint !== normalizeQuoteMint(quoteMint) || rec.quoteTokenProgram === null)) {
+      const q = sideOf(quoteMint);
+      this.setQuote(rec, quoteMint, q?.dec ?? null, q?.prog ?? (acc ? (isBuy ? acc.inputTokenProgram : acc.outputTokenProgram) : null));
+    }
+    // Reserves after the swap, net of the fees the pool now owes (what the next swap prices with).
+    const cfg = st ? reg?.ammConfigs.get(st.ammConfig) : undefined;
+    const share = (rate: bigint | undefined) => (rate ? (ev.tradeFee * rate) / RAYDIUM_FEE_RATE_DENOMINATOR : 0n);
+    const inAfter =
+      ev.inputVaultBefore +
+      ev.inputAmount -
+      share(cfg?.protocolFeeRate) -
+      share(cfg?.fundFeeRate) -
+      (ev.creatorFeeOnInput ? ev.creatorFee : 0n);
+    const outAfter = ev.outputVaultBefore - ev.outputAmount - (ev.creatorFeeOnInput ? 0n : ev.creatorFee);
+    const poolAfter: PoolReserves = isBuy
+      ? { base: max0(outAfter), quoteVault: max0(inAfter), virtualQuote: 0n }
+      : { base: max0(inAfter), quoteVault: max0(outAfter), virtualQuote: 0n };
+    const primary = rec.pool === ev.pool;
+    const latest = primary && (!rec.poolKey || cmpKey(ctx.key, rec.poolKey) >= 0);
+    if (latest) {
+      rec.poolState = poolAfter;
+      rec.poolKey = ctx.key;
+      rec.poolSlot = ctx.tx.slot;
+      this.changes.tradeCtx.add(rec.mint);
+    }
+    // Quote that entered / left the reserves (the trade fee is on the input side); tokens the trader
+    // received / sent (Token-2022 transfer fees on the trader's side).
+    const quoteAmount = isBuy
+      ? max0(ev.inputAmount - ev.tradeFee - (ev.creatorFeeOnInput ? ev.creatorFee : 0n))
+      : ev.outputAmount + (ev.creatorFeeOnInput ? 0n : ev.creatorFee);
+    const tokenAmount = isBuy ? max0(ev.outputAmount - ev.outputTransferFee) : ev.inputAmount + ev.inputTransferFee;
+    this.stats.cpmmTrades++;
+    this.recordTrade(rec, ctx, {
+      venue: "cpmm",
+      isBuy,
+      trader: acc?.payer ?? "",
+      quoteAmount,
+      tokenAmount,
+      tsMs,
+      quoteMint: rec.quoteMint,
+      quoteDecimals: rec.quoteDecimals,
+      priceQuote:
+        poolAfter.base > 0n && poolAfter.quoteVault > 0n
+          ? ui(poolAfter.quoteVault, rec.quoteDecimals) / ui(poolAfter.base, rec.decimals)
+          : 0,
+      curveAfter: null,
+      poolAfter: primary ? poolAfter : null,
+      latest,
+      tsKnown: known,
+    });
+    return rec.mint;
+  }
+
+  /** The registry read a LaunchLab pool: update the coin, apply waiting events, catch a missed graduation. */
+  onLaunchLabPoolReady(info: LaunchLabPoolInfo): void {
+    const rec = this.tokens.get(info.baseMint);
+    const st = info.state;
+    if (rec && st && rec.launchpad === "launchlab") {
+      this.launchLabOf(rec, info.pool, {
+        virtualBase: st.virtualBase,
+        virtualQuote: st.virtualQuote,
+        totalBaseSell: st.totalBaseSell > 0n ? st.totalBaseSell : null,
+        totalQuoteFundRaising: st.totalQuoteFundRaising,
+        migrateType: st.migrateType,
+        globalConfig: st.globalConfig,
+        platformConfig: st.platformConfig,
+      });
+      if (!rec.creator) this.setLaunchLabCreator(rec, st.creator);
+      rec.tokenProgram ??= info.baseTokenProgram;
+      rec.decimals = st.baseDecimals;
+      if (!rec.supplyExact && st.supply > 0n) rec.supply = st.supply;
+      this.setQuote(rec, st.quoteMint, st.quoteDecimals, info.quoteTokenProgram);
+      // No trade applied yet (or restored from storage): the account is the freshest curve.
+      if (!rec.curveKey && !rec.migrated) rec.curve = this.launchLabCurveOf(st);
+      if (st.status !== LAUNCHLAB_POOL_STATUS.fund && !rec.complete) rec.complete = true;
+      if (st.status === LAUNCHLAB_POOL_STATUS.trade && !rec.migrated) {
+        // Graduated without the server seeing migrate_to_cpswap (logs feed, transaction not fetched).
+        const reg = this.deps.raydium;
+        const watched = this.watchedOnCurve(rec);
+        reg
+          ?.deriveGraduationPool(info.pool)
+          .then((pool) => {
+            if (!pool || rec.migrated) return;
+            reg.learnCpmmPool(pool, { baseMint: rec.mint, quoteMint: info.quoteMint, launchLabPool: info.pool });
+            this.markGraduated(rec, pool, null, watched ? this.now() : null);
+          })
+          .catch(() => {});
+      }
+      this.touch(rec);
+      this.changes.tradeCtx.add(rec.mint);
+    }
+    for (const p of this.takeParked(this.pendingLaunchLab, info.pool)) {
+      const mint =
+        p.ev.kind === "launchlabTrade"
+          ? this.applyLaunchLabTrade(p.ev, p.ctx, info.baseMint, info.quoteMint)
+          : this.applyLaunchLabCreate(p.ev, p.ctx, info.baseMint, info.quoteMint);
+      this.noteApplied(p.ctx, mint, p.ev.kind === "launchlabPoolCreate");
+    }
+  }
+
+  /** The LaunchLab pool account is missing (or is not one): drop what waited for it. */
+  onLaunchLabPoolMissing(pool: string): void {
+    this.stats.pendingDropped += this.takeParked(this.pendingLaunchLab, pool).length;
+  }
+
+  /** The registry read a graduation pool (account + vaults): apply waiting swaps, link the coin. */
+  onCpmmPoolReady(info: CpmmPoolInfo): void {
+    for (const p of this.takeParked(this.pendingCpmm, info.pool)) {
+      const acc = p.ctx.tx.raydium?.accounts[p.ctx.evIndex];
+      const a = acc?.kind === "cpmmSwap" ? acc : undefined;
+      const mint = this.applyCpmmSwap(p.ev, p.ctx, info.baseMint, a?.inputMint ?? p.ev.inputMint, a?.outputMint ?? p.ev.outputMint, a);
+      this.noteApplied(p.ctx, mint);
+    }
+    const rec = this.tokens.get(info.baseMint);
+    if (rec) {
+      if (!rec.migrated || rec.pool !== info.pool) this.markGraduated(rec, info.pool, null, this.watchedOnCurve(rec) ? this.now() : null);
+      const st = info.state;
+      const baseIs0 = st.token0Mint === info.baseMint;
+      rec.tokenProgram ??= baseIs0 ? st.token0Program : st.token1Program;
+      this.setQuote(rec, info.quoteMint, baseIs0 ? st.mint1Decimals : st.mint0Decimals, baseIs0 ? st.token1Program : st.token0Program);
+      if (!rec.poolKey && info.vault0 !== null && info.vault1 !== null) {
+        try {
+          const net = cpmmVaultAmountsWithoutFees(st, info.vault0, info.vault1);
+          rec.poolState = { base: baseIs0 ? net.token0 : net.token1, quoteVault: baseIs0 ? net.token1 : net.token0, virtualQuote: 0n };
+        } catch {
+          /* vault below fees owed: wait for a swap */
+        }
+      }
+      this.touch(rec);
+      this.changes.tradeCtx.add(rec.mint);
+    }
+  }
+
+  /** Not a graduation pool: drop the swaps that waited for the answer. */
+  onCpmmRejected(pool: string): void {
+    const n = this.takeParked(this.pendingCpmm, pool).length;
+    this.stats.cpmmIgnored += n;
+  }
+
+  /** A PlatformConfig was (re)read: labels, and graduation pools (cpswap_config may have changed). */
+  onPlatformConfig(address: string): void {
+    const label = this.deps.raydium?.platformLabel(address) ?? null;
+    for (const rec of this.tokens.values()) {
+      if (rec.launchLab?.platformConfig !== address) continue;
+      if (label && label !== rec.platform) {
+        rec.platform = label;
+        this.touch(rec);
+      }
+      if (!rec.migrated) this.deriveGraduation(rec);
+      this.changes.tradeCtx.add(rec.mint);
+    }
+  }
+
+  /** The logs feed saw a graduation it could not read: re-check the completed LaunchLab curves. */
+  onLaunchLabMigrationHint(): void {
+    for (const rec of this.tokens.values()) {
+      if (rec.launchLab && rec.complete && !rec.migrated) this.deps.raydium?.requestLaunchLabPool(rec.launchLab.pool, true);
+    }
+  }
+
+  /**
+   * RPC logs source: is this Raydium transaction worth a getTransaction (wallet, mints, graduation)? Every
+   * LaunchLab event and graduation; CPMM swaps only for coins that graduated on the server's watch (or whose
+   * derived pool trades for the first time). Swaps on older graduates found later stay logs-only: they would
+   * outrun the public RPC's getTransaction budget (measured 2026-10-04).
+   */
+  wantsRaydiumTx(events: readonly DecodedEvent[], migration: boolean): boolean {
+    if (migration) return true;
+    for (const ev of events) {
+      if (ev.kind === "launchlabTrade" || ev.kind === "launchlabPoolCreate") return true;
+      if (ev.kind !== "cpmmSwap") continue;
+      if (this.graduatedInto(ev.pool, ev.inputMint, ev.outputMint)) return true;
+      const mint = this.deps.raydium?.baseMintOf(ev.pool);
+      const rec = mint ? this.tokens.get(mint) : undefined;
+      if (rec?.migrated && rec.pool === ev.pool && rec.migratedAt !== null) return true;
+    }
+    return false;
+  }
+
+  /** Base mint of a LaunchLab or graduation CPMM pool (the armed-order engine's pool -> mint). */
+  raydiumBaseMint(pool: string): string | undefined {
+    return this.deps.raydium?.baseMintOf(pool);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1065,7 +1789,11 @@ export class MarketState {
   onMintResolved(info: MintResolved): void {
     if (this.quoteRequests.has(info.mint)) {
       // an exotic quote mint: fix decimals / token program of every token quoted in it
-      this.quoteMintInfo.set(info.mint, { decimals: info.decimals, tokenProgram: info.tokenProgram });
+      this.quoteMintInfo.set(info.mint, {
+        decimals: info.decimals,
+        tokenProgram: info.tokenProgram,
+        transferFeeConfig: info.transferFeeConfig ?? null,
+      });
       for (const rec of this.tokens.values()) {
         if (rec.quoteMint === info.mint && rec.quoteMint !== rec.mint) {
           rec.quoteDecimals = info.decimals;
@@ -1083,6 +1811,7 @@ export class MarketState {
       rec.supply = info.supply;
       rec.supplyExact = true;
     }
+    rec.transferFeeConfig = info.transferFeeConfig ?? null;
     rec.dangers = info.dangers;
     if (info.metadata) this.applyOnchainMetadata(rec, info.metadata);
     this.touch(rec);
@@ -1207,6 +1936,7 @@ export class MarketState {
   tradeContext(mint: string): TradeContext | null {
     const rec = this.tokens.get(mint);
     if (!rec) return null;
+    if (rec.launchpad === "launchlab") return buildTradeContext(rec, undefined, this.raydiumInputs(rec, true));
     return buildTradeContext(rec, rec.pool ? this.deps.resolver.pools.get(rec.pool) : undefined);
   }
 
@@ -1226,6 +1956,58 @@ export class MarketState {
     hits.sort((a, b) => b.score - a.score || (b.rec.lastTradeAt ?? 0) - (a.rec.lastTradeAt ?? 0));
     const opts = { solUsd: this.deps.solUsd(), now: this.now() };
     return hits.slice(0, limit).map((h) => summarize(h.rec, opts));
+  }
+
+  /**
+   * The registry accounts a Raydium coin's trade context / live quote needs. With `request`, missing ones are
+   * read (the context goes out once they land).
+   */
+  raydiumInputs(rec: TokenRecord, request = false): RaydiumContextInputs {
+    const reg = this.deps.raydium;
+    const out: RaydiumContextInputs = {};
+    const quote = rec.quoteMint;
+    if (rec.quoteTokenProgram !== TOKEN_2022_PROGRAM_ID) out.quoteTransferFee = null;
+    else {
+      const q = this.quoteMintInfo.get(quote);
+      if (q) out.quoteTransferFee = q.transferFeeConfig;
+      else if (request) {
+        this.quoteRequests.delete(quote);
+        this.requestQuoteMint(quote);
+      }
+    }
+    out.baseMintKnown = rec.supplyExact || rec.tokenProgram !== TOKEN_2022_PROGRAM_ID;
+    if (!out.baseMintKnown && request) this.deps.resolver.requestMint(rec.mint);
+    if (!reg) return out;
+    const ll = rec.launchLab;
+    if (ll) {
+      const info = reg.launchLabPools.get(ll.pool);
+      if (info?.state) out.launchLabPool = info;
+      else if (request) {
+        reg.learnLaunchLabPool({ pool: ll.pool, baseMint: rec.mint, quoteMint: quote }, false);
+        reg.requestLaunchLabPool(ll.pool);
+      }
+      const gc = info?.globalConfig ?? ll.globalConfig;
+      const pc = info?.platformConfig ?? ll.platformConfig;
+      const g = gc ? reg.globals.get(gc) : undefined;
+      const pl = pc ? reg.platforms.get(pc) : undefined;
+      if (g) out.global = { curveType: g.curveType, tradeFeeRate: g.tradeFeeRate };
+      else if (gc && request) reg.requestGlobal(gc);
+      if (pl) out.platform = pl;
+      else if (pc && request) reg.requestPlatform(pc);
+    }
+    if (rec.migrated && rec.pool) {
+      const c = reg.cpmmPools.get(rec.pool);
+      if (c) {
+        out.cpmmPool = c;
+        const cfg = reg.ammConfigs.get(c.state.ammConfig);
+        if (cfg) out.ammConfig = cfg;
+        else if (request) reg.requestAmmConfig(c.state.ammConfig);
+      } else if (request) {
+        reg.learnCpmmPool(rec.pool, { baseMint: rec.mint, quoteMint: quote, launchLabPool: ll?.pool ?? null }, false);
+        reg.requestCpmmPool(rec.pool);
+      }
+    }
+    return out;
   }
 
   recentTrades(mint: string, limit = 100): Trade[] {
@@ -1264,6 +2046,28 @@ export class MarketState {
     // Records saved before supplyExact existed kept a mayhem coin's curve supply (1e15) as its supply.
     if (rec.isMayhem && !rec.supplyExact && rec.supply === ONE_BILLION_SUPPLY) rec.supply = 2n * ONE_BILLION_SUPPLY;
     this.tokens.set(rec.mint, rec);
+    if (rec.launchpad === "launchlab") {
+      // Persisted reserves predate the restart: any live trade or fresh account read replaces them.
+      rec.curveKey = null;
+      rec.poolKey = null;
+      // Seed pool -> mint (logs-only events) without reading anything; accounts are read when needed.
+      const reg = this.deps.raydium;
+      if (rec.launchLab) {
+        reg?.learnLaunchLabPool(
+          {
+            pool: rec.launchLab.pool,
+            baseMint: rec.mint,
+            quoteMint: rec.quoteMint,
+            globalConfig: rec.launchLab.globalConfig,
+            platformConfig: rec.launchLab.platformConfig,
+          },
+          false,
+        );
+      }
+      if (rec.migrated && rec.pool)
+        reg?.learnCpmmPool(rec.pool, { baseMint: rec.mint, quoteMint: rec.quoteMint, launchLabPool: rec.launchLab?.pool ?? null }, false);
+      return;
+    }
     if (rec.creator) this.setCreator(rec, rec.creator, rec.migrated ? "pool" : "curve");
     // Metadata that failed (e.g. on a since-retired IPFS gateway) or was in flight at shutdown: fetch it again.
     if (rec.uri && rec.metadataState !== "ok") {

@@ -1,9 +1,11 @@
 /**
  * Ingest contract. A Source turns one upstream feed (RPC logs, Yellowstone gRPC, ...) into normalized
- * IngestTx records carrying decoded pump / PumpSwap events. The market state is the single consumer.
+ * IngestTx records carrying decoded pump / PumpSwap / Raydium LaunchLab / Raydium CPMM events. The market
+ * state is the single consumer.
  */
 import type { AmmPoolMints, DecodedEvent } from "@zerofee/core";
 import type { SourceHealth } from "@zerofee/protocol";
+import type { RaydiumTxInfo } from "./raydium";
 
 /** Post-transaction balance of one owner for one mint (sum of the owner's accounts listed in the tx meta). */
 export interface TokenBalanceUpdate {
@@ -32,6 +34,11 @@ export interface IngestTx {
   accountKeys: string[] | null;
   /** PumpSwap pool -> mint mappings recovered from instruction accounts. */
   poolMints: AmmPoolMints[];
+  /**
+   * Raydium facts from instruction accounts (mints, wallet, graduations), when the source has the full
+   * transaction; absent / null for logs-only records (ingest/raydium.ts).
+   */
+  raydium?: RaydiumTxInfo | null;
   /** Absolute post-tx token balances, when the source has meta (lets holder tracking be exact). */
   tokenBalances: TokenBalanceUpdate[] | null;
   /**
@@ -51,11 +58,23 @@ export interface BlockMeta {
   parentSlot: number | null;
 }
 
+/**
+ * Something happened that the source saw but could not decode into accounts: a LaunchLab graduation
+ * (`migrate_to_cpswap`) in the logs feed, whose transaction could not be fetched. The market checks its
+ * completed LaunchLab curves.
+ */
+export interface IngestHint {
+  kind: "launchlabMigration";
+  signature: string;
+  slot: number;
+}
+
 export interface IngestSink {
   tx(tx: IngestTx): void;
   slot?(slot: number, status: SlotStatus): void;
   blockMeta?(meta: BlockMeta): void;
   decodeFailure?(info: { source: string; signature: string | null; message: string }): void;
+  hint?(h: IngestHint): void;
 }
 
 export interface Source {

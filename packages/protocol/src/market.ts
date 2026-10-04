@@ -18,8 +18,18 @@
  * filter is active), and an alert on it neither fires nor re-arms until the value is known again.
  */
 
-/** Where the token trades / launched. More launchpads (LaunchLab, Meteora DBC) arrive in later phases. */
-export type Launchpad = "pump" | "pumpswap";
+/**
+ * Where the token launched (or, for pool-only listings, where it trades):
+ *  - "pump"       a pump.fun coin (bonding curve, then its canonical PumpSwap pool after migration);
+ *  - "pumpswap"   a token the server only saw trading in a PumpSwap pool (not listed in Pulse);
+ *  - "launchlab"  a Raydium LaunchLab coin (BONK.fun / letsbonk.fun, StonkFun, TRiX, Raydium's own launchpad):
+ *                 bonding curve, then its Raydium CPMM pool after graduation. `TokenSummary.platform` names the
+ *                 launchpad that runs the curve;
+ *  - "cpmm"       a token only seen in a Raydium CPMM pool. Reserved: the server tracks CPMM pools of graduated
+ *                 LaunchLab coins only (those keep "launchlab"), so it does not emit this value yet.
+ * New values may be added; treat unknown ones as "other".
+ */
+export type Launchpad = "pump" | "pumpswap" | "launchlab" | "cpmm";
 
 /**
  * Links from the token's metadata JSON, each null or an absolute `https://` URL (never javascript:, data:
@@ -66,17 +76,29 @@ export interface TokenSummary {
   imageProxied: string | null;
   description: string | null;
   launchpad: Launchpad;
-  /** Normalized quote mint: wSOL for SOL pairs, USDC mint for USDC pairs. */
+  /**
+   * Launchpad label for LaunchLab coins, from the curve's PlatformConfig (its on-chain `name`): "letsbonk.fun",
+   * "StonkFun", "TRiX", "Raydium" ... A display label only (fees and graduation always come from the live
+   * accounts). null while unknown and for other launchpads; absent from servers that predate it.
+   */
+  platform?: string | null;
+  /**
+   * Normalized quote mint: wSOL for SOL pairs, USDC mint for USDC pairs, else the pair's own quote (LaunchLab
+   * coins are often quoted in other tokens: xStocks, USD1, even pump.fun coins; their SOL values are null).
+   */
   quoteMint: string;
   /** Owner program of the mint (Token or Token-2022). */
   tokenProgram: string | null;
   decimals: number;
   /** Total supply in UI units (1e9 for standard pump coins, 2e9 for mayhem). */
   supply: number;
-  /** Creation time (block time of the CreateEvent); null if creation was not observed. */
+  /**
+   * Creation time (block time of the CreateEvent / LaunchLab PoolCreateEvent; LaunchLab events carry no timestamp,
+   * so the block time when the source has it, else the server's receive time); null if creation was not observed.
+   */
   createdAt: number | null;
   createdSlot: number | null;
-  /** Live creator (`bonding_curve.creator` / `pool.coin_creator`). */
+  /** Live creator (`bonding_curve.creator` / `pool.coin_creator`; LaunchLab: the pool's `creator`). */
   creator: string | null;
   /**
    * Price in SOL per whole token. For non-SOL quotes this is converted (USDC via SOL/USD). null when the
@@ -99,7 +121,10 @@ export interface TokenSummary {
    */
   priceQuote: number | null;
   mcQuote: number | null;
-  /** Quote-side liquidity in SOL: real quote reserves on the curve, the quote vault on PumpSwap. */
+  /**
+   * Quote-side liquidity in SOL: real quote reserves on the curve (LaunchLab: the quote raised), the quote vault on
+   * PumpSwap, the quote reserve net of fees owed on Raydium CPMM.
+   */
   liquidity: number | null;
   liquidityUsd: number | null;
   /** Rolling volume in SOL. */
@@ -160,13 +185,19 @@ export interface TokenSummary {
    * account keys (the RPC logs feed); the Yellowstone feed has them.
    */
   proTraders: number | null;
-  /** 0..10000; 10000 once the curve is complete or migrated. */
+  /**
+   * 0..10000; 10000 once the curve is complete or migrated. pump: tokens sold / initial real token reserves;
+   * LaunchLab: base sold / the curve's own total_base_sell (its graduation point).
+   */
   bondingProgressBps: number;
   /** Curve completed (real token reserves hit 0), migration may still be pending. */
   complete: boolean;
   migrated: boolean;
   migratedAt: number | null;
-  /** Canonical PumpSwap pool after migration (or the pool a pool-only token trades in). */
+  /**
+   * Canonical PumpSwap pool after migration (or the pool a pool-only token trades in); for LaunchLab coins the
+   * Raydium CPMM pool they graduated into (null while on the curve).
+   */
   pool: string | null;
   socials: TokenSocials;
   /**
@@ -200,7 +231,11 @@ export interface PulseDelta {
 }
 
 export type TradeSide = "buy" | "sell";
-export type TradeVenue = "pump" | "pumpswap";
+/**
+ * Where a trade executed: the pump.fun curve, a PumpSwap pool, a Raydium LaunchLab curve, or a Raydium CPMM pool
+ * (where LaunchLab coins graduate). New values may be added.
+ */
+export type TradeVenue = "pump" | "pumpswap" | "launchlab" | "cpmm";
 export type TradeTag = "dev" | "sniper" | "bundler" | "pro";
 
 export interface Trade {
@@ -213,10 +248,21 @@ export interface Trade {
   mint: string;
   venue: TradeVenue;
   side: TradeSide;
+  /**
+   * The trading wallet (pump / PumpSwap: the event's `user`; Raydium: the swap instruction's payer). "" when the
+   * source could not attribute the trade: Raydium events carry no wallet, so the RPC logs feed only knows it once
+   * it fetched the transaction (see RPC_LOGS_TX_FETCH_RPS); such trades do not move holder balances.
+   */
   trader: string;
-  /** Quote amount in quote base units (lamports for SOL pairs), excluding fees. */
+  /**
+   * Quote amount in quote base units (lamports for SOL pairs), excluding fees: what entered or left the curve /
+   * pool reserves (Raydium: trade, platform and creator fees removed; Token-2022 transfer fees excluded).
+   */
   quoteAmount: string;
-  /** Token amount in base units. */
+  /**
+   * Token amount in base units. For Token-2022 coins with a transfer fee (StonkFun): what the trader received
+   * (buys) or sent (sells), so the fee the token program withholds is on the pool's side of the amount.
+   */
   tokenAmount: string;
   /** Quote amount in SOL (display); null when the quote's SOL value is unknown (see the header note). */
   amountSol: number | null;
@@ -225,7 +271,10 @@ export interface Trade {
   priceSol: number | null;
   /** Post-trade market cap in SOL (price x the token's supply); null when unknown. */
   mcSol: number | null;
-  /** Block time (event timestamp, 1 s resolution) in ms. */
+  /**
+   * Block time (event timestamp, 1 s resolution) in ms. Raydium events carry no timestamp: the block time when the
+   * source knows it, else the server's receive time.
+   */
   blockTime: number;
   /** When the server received it (ms). receivedAt - blockTime = detection latency (+/- 1 s). */
   receivedAt: number;
@@ -295,10 +344,11 @@ interface TradeContextBase {
   quoteMint: string;
   quoteTokenProgram: string;
   quoteDecimals: number;
+  /** pump coin flags (false on Raydium venues). */
   isMayhemMode: boolean;
   isCashbackCoin: boolean;
   isHolderReward: boolean;
-  /** Per-coin creator fee override in bps ("0" = schedule rate). */
+  /** Per-coin creator fee override in bps ("0" = schedule rate; "0" on Raydium venues, which use the rates below). */
   creatorFeeBps: string;
   /** Slot of the event that produced these reserves. */
   slot: number;
@@ -358,4 +408,117 @@ export interface PoolTradeContext extends TradeContextBase {
   poolDataLength?: number | null;
 }
 
-export type TradeContext = CurveTradeContext | PoolTradeContext;
+/**
+ * A Token-2022 TransferFeeConfig (core `TransferFeeConfig`): the token program withholds
+ * min(amount x basisPoints / 10000, maximumFee) on every transfer, using `older` while the current epoch is below
+ * `newer.epoch`. StonkFun coins carry 300 bps; xStock quotes may carry one too.
+ */
+export interface TransferFeeInfo {
+  older: { epoch: string; maximumFee: string; basisPoints: number };
+  newer: { epoch: string; maximumFee: string; basisPoints: number };
+}
+
+/**
+ * Raydium LaunchLab bonding-curve trade inputs: everything @zerofee/core needs to quote and build a LaunchLab trade
+ * (buildLaunchLabBuyInstructions / buildLaunchLabSellInstructions, quoteLaunchLab*, launchLabTradeParams), so the
+ * browser can build without an RPC round trip. Maps onto core `LaunchLabPool` (+ GlobalConfig / PlatformConfig rates):
+ *   pool keys     { globalConfig, platformConfig, baseMint: mint, quoteMint, baseVault, quoteVault, creator, tokenProgramFlag }
+ *   curve state   { status, virtualBase, virtualQuote, realBase, realQuote, totalBaseSell, totalQuoteFundRaising }
+ *   trade params  { curveType, protocolFeeRate, platformFeeRate, creatorFeeRate, shareFeeRate: 0 }
+ *   transfer fees { base: baseTransferFee, quote: quoteTransferFee, epoch }
+ * Rates are parts per million of the quote amount. The firewall only signs share_fee_rate 0 on the pool PDA
+ * ["pool", base, quote] (verify `pool` against it before signing).
+ */
+export interface LaunchLabTradeContext extends TradeContextBase {
+  venue: "launchlab";
+  /** LaunchLab pool (PoolState) PDA ["pool", mint, quoteMint]. */
+  pool: string;
+  globalConfig: string;
+  platformConfig: string;
+  /** Launchpad label from the PlatformConfig (letsbonk.fun, StonkFun, TRiX, Raydium); display only. */
+  platform: string | null;
+  baseVault: string;
+  quoteVault: string;
+  /** PoolState.creator: the creator fee vault is PDA [creator, quoteMint]. */
+  creator: string;
+  /** PoolState.token_program_flag: bit 0 = base is Token-2022, bit 1 = quote is Token-2022. */
+  tokenProgramFlag: number;
+  /** 0 funding (tradable), 1 curve complete (waiting for migration), 2 migrated (trade on CPMM). */
+  status: number;
+  /** Where the coin graduates: 1 = Raydium CPMM (supported), 0 = Raydium AMM v4 (not built by core). */
+  migrateType: number;
+  virtualBase: string;
+  virtualQuote: string;
+  /** Base sold so far (grows on buys). */
+  realBase: string;
+  /** Quote raised so far, net of fees. */
+  realQuote: string;
+  /** The curve completes when realBase reaches this (bonding progress = realBase / totalBaseSell). */
+  totalBaseSell: string;
+  /** Graduation fund-raising target. */
+  totalQuoteFundRaising: string;
+  /** GlobalConfig.curve_type (only 0, constant product, exists on mainnet). */
+  curveType: number;
+  /** GlobalConfig.trade_fee_rate, PlatformConfig.fee_rate and PlatformConfig.creator_fee_rate (ppm). */
+  protocolFeeRate: string;
+  platformFeeRate: string;
+  creatorFeeRate: string;
+  /** Token-2022 transfer fees of the coin and the quote; null when the mint has none. */
+  baseTransferFee: TransferFeeInfo | null;
+  quoteTransferFee: TransferFeeInfo | null;
+  /** Epoch the transfer fees were evaluated for (slot / 432,000); use the live Clock when it moved on. */
+  epoch: string;
+  /**
+   * The CPMM pool the coin graduates into: PDA ["pool", PlatformConfig.cpswap_config, token0, token1] from the
+   * LIVE PlatformConfig (core launchLabGraduationPoolContext). null until the PlatformConfig was read.
+   */
+  graduationPool: string | null;
+  /** PlatformConfig.cpswap_config and platform_cp_creator (migration snipes are armed against them). */
+  cpswapConfig: string | null;
+  platformCpCreator: string | null;
+}
+
+/**
+ * Raydium CPMM pool trade inputs (graduated LaunchLab coins): maps onto core `CpmmPoolKeys` / `CpmmPoolState`,
+ * `cpmmFeeRates` and quoteCpmmSwapBaseInput / buildCpmmSwapInstructions. `token0Reserve` / `token1Reserve` are
+ * the vault balances NET of the protocol, fund and creator fees the pool still owes (what the swap math prices
+ * with): pass them as `vault0Amount` / `vault1Amount` with zero fees owed.
+ */
+export interface CpmmTradeContext extends TradeContextBase {
+  venue: "cpmm";
+  pool: string;
+  ammConfig: string;
+  /** PoolState.pool_creator (informational: no swap account derives from it). */
+  poolCreator: string;
+  token0Mint: string;
+  token1Mint: string;
+  token0Vault: string;
+  token1Vault: string;
+  token0Program: string;
+  token1Program: string;
+  /** Observation PDA ["observation", pool]. */
+  observation: string;
+  lpMint: string;
+  /** Bit set = disabled: 1 deposit, 2 withdraw, 4 swap. */
+  status: number;
+  /** Swaps fail before this unix time. */
+  openTime: string;
+  /** 0 both tokens (creator fee on the input), 1 only token0, 2 only token1. */
+  creatorFeeOn: number;
+  enableCreatorFee: boolean;
+  token0Reserve: string;
+  token1Reserve: string;
+  /** AmmConfig rates (ppm). creatorFeeRate applies only when enableCreatorFee (core cpmmFeeRates). */
+  tradeFeeRate: string;
+  protocolFeeRate: string;
+  fundFeeRate: string;
+  creatorFeeRate: string;
+  baseTransferFee: TransferFeeInfo | null;
+  quoteTransferFee: TransferFeeInfo | null;
+  epoch: string;
+  /** The LaunchLab pool the coin graduated from, and its launchpad label. */
+  launchLabPool: string | null;
+  platform: string | null;
+}
+
+export type TradeContext = CurveTradeContext | PoolTradeContext | LaunchLabTradeContext | CpmmTradeContext;

@@ -227,6 +227,7 @@ export default function PortfolioPage() {
   const activeEmpty =
     open.length === 0 && dust > 0 && !showHidden ? (
       <EmptyState
+        className="text-balance"
         title="Only dust positions"
         body={`${fmtCount(dust)} position${dust === 1 ? " is" : "s are"} worth under ${DUST_SOL} SOL and hidden.`}
         action={
@@ -236,15 +237,16 @@ export default function PortfolioPage() {
         }
       />
     ) : actionable ? (
-      <EmptyState title="No open positions" body="Buy from Pulse, or press / to search." action={openPulse} />
+      <EmptyState className="text-balance" title="No open positions" body="Buy from Pulse, or press / to search." action={openPulse} />
     ) : (
-      <EmptyState title="No open positions" body="This wallet holds nothing in the live set right now." />
+      <EmptyState className="text-balance" title="No open positions" body="This wallet holds nothing in the live set right now." />
     );
 
   let panel: ReactNode;
   if (noWallet) {
     panel = (
       <EmptyState
+        className="text-balance"
         icon={<Wallet />}
         title="No trading wallet yet"
         body="Set one up to trade, or search any wallet above to view it."
@@ -256,15 +258,15 @@ export default function PortfolioPage() {
       />
     );
   } else if (!paramValid) {
-    panel = <EmptyState title="Not a Solana address" body="Paste a full base58 wallet address into the search." />;
+    panel = <EmptyState className="text-balance" title="Not a Solana address" body="Paste a full base58 wallet address into the search." />;
   } else if (remoteFailed) {
     panel = <PanelError what="this wallet" failures={remote.failures} onRetry={remote.retry} />;
   } else if (remoteMissing) {
-    panel = <EmptyState title="No data for this wallet" body="It has no trades in the live set." />;
+    panel = <EmptyState className="text-balance" title="No data for this wallet" body="It has no trades in the live set." />;
   } else if (currentTab === "active") {
     panel = mobile ? (
       loading ? (
-        <EmptyState title="Loading positions…" />
+        <EmptyState className="text-balance" title="Loading positions…" />
       ) : (
         <PositionsList positions={open} empty={activeEmpty} />
       )
@@ -281,7 +283,9 @@ export default function PortfolioPage() {
       />
     );
   } else if (currentTab === "history") {
-    const historyEmpty = <EmptyState title="No closed positions" body="A position moves here when you sell all of it." />;
+    const historyEmpty = (
+      <EmptyState className="text-balance" title="No closed positions" body="A position moves here when you sell all of it." />
+    );
     if (historyView === "calendar") {
       panel = <HistoryCalendar points={calendar.data} loading={calendar.loading} failures={calendar.failures} onRetry={calendar.retry} />;
     } else {
@@ -301,14 +305,25 @@ export default function PortfolioPage() {
       );
     }
   } else if (currentTab === "activity") {
-    const activityEmpty = <EmptyState title="No activity yet" body="Buys, sells, deposits and withdrawals show up here as they land." />;
+    const activityEmpty = (
+      <EmptyState
+        className="text-balance"
+        title="No activity yet"
+        body="Buys, sells, deposits and withdrawals show up here as they land."
+      />
+    );
     panel = mobile ? (
       <ActivityList items={activity} empty={activityEmpty} />
     ) : (
       <ActivityTable items={activity} loading={loading} empty={activityEmpty} className="flex-1" />
     );
   } else {
-    panel = <WalletsTable mobile={mobile} empty={<EmptyState title="No trading wallets" body="Create one to start trading." />} />;
+    panel = (
+      <WalletsTable
+        mobile={mobile}
+        empty={<EmptyState className="text-balance" title="No trading wallets" body="Create one to start trading." />}
+      />
+    );
   }
 
   const controls = (
@@ -366,7 +381,16 @@ export default function PortfolioPage() {
     <div className="h-full overflow-y-auto bg-bg">
       <div className={cn("flex flex-col gap-px bg-hairline", !mobile && "min-h-full")}>
         {banner}
-        <HeaderStrip status={status} summary={summary} range={range} onRange={setRange} onSearch={openWallet} mobile={mobile} />
+        <HeaderStrip
+          status={status}
+          summary={summary}
+          range={range}
+          onRange={setRange}
+          onSearch={openWallet}
+          mobile={mobile}
+          loading={loading}
+          unavailable={noWallet ? "No trading wallet" : !paramValid || remoteMissing ? "No data" : remoteFailed ? "Unavailable" : null}
+        />
         {showCharts &&
           (mobile ? (
             <PnlChart

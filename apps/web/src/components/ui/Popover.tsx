@@ -119,7 +119,7 @@ export function MenuItem({
       disabled={disabled}
       onClick={onSelect}
       className={cn(
-        "focus-inset flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-data transition-colors hover:bg-surface-3 disabled:text-fg-4",
+        "focus-inset flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-data transition-colors hover:bg-surface-3 focus-visible:bg-surface-3 active:bg-surface-3-hover disabled:bg-transparent disabled:text-fg-4",
         danger ? "text-sell" : "text-fg-1",
         className,
       )}

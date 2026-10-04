@@ -374,18 +374,20 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
         onEnter={fire}
         ariaLabel="Buy amount in SOL"
         right={
-          <>
-            Bal <span className="zf-num text-fg-2">{fmtSol(available)}</span> SOL ·
-            <button
-              type="button"
-              disabled={available === null}
-              onClick={() => available !== null && ui.setBuySol(maxBuySol(available, exec, firstBuy))}
-              className="font-medium text-fg-1 hover:underline"
-              title="Leaves the reserve for fees, tip and rent"
-            >
-              Max
-            </button>
-          </>
+          // No balance reported yet (no wallet, or the feed hasn't sent it): show nothing rather than "Bal – SOL".
+          available === null ? undefined : (
+            <>
+              Bal <span className="zf-num text-fg-2">{fmtSol(available)}</span> SOL ·
+              <button
+                type="button"
+                onClick={() => ui.setBuySol(maxBuySol(available, exec, firstBuy))}
+                className="rounded-xs font-medium text-fg-1 hover:underline"
+                title="Leaves the reserve for fees, tip and rent"
+              >
+                Max
+              </button>
+            </>
+          )
         }
       />
     ) : (

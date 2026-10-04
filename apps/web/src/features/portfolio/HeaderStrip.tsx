@@ -70,27 +70,38 @@ export function WalletSearch({ onSubmit, className }: { onSubmit: (address: stri
   );
 }
 
-/** One stat: a micro label (with its definition) over a 13/600 value; the value keeps a min width in ch. */
+/** Skeleton for a value that is still loading (DESIGN.md 4.18): an 8 px surface-3 bar, no shimmer. */
+function ValueSkeleton({ w }: { w: string }) {
+  return <span aria-hidden="true" className={cn("mb-1.5 block h-2 rounded-xs bg-surface-3", w)} />;
+}
+
+/**
+ * One stat: a micro label (with its definition) over a 13/600 value. Every cell, the balance
+ * included, puts its value on a 32 px line aligned to the bottom, so labels share one top line
+ * and values share one baseline across the strip (Fey's stats row). The value keeps a min width in ch.
+ */
 function Stat({
   label,
   def,
   children,
   minCh,
+  loading,
   className,
 }: {
   label: string;
   def: string;
   children: ReactNode;
   minCh: number;
+  loading?: boolean;
   className?: string;
 }) {
   return (
-    <div className={cn("flex min-w-0 flex-col justify-center gap-0.5 px-3", className)}>
+    <div className={cn("flex min-w-0 flex-col justify-center px-3", className)}>
       <DefLabel label={label} className="self-start text-micro font-medium text-fg-3">
         {def}
       </DefLabel>
-      <span className="truncate text-body font-semibold text-fg-1" style={{ minWidth: `${minCh}ch` }}>
-        {children}
+      <span className="flex h-8 items-end pb-[3px]" style={{ minWidth: `${minCh}ch` }}>
+        {loading ? <ValueSkeleton w="w-14" /> : <span className="truncate text-body font-semibold text-fg-1">{children}</span>}
       </span>
     </div>
   );
@@ -103,6 +114,13 @@ export interface HeaderStripProps {
   onRange: (range: PnlRange) => void;
   onSearch: (address: string) => void;
   mobile: boolean;
+  /** The wallet's numbers are on their way: skeleton bars in place of the values. */
+  loading?: boolean;
+  /**
+   * No wallet to show ("No wallet", "Unavailable"): the balance cell says so in text-3 and the
+   * other stats drop out, instead of a row of dashes.
+   */
+  unavailable?: string | null;
 }
 
 /*
@@ -112,7 +130,7 @@ export interface HeaderStripProps {
  * Balance, period toggle and today's PnL after Binance assets: https://mobbin.com/screens/5acd0f5e-9019-4e1f-95e1-1446bbccd036
  * Dotted "Unrealized return" labels under the balance after Kraken: https://mobbin.com/screens/96301422-fcd8-40f6-899d-7aab6d69260f
  */
-export function HeaderStrip({ status, summary, range, onRange, onSearch, mobile }: HeaderStripProps) {
+export function HeaderStrip({ status, summary, range, onRange, onSearch, mobile, loading = false, unavailable = null }: HeaderStripProps) {
   const s = summary;
   const total = status && s ? status.solBalance + s.positionsSol : null;
   const available = status ? Math.max(0, status.solBalance - status.reservedSol) : null;
@@ -120,12 +138,20 @@ export function HeaderStrip({ status, summary, range, onRange, onSearch, mobile 
   const winRate = s && s.closed > 0 ? (s.wins / s.closed) * 100 : null;
 
   const balance = (
-    <div className={cn("flex min-w-0 flex-col justify-center gap-0.5", mobile ? "px-3 pt-3 pb-2" : "px-3")}>
+    <div className={cn("flex min-w-0 flex-col justify-center", mobile ? "px-3 pt-3 pb-2" : "px-3")}>
       <DefLabel label="Balance" className="self-start text-micro font-medium text-fg-3">
         SOL in the wallet plus the live value of every open position. SOL reserved by armed orders is included.
       </DefLabel>
-      <span className="truncate text-display-1 font-semibold text-fg-1" style={{ minWidth: "9ch" }}>
-        {total === null ? <span className="text-fg-4">–</span> : <Money sol={total} />}
+      <span className="flex h-8 items-end" style={{ minWidth: "9ch" }}>
+        {unavailable ? (
+          <span className="pb-[3px] text-body text-fg-3">{unavailable}</span>
+        ) : total === null || loading ? (
+          <ValueSkeleton w="w-28" />
+        ) : (
+          <span className="truncate text-display-1 font-semibold text-fg-1">
+            <Money sol={total} />
+          </span>
+        )}
       </span>
     </div>
   );
@@ -135,19 +161,31 @@ export function HeaderStrip({ status, summary, range, onRange, onSearch, mobile 
       <Stat
         label="Available"
         minCh={10}
+        loading={loading || available === null}
         def="SOL you can spend now: the balance minus what armed orders reserve for their pre-signed buys, fees and tips."
       >
         <Money sol={available} quote="SOL" />
       </Stat>
-      <Stat label="Unrealized" minCh={10} def="PnL of open positions at the live price, against what you paid including fees.">
+      <Stat
+        label="Unrealized"
+        minCh={10}
+        loading={loading || !s}
+        def="PnL of open positions at the live price, against what you paid including fees."
+      >
         {s ? <Money sol={s.unrealizedSol} signed /> : <Num value={null} kind="sol" />}
       </Stat>
-      <Stat label={`Realized ${RANGE_LABEL[range]}`} minCh={10} def={`PnL locked in by sells of positions traded ${words}.`}>
+      <Stat
+        label={`Realized ${RANGE_LABEL[range]}`}
+        minCh={10}
+        loading={loading || !s}
+        def={`PnL locked in by sells of positions traded ${words}.`}
+      >
         {s ? <Money sol={s.realizedSol} signed /> : <Num value={null} kind="sol" />}
       </Stat>
       <Stat
         label={`Win rate ${RANGE_LABEL[range]}`}
         minCh={6}
+        loading={loading || !s}
         def={
           s && s.closed > 0
             ? `Closed positions ${words} that ended in profit: ${fmtCount(s.wins)} of ${fmtCount(s.closed)}. Open positions don't count.`
@@ -163,7 +201,9 @@ export function HeaderStrip({ status, summary, range, onRange, onSearch, mobile 
     return (
       <section aria-label="Balance" className="flex flex-col bg-surface-1">
         {balance}
-        <div className="grid grid-cols-2 gap-px border-y border-hairline bg-hairline [&>*]:h-12 [&>*]:bg-surface-1">{stats}</div>
+        {!unavailable && (
+          <div className="grid grid-cols-2 gap-px border-y border-hairline bg-hairline [&>*]:h-14 [&>*]:bg-surface-1">{stats}</div>
+        )}
         <div className="flex flex-col gap-2 p-3">
           <Segmented<PnlRange> value={range} onChange={onRange} options={RANGE_OPTIONS} label="PnL range" className="h-11 w-full" />
           <WalletSearch onSubmit={onSearch} />
@@ -176,7 +216,7 @@ export function HeaderStrip({ status, summary, range, onRange, onSearch, mobile 
     <section aria-label="Balance" className="flex min-h-16 flex-wrap items-stretch bg-surface-1 py-2 lg:h-16 lg:flex-nowrap lg:py-0">
       <div className="flex min-w-0 items-stretch divide-x divide-hairline">
         {balance}
-        {stats}
+        {!unavailable && stats}
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2 px-3">
         <Segmented<PnlRange> value={range} onChange={onRange} options={RANGE_OPTIONS} label="PnL range" />
