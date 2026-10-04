@@ -95,7 +95,7 @@ function TradeToastBody({ trade, onDismiss }: { trade: ClientTrade; onDismiss: (
             {fmtMs(receipt.latency.landedMs)}
             {receipt.latency.slot !== null && ` · slot ${fmtInt(receipt.latency.slot)}`}
             {receipt.simulated ? " · dry run, nothing sent" : trade.landing && ` · ${trade.landing}`}
-            {receipt.route && receipt.route.length > 0 && ` · via ${receipt.route.join(" → ")}`}
+            {receipt.route && receipt.route.length > 0 && ` · via ${receipt.route.join(" > ")}`}
           </span>
         )}
         {trade.status === "failed" && (

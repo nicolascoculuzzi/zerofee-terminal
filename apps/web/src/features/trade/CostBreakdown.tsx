@@ -154,7 +154,7 @@ export function CostBreakdown({
               tip={`No pump.fun curve or PumpSwap pool to build on (${route.reason}), so Jupiter routes this trade, chosen when you trade. Venue fees along the route are inside its quote; Jupiter adds no fee and neither does zerofee.`}
             >
               <span className="block max-w-44 truncate text-fg-1" title={route.labels.join(" → ")}>
-                {route.labels.length > 0 ? route.labels.join(" → ") : "Best route at trade time"}
+                {route.labels.length > 0 ? route.labels.join(" > ") : "Best route at trade time"}
               </span>
             </Line>
           )}
