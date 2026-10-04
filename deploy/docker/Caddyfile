@@ -35,14 +35,17 @@
 #     hash. Never add 'unsafe-inline' to script-src.
 #   - connect-src: our API and WebSocket, plus CSP_CONNECT_EXTRA (by default Helius Sender's browser
 #     endpoint and the public RPC used for the independent reserve check).
-#   - img-src https: token images come from arbitrary hosts named in token metadata.
+#   - img-src 'self' data: blob:: token images come from our own image proxy (GET /api/img, which
+#     fetches, checks and re-encodes them server-side) and platform logos are bundled, so no third-party
+#     image host is ever contacted. data: carries the Pulse card icon masks, blob: chart and share-card
+#     previews. Never add https: back.
 #   - frame-src 'none' and frame-ancestors 'none' until the signer moves to its own origin (below).
 # The Report-Only header previews Trusted Types: violations show in the browser console without
 # breaking anything. Promote it into the enforced policy once the console is clean.
 (app_headers) {
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' wss://{$APP_DOMAIN} {$CSP_CONNECT_EXTRA}; worker-src 'self'; manifest-src 'self'; media-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://{$APP_DOMAIN} {$CSP_CONNECT_EXTRA}; worker-src 'self'; manifest-src 'self'; media-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
 		Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
