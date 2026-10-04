@@ -163,6 +163,34 @@ describe("price and market-cap alerts", () => {
     expect(out).toHaveLength(1);
   });
 
+  test("an unknown value (null: no SOL value for the quote) neither fires nor re-arms; 0 is never read as a value", async () => {
+    const uid = await newUser("eng-null");
+    const below = await store.notify.createAlert(
+      uid,
+      alert({
+        type: "market_cap",
+        params: { mint: MINT, currency: "sol", direction: "below", value: 5_000 },
+        repeat: "rearm",
+        cooldownSec: 0,
+      }),
+      clock.now(),
+      10,
+    );
+    const q = { current: quote({ priceSol: null, mcSol: null, priceUsd: null, mcUsd: null }) as TokenQuote | null };
+    const { engine, out } = engineWith(q);
+    engine.upsert(below);
+    engine.sweep();
+    expect(out).toHaveLength(0); // a null MC is not "below 5K"
+    q.current = quote({ mcSol: 4_000 });
+    engine.onTokensChanged([MINT]);
+    expect(out).toHaveLength(1);
+    q.current = quote({ mcSol: null }); // unknown again: does not count as moving back above the threshold
+    engine.onTokensChanged([MINT]);
+    q.current = quote({ mcSol: 4_100 });
+    engine.onTokensChanged([MINT]);
+    expect(out).toHaveLength(1);
+  });
+
   test("hostile symbols are sanitized in alert titles", async () => {
     const uid = await newUser("eng-4");
     const rule = await store.notify.createAlert(uid, alert(), clock.now(), 10);
@@ -197,6 +225,7 @@ describe("hooks: wallet tracker and order fills", () => {
     engine.onWalletActivity({ ...ev, signature: "sig-3", kind: "sell" }); // sells not enabled
     engine.onWalletActivity({ ...ev, signature: "sig-4", kind: "create", amountSol: 0 });
     engine.onWalletActivity({ ...ev, address: addr("stranger"), signature: "sig-5" });
+    engine.onWalletActivity({ ...ev, signature: "sig-6", amountSol: null }); // size unknown (exotic quote): fails minSol
     await Bun.sleep(30);
     expect(out.map((n) => n.title)).toEqual(["🐳 Whale bought 2.50 SOL of BONK", "🐳 Whale launched BONK"]);
     expect(out[0]).toMatchObject({ source: "wallet", channels: ["discord", "push"], priority: "normal", alertId: null });

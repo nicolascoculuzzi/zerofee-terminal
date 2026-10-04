@@ -8,6 +8,14 @@
  *    current SOL/USD rate), USD values, percentages in 0-100.
  *  - Times are epoch milliseconds.
  *  - `null` means "not known / not computed by this deployment", never zero.
+ *  - SOL-denominated values (`*Sol`, `liquidity`, `volume*`) are null when the token's quote has no known SOL
+ *    value right now: an exotic quote mint (anything but SOL / wSOL and USDC), or a USDC pair before the
+ *    server has a SOL/USD rate. The quote-unit values (`priceQuote`, `mcQuote`) stay known (they are null only
+ *    until the token has reserves and its quote mint's decimals are known).
+ *
+ * Filtering on a nullable metric (Pulse filters, copy-trade filters, alerts): null is "unknown", not 0.
+ * A token whose value is null does not satisfy a min or a max on that metric (it is excluded while the
+ * filter is active), and an alert on it neither fires nor re-arms until the value is known again.
  */
 
 /** Where the token trades / launched. More launchpads (LaunchLab, Meteora DBC) arrive in later phases. */
@@ -53,23 +61,33 @@ export interface TokenSummary {
   /** Live creator (`bonding_curve.creator` / `pool.coin_creator`). */
   creator: string | null;
   /**
-   * Price in SOL per whole token. For non-SOL quotes this is converted (USDC via SOL/USD); it is 0 when
-   * the quote's SOL value is unknown (exotic quote mints) - use priceQuote / mcQuote then.
+   * Price in SOL per whole token. For non-SOL quotes this is converted (USDC via SOL/USD). null when the
+   * price or the quote's SOL value is unknown (exotic quote mints; USDC before a SOL/USD rate) - use
+   * priceQuote / mcQuote then. Never 0 for "unknown".
    */
-  priceSol: number;
+  priceSol: number | null;
   priceUsd: number | null;
-  mcSol: number;
+  /**
+   * priceSol x supply (the real mint supply: 2B for mayhem coins). A standard SOL curve starts at ~28 SOL
+   * (30 virtual SOL / 1.073B virtual tokens x 1B), a mayhem curve at ~56 SOL, but mayhem curves can then sit
+   * far below either: the Mayhem agent's trades rewrite the curve's virtual SOL reserves (virtual minus real SOL
+   * seen anywhere from 0.009 to 44.5 SOL instead of 30), so caps of 0.01-1 SOL are real there, not a feed error.
+   */
+  mcSol: number | null;
   mcUsd: number | null;
-  /** Price and market cap in quote-mint UI units (always known). */
-  priceQuote: number;
-  mcQuote: number;
+  /**
+   * Price and market cap in quote-mint UI units: known whatever the quote's SOL value, null only while the
+   * token has no reserves or its quote mint's decimals are still being looked up.
+   */
+  priceQuote: number | null;
+  mcQuote: number | null;
   /** Quote-side liquidity in SOL: real quote reserves on the curve, the quote vault on PumpSwap. */
-  liquidity: number;
+  liquidity: number | null;
   liquidityUsd: number | null;
   /** Rolling volume in SOL. */
-  volume5m: number;
-  volume1h: number;
-  volume24h: number;
+  volume5m: number | null;
+  volume1h: number | null;
+  volume24h: number | null;
   /** Rolling 24 h trade counts. */
   txns: number;
   buys: number;
@@ -141,7 +159,8 @@ export interface TokenSummary {
   dexPaid: boolean | null;
   /** Payment time of the approved token profile (ms), when `dexPaid` is true. */
   dexPaidAt: number | null;
-  athMcSol: number;
+  /** Highest mcSol seen while the server watched the token; null while no SOL value was ever known. */
+  athMcSol: number | null;
   isMayhem: boolean;
   lastTradeAt: number | null;
   /** Last time any field changed. */
@@ -181,13 +200,13 @@ export interface Trade {
   quoteAmount: string;
   /** Token amount in base units. */
   tokenAmount: string;
-  /** Quote amount in SOL (display). */
-  amountSol: number;
+  /** Quote amount in SOL (display); null when the quote's SOL value is unknown (see the header note). */
+  amountSol: number | null;
   amountUsd: number | null;
-  /** Post-trade price in SOL per whole token. */
-  priceSol: number;
-  /** Post-trade market cap in SOL. */
-  mcSol: number;
+  /** Post-trade price in SOL per whole token; null when unknown. */
+  priceSol: number | null;
+  /** Post-trade market cap in SOL (price x the token's supply); null when unknown. */
+  mcSol: number | null;
   /** Block time (event timestamp, 1 s resolution) in ms. */
   blockTime: number;
   /** When the server received it (ms). receivedAt - blockTime = detection latency (+/- 1 s). */

@@ -224,7 +224,7 @@ describe("end to end: a market-cap alert fires from live market state", () => {
     let slot = 50_000_000;
     source.emit(synthTx(++slot, [curve.create(nowSec()), curve.buy(dev, 1_000_000_000n, nowSec())]));
     const start = await waitFor(() => env.app.market.summary(mint));
-    const threshold = start.mcSol * 1.5;
+    const threshold = (start.mcSol ?? 0) * 1.5;
 
     const created = await carol.json<Alert>("POST", "/api/alerts", {
       type: "market_cap",

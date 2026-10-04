@@ -18,15 +18,19 @@ import {
   type AmmSwapEvent,
   coinCreatorVaultAuthorityPda,
   creatorVaultPda,
+  curveMintSupply,
   DEFAULT_PUBKEY,
   type DecodedEvent,
   INCINERATOR,
+  MAYHEM_FEE_RECIPIENTS,
+  ONE_BILLION_SUPPLY,
   type OnchainTokenMetadata,
   PUMP_TOKEN_DECIMALS,
   type PumpCompleteEvent,
   type PumpCreateEvent,
   type PumpMigrationEvent,
   type PumpTradeEvent,
+  USDC_MINT,
 } from "@zerofee/core";
 import type { Candle, Timeframe, TokenSocials, TokenSummary, Trade, TradeContext, TradeTag } from "@zerofee/protocol";
 import { AccountResolver, type CurveResolved, type MintResolved, type PoolInfo } from "../accounts/resolver";
@@ -101,7 +105,8 @@ export interface FeedItem {
   receivedAt: number;
   latencyMs: number;
   side?: "buy" | "sell";
-  amountSol?: number;
+  /** null when the trade's quote has no known SOL value. */
+  amountSol?: number | null;
   venue?: "pump" | "pumpswap";
 }
 
@@ -303,6 +308,39 @@ export class MarketState {
     if (this.slotTxs.size > 600) this.slotTxs.delete(this.slotTxs.keys().next().value as number);
   }
 
+  /**
+   * Sets the record's quote (normalized mint, decimals, token program). Decimals / program come from the
+   * caller when it knows them, else from the known quotes or an earlier lookup, else they are requested.
+   */
+  private setQuote(rec: TokenRecord, mint: string, decimals: number | null = null, tokenProgram: string | null = null): void {
+    const quoteMint = normalizeQuoteMint(mint);
+    const known = this.quoteMintInfo.get(quoteMint);
+    const dec = decimals ?? knownQuoteDecimals(quoteMint) ?? known?.decimals ?? null;
+    const program = tokenProgram ?? knownQuoteTokenProgram(quoteMint) ?? known?.tokenProgram ?? null;
+    if (
+      rec.quoteMint === quoteMint &&
+      (dec === null || rec.quoteDecimals === dec) &&
+      (program === null || rec.quoteTokenProgram === program)
+    )
+      return;
+    rec.quoteMint = quoteMint;
+    if (dec !== null) rec.quoteDecimals = dec;
+    rec.quoteTokenProgram = program;
+    if (dec === null || program === null) this.requestQuoteMint(quoteMint);
+    this.touch(rec);
+    this.changes.tradeCtx.add(rec.mint);
+  }
+
+  /**
+   * A pool that prices the token (canonical after migration, or a pool-only token's first pool) also sets its
+   * quote: a token first seen in a third-party pool (say GMk6/PUMP) must not keep that quote once its
+   * canonical wSOL pool takes over, or the wSOL vault is read in PUMP units with no SOL value (tx 4LYf7b9i...).
+   */
+  private alignQuoteWithPool(rec: TokenRecord, info: PoolInfo): void {
+    if (rec.pool !== info.pool || !(rec.migrated || !rec.curve)) return;
+    this.setQuote(rec, info.quoteMint, info.quoteDecimals, info.quoteTokenProgram);
+  }
+
   /** Asks the resolver for an unfamiliar quote mint's decimals / token program (once). */
   private requestQuoteMint(quoteMint: string): void {
     if (knownQuoteDecimals(quoteMint) !== null || this.quoteRequests.has(quoteMint)) return;
@@ -361,7 +399,12 @@ export class MarketState {
       quoteTokenProgram: knownQuoteTokenProgram(quoteMint),
       tokenProgram: ev.tokenProgram,
       decimals: PUMP_TOKEN_DECIMALS,
-      supply: ev.tokenTotalSupply > 0n ? ev.tokenTotalSupply : rec.supply,
+      // token_total_supply is the curve's 1e15 even for a mayhem coin, whose mint holds 2e15
+      supply:
+        rec.supplyExact || ev.tokenTotalSupply <= 0n
+          ? rec.supply
+          : curveMintSupply({ tokenTotalSupply: ev.tokenTotalSupply, isMayhemMode: ev.isMayhemMode }),
+      curveTokenTotalSupply: ev.tokenTotalSupply > 0n ? ev.tokenTotalSupply : rec.curveTokenTotalSupply,
       createdAt: ts,
       createdSlot: ctx.tx.slot,
       createSignature: ctx.tx.signature,
@@ -479,21 +522,13 @@ export class MarketState {
     const rec = this.getOrCreate(ev.mint, {
       launchpad: "pump",
       isMayhem: ev.mayhemMode,
-      supply: ev.mayhemMode ? 2_000_000_000_000_000n : 1_000_000_000_000_000n,
+      supply: curveMintSupply({ tokenTotalSupply: ONE_BILLION_SUPPLY, isMayhemMode: ev.mayhemMode }),
     });
-    if (rec.quoteMint !== quoteMint) {
-      rec.quoteMint = quoteMint;
-      rec.quoteDecimals = knownQuoteDecimals(quoteMint) ?? rec.quoteDecimals;
-      rec.quoteTokenProgram = knownQuoteTokenProgram(quoteMint);
-      const known = this.quoteMintInfo.get(quoteMint);
-      if (known) {
-        rec.quoteDecimals = known.decimals;
-        rec.quoteTokenProgram = known.tokenProgram;
-      } else this.requestQuoteMint(quoteMint);
-    }
+    if (rec.quoteMint !== quoteMint) this.setQuote(rec, quoteMint);
     if (ev.mayhemMode && !rec.isMayhem) {
       rec.isMayhem = true;
-      if (rec.createdAt === null) rec.supply = 2_000_000_000_000_000n;
+      if (!rec.supplyExact)
+        rec.supply = curveMintSupply({ tokenTotalSupply: rec.curveTokenTotalSupply ?? ONE_BILLION_SUPPLY, isMayhemMode: true });
     }
     if (rec.createdAt === null) this.requestBootstrap(rec, true);
     const latest = !rec.curveKey || cmpKey(ctx.key, rec.curveKey) >= 0;
@@ -516,6 +551,8 @@ export class MarketState {
       quoteAmount,
       tokenAmount: ev.tokenAmount,
       tsMs: ts,
+      quoteMint: rec.quoteMint,
+      quoteDecimals: rec.quoteDecimals,
       priceQuote: after.vToken > 0n ? ui(after.vQuote, rec.quoteDecimals) / ui(after.vToken, rec.decimals) : 0,
       curveAfter: after,
       poolAfter: null,
@@ -547,6 +584,9 @@ export class MarketState {
     rec.migrated = true;
     rec.migratedAt = ts;
     rec.pool = ev.pool;
+    // The canonical pool quotes in the curve's quote. SOL curves store the default pubkey, which is also
+    // what an event without the field decodes to: then the curve's own trades already set the quote.
+    if (ev.quoteMint !== DEFAULT_PUBKEY || !rec.curve) this.setQuote(rec, quoteMint);
     rec.holders?.exclude(ev.pool);
     if (!rec.poolState || !rec.poolKey || cmpKey(ctx.key, rec.poolKey) >= 0) {
       rec.poolState = { base: ev.mintAmount, quoteVault: ev.solAmount, virtualQuote: 0n };
@@ -594,6 +634,7 @@ export class MarketState {
     // tx); a pool someone else creates for the coin must not become its price source.
     const rec = this.tokens.get(ev.baseMint);
     if (rec && rec.pool === ev.pool) {
+      if (rec.migrated || !rec.curve) this.setQuote(rec, ev.quoteMint, ev.quoteMintDecimals, info.quoteTokenProgram);
       if (!rec.poolState || !rec.poolKey || cmpKey(ctx.key, rec.poolKey) >= 0) {
         rec.poolState = { base: ev.poolBaseAmount, quoteVault: ev.poolQuoteAmount, virtualQuote: 0n };
         rec.poolKey = ctx.key;
@@ -638,6 +679,7 @@ export class MarketState {
     if (rec && info.isCanonical) this.adoptCanonicalPool(rec, info);
     if (rec && rec.pool === info.pool) {
       if (info.coinCreator) this.setCreator(rec, info.coinCreator, "pool");
+      this.alignQuoteWithPool(rec, info);
       this.changes.tradeCtx.add(rec.mint);
     }
     if (!list) return;
@@ -658,11 +700,15 @@ export class MarketState {
    * the pump.fun curve, whatever its mint suffix. The migration time stays unknown unless we saw it.
    */
   private adoptCanonicalPool(rec: TokenRecord, info: PoolInfo): void {
-    if (rec.launchpad === "pump" && rec.pool === info.pool && rec.migrated) return;
+    if (rec.launchpad === "pump" && rec.pool === info.pool && rec.migrated) {
+      this.alignQuoteWithPool(rec, info);
+      return;
+    }
     rec.launchpad = "pump";
     rec.pool = info.pool;
     rec.migrated = true;
     rec.complete = true;
+    this.alignQuoteWithPool(rec, info);
     this.touch(rec);
   }
 
@@ -672,6 +718,9 @@ export class MarketState {
     const quoteMint = normalizeQuoteMint(info.quoteMint);
     const known = this.tokens.get(info.baseMint);
     if (known && info.isCanonical) this.adoptCanonicalPool(known, info);
+    // Mayhem pools pay the reserved (mayhem) fee recipients; their events' base_supply is a fixed 1e15
+    // basis while the mint holds ~2e15 (tx 4L4LjiEv...), so it must not replace the supply.
+    const mayhemPool = info.isMayhemMode === true || known?.isMayhem === true || MAYHEM_FEE_RECIPIENTS.includes(ev.protocolFeeRecipient);
     const rec =
       known ??
       this.getOrCreate(info.baseMint, {
@@ -685,12 +734,21 @@ export class MarketState {
         migrated: info.isCanonical === true,
         complete: info.isCanonical === true,
         pool: info.pool,
-        supply: info.baseSupply ? BigInt(info.baseSupply) : 1_000_000_000_000_000n,
+        isMayhem: mayhemPool,
+        // the pool registry's base supply comes from the mint account
+        supply: info.baseSupply
+          ? BigInt(info.baseSupply)
+          : curveMintSupply({ tokenTotalSupply: ONE_BILLION_SUPPLY, isMayhemMode: mayhemPool }),
+        supplyExact: !!info.baseSupply,
       });
     if (!known && rec.createdAt === null) this.requestBootstrap(rec, false);
     rec.pool ??= info.pool;
     if (info.isCanonical && rec.pool !== info.pool) rec.pool = info.pool;
-    if (ev.baseSupply > 0n) rec.supply = ev.baseSupply;
+    this.alignQuoteWithPool(rec, info);
+    if (ev.baseSupply > 0n && !mayhemPool) {
+      rec.supply = ev.baseSupply;
+      rec.supplyExact = true;
+    }
     const poolAfter: PoolReserves = isBuy
       ? {
           base: ev.poolBaseReserves - ev.baseAmount,
@@ -712,6 +770,7 @@ export class MarketState {
       this.changes.tradeCtx.add(rec.mint);
     }
     const eff = poolAfter.quoteVault + poolAfter.virtualQuote;
+    const poolQuoteDecimals = info.quoteDecimals ?? rec.quoteDecimals; // known: the pool passed ready()
     this.stats.poolTrades++;
     this.recordTrade(rec, ctx, {
       venue: "pumpswap",
@@ -720,10 +779,9 @@ export class MarketState {
       quoteAmount: ev.quoteAmount,
       tokenAmount: ev.baseAmount,
       tsMs: ts,
-      priceQuote:
-        poolAfter.base > 0n && eff > 0n
-          ? ui(eff, info.quoteDecimals ?? rec.quoteDecimals) / ui(poolAfter.base, info.baseDecimals ?? rec.decimals)
-          : 0,
+      quoteMint,
+      quoteDecimals: poolQuoteDecimals,
+      priceQuote: poolAfter.base > 0n && eff > 0n ? ui(eff, poolQuoteDecimals) / ui(poolAfter.base, info.baseDecimals ?? rec.decimals) : 0,
       curveAfter: null,
       poolAfter: primary ? poolAfter : null,
       latest,
@@ -741,6 +799,9 @@ export class MarketState {
       quoteAmount: bigint;
       tokenAmount: bigint;
       tsMs: number;
+      /** The venue's (normalized) quote and its decimals: what quoteAmount and priceQuote are in. */
+      quoteMint: string;
+      quoteDecimals: number;
       priceQuote: number;
       curveAfter: CurveReserves | null;
       poolAfter: PoolReserves | null;
@@ -748,11 +809,13 @@ export class MarketState {
     },
   ): void {
     const solUsd = this.deps.solUsd();
-    const rate = quoteSolRate(rec.quoteMint, solUsd);
-    const priceSol = rate !== null ? t.priceQuote * rate : 0;
+    // The venue's own quote: a third-party pool can quote the coin in something else than its curve does.
+    // null = no SOL value for that quote right now (exotic quote; USDC before a SOL/USD rate).
+    const rate = quoteSolRate(t.quoteMint, solUsd);
+    const priceSol = rate !== null && t.priceQuote > 0 ? t.priceQuote * rate : null;
     const supplyUi = ui(rec.supply, rec.decimals);
-    const amountSol = rate !== null ? ui(t.quoteAmount, rec.quoteDecimals) * rate : 0;
-    const mcSol = priceSol * supplyUi;
+    const amountSol = rate !== null ? ui(t.quoteAmount, t.quoteDecimals) * rate : null;
+    const mcSol = priceSol !== null ? priceSol * supplyUi : null;
 
     // holders + audit classification
     let holderDelta = 0n;
@@ -781,7 +844,8 @@ export class MarketState {
       quoteAmount: t.quoteAmount.toString(),
       tokenAmount: t.tokenAmount.toString(),
       amountSol,
-      amountUsd: solUsd && rate !== null ? amountSol * solUsd : null,
+      // a USD stable's amount is its USD value, with or without a SOL/USD rate
+      amountUsd: t.quoteMint === USDC_MINT ? ui(t.quoteAmount, t.quoteDecimals) : amountSol !== null && solUsd ? amountSol * solUsd : null,
       priceSol,
       mcSol,
       blockTime: t.tsMs,
@@ -792,12 +856,12 @@ export class MarketState {
       trade,
       key: ctx.key,
       tsMs: t.tsMs,
-      volumeSol: amountSol,
+      volumeSol: amountSol ?? 0,
       isBuy: t.isBuy,
       holderDelta,
       curveAfter: t.curveAfter,
       poolAfter: t.poolAfter,
-      priceSol,
+      priceSol: priceSol ?? 0,
       solUsd,
     };
     // keep the ring ordered by key (late events are inserted in place)
@@ -813,14 +877,14 @@ export class MarketState {
       this.stats.lateTrades++;
       this.changes.correction(rec.mint).upsert.push(trade);
     } else this.changes.pushTrade(trade);
-    rec.windows.add(t.tsMs, amountSol, t.isBuy);
-    if (priceSol > 0) {
-      for (const u of this.candles.addTrade(rec.mint, { tsMs: t.tsMs, price: priceSol, volume: amountSol, key: ctx.key, solUsd })) {
+    rec.windows.add(t.tsMs, entry.volumeSol, t.isBuy);
+    if (priceSol !== null) {
+      for (const u of this.candles.addTrade(rec.mint, { tsMs: t.tsMs, price: priceSol, volume: entry.volumeSol, key: ctx.key, solUsd })) {
         this.changes.candle(u);
         this.deps.storage?.candle(u.mint, u.tf, u.candle);
       }
     }
-    if (t.latest && mcSol > rec.athMcSol) rec.athMcSol = mcSol;
+    if (t.latest && mcSol !== null && mcSol > rec.athMcSol) rec.athMcSol = mcSol;
     if (rec.lastTradeAt === null || t.tsMs >= rec.lastTradeAt) rec.lastTradeAt = t.tsMs;
     if (rec.lastSlot === null || ctx.tx.slot > rec.lastSlot) rec.lastSlot = ctx.tx.slot;
 
@@ -1001,7 +1065,10 @@ export class MarketState {
     if (!rec) return;
     rec.tokenProgram = info.tokenProgram;
     rec.decimals = info.decimals;
-    if (info.supply > 0n) rec.supply = info.supply;
+    if (info.supply > 0n) {
+      rec.supply = info.supply;
+      rec.supplyExact = true;
+    }
     rec.dangers = info.dangers;
     if (info.metadata) this.applyOnchainMetadata(rec, info.metadata);
     this.touch(rec);
@@ -1022,7 +1089,11 @@ export class MarketState {
     rec.creatorFeeBps = r.curve.creatorFeeBps;
     rec.canEditCreatorFee = r.curve.canEditCreatorFee;
     rec.isMayhem = r.curve.isMayhemMode;
-    if (r.curve.tokenTotalSupply > 0n) rec.supply = r.curve.tokenTotalSupply;
+    if (r.curve.tokenTotalSupply > 0n) {
+      rec.curveTokenTotalSupply = r.curve.tokenTotalSupply;
+      // The mint account (often resolved in the same batch, just before) wins over the curve's figure.
+      if (!rec.supplyExact) rec.supply = curveMintSupply(r.curve);
+    }
     if (r.curve.complete && !rec.complete) rec.complete = true;
     if (!rec.creator) this.setCreator(rec, r.curve.creator, "curve");
     this.touch(rec);
@@ -1158,6 +1229,8 @@ export class MarketState {
 
   /** Restores a persisted record (startup). */
   restore(rec: TokenRecord): void {
+    // Records saved before supplyExact existed kept a mayhem coin's curve supply (1e15) as its supply.
+    if (rec.isMayhem && !rec.supplyExact && rec.supply === ONE_BILLION_SUPPLY) rec.supply = 2n * ONE_BILLION_SUPPLY;
     this.tokens.set(rec.mint, rec);
     if (rec.creator) this.setCreator(rec, rec.creator, rec.migrated ? "pool" : "curve");
   }

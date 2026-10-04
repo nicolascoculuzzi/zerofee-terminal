@@ -240,6 +240,18 @@ describe("fee-rate selection", () => {
     expect(mayhem.virtualTokenReserves - mayhem.realTokenReserves).toBe(279_900_000_000_000n);
     expect(mayhem.tokenTotalSupply).toBe(1_000_000_000_000_000n);
   });
+
+  test("curveMintSupply: the mint of a mayhem coin holds twice the curve's token_total_supply", async () => {
+    const { CURVE_MINT, MAYHEM_MINT } = await import("./fixtures");
+    const { bondingCurvePda, curveMintSupply, decodeMint } = await import("../src");
+    for (const m of [CURVE_MINT, MAYHEM_MINT]) {
+      const c = decodeBondingCurve(fixture(await bondingCurvePda(m)).data);
+      const mint = fixture(m);
+      expect(curveMintSupply(c)).toBe(decodeMint(mint.data, mint.owner).supply);
+    }
+    expect(curveMintSupply({ tokenTotalSupply: ONE_BILLION_SUPPLY, isMayhemMode: true })).toBe(2n * ONE_BILLION_SUPPLY);
+    expect(curveMintSupply({ tokenTotalSupply: ONE_BILLION_SUPPLY, isMayhemMode: false })).toBe(ONE_BILLION_SUPPLY);
+  });
 });
 
 describe("slippage helpers", () => {
