@@ -51,12 +51,22 @@ export function PanicDialog() {
         </div>
       }
     >
-      <p className="text-body text-fg-1">Every armed order is cancelled with its stored pre-signed cancel, and the keystore locks.</p>
-      <ul className="mt-3 flex flex-col gap-1 text-data text-fg-2">
-        <li>Their nonces advance, so the signed transactions can never land.</li>
-        <li>{fmtSol(reservedSol)} SOL reserved by those orders becomes spendable again.</li>
-        <li>To trade again, unlock and re-arm what you still want.</li>
-      </ul>
+      <p className="text-body text-fg-1">
+        Every armed order is cancelled with its stored pre-signed cancel. Their nonces advance, so the signed transactions can never land.
+      </p>
+      <dl className="mt-3 overflow-hidden rounded-md border border-hairline bg-surface-1">
+        {[
+          ["Armed orders", `${fmtCount(openCount)} cancelled`],
+          ["Reserved", `${fmtSol(reservedSol)} SOL spendable again`],
+          ["Keystore", "Locked"],
+        ].map(([label, value]) => (
+          <div key={label} className="flex h-8 items-center justify-between gap-4 border-hairline px-3 not-first:border-t">
+            <dt className="text-data text-fg-3">{label}</dt>
+            <dd className="zf-num text-data text-fg-1">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3 text-label text-fg-3">To trade again, unlock and re-arm what you still want.</p>
       {error && (
         <p role="alert" className="mt-3 text-label text-sell">
           {error}

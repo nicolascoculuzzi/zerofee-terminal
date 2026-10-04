@@ -10,9 +10,14 @@
 const PROXY_PATH = "/api/img";
 const SIZES = [32, 48, 64, 96, 128, 256] as const;
 
-/** Size bucket for a box of `cssPx`, at most 2x the display size (DESIGN.md 8: images). */
-export function proxySize(cssPx: number, dpr = 1): number {
-  const px = cssPx * Math.min(2, Math.max(1, dpr || 1));
+/**
+ * Size bucket for a box of `cssPx` (DESIGN.md 8: images): the smallest proxy size that covers the
+ * box at the screen's pixel ratio, with the ratio capped at 2 (images are at most 2x their display
+ * size, the proxy contract). `minDpr` floors the ratio for boxes that must stay sharp whatever the
+ * screen reports: the Pulse card tile passes 2, so its 54 px box asks for 128 even at 1x.
+ */
+export function proxySize(cssPx: number, dpr = 1, minDpr = 1): number {
+  const px = cssPx * Math.min(2, Math.max(1, minDpr, dpr || 1));
   for (const s of SIZES) if (s >= px) return s;
   return SIZES[SIZES.length - 1] as number;
 }
@@ -28,14 +33,15 @@ export function imageVersion(image: string): string {
 }
 
 /**
- * The <img src> for a token's image at a display size, or null (draw the monogram).
+ * The <img src> for a token's image at a display size (`dpr`, `minDpr`: as in proxySize), or null
+ * (draw the monogram).
  *  - an already proxied URL (TokenSummary.imageProxied, "/api/img?...") gets its size set;
  *  - a metadata URL (TokenSummary.image, http(s)) becomes the proxy URL for that mint;
  *  - anything else (data:, blob:, javascript:, other origins' paths) is never loaded.
  */
-export function tokenImageSrc(mint: string, image: string | null | undefined, cssPx: number, dpr = 1): string | null {
+export function tokenImageSrc(mint: string, image: string | null | undefined, cssPx: number, dpr = 1, minDpr = 1): string | null {
   if (!image || !mint) return null;
-  const s = proxySize(cssPx, dpr);
+  const s = proxySize(cssPx, dpr, minDpr);
   if (image.startsWith(`${PROXY_PATH}?`)) {
     const u = new URL(image, "http://self.invalid");
     if (u.pathname !== PROXY_PATH || u.searchParams.get("mint") !== mint) return null;

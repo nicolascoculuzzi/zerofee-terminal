@@ -87,6 +87,14 @@ export interface ModalProps {
   layer?: "modal" | "palette";
   /** Distance from the top: 10vh for dialogs, 12vh for the palette. */
   top?: "dialog" | "palette";
+  /** Leading mark in the header, vertically centred on the title block (a wallet or token logo). */
+  icon?: ReactNode;
+  /**
+   * "center" (default) for our own dialogs. "top-end" anchors the panel under the top-right corner, where a
+   * browser wallet's extension popup opens; used by the simulated wallet approval so it never covers the dialog
+   * that asked for it.
+   */
+  placement?: "center" | "top-end";
 }
 
 export function Modal({
@@ -103,6 +111,8 @@ export function Modal({
   label,
   layer = "modal",
   top = "dialog",
+  icon,
+  placement = "center",
 }: ModalProps) {
   const panel = useRef<HTMLDivElement>(null);
   useOverlayBehaviour(open, onClose, panel);
@@ -112,8 +122,10 @@ export function Modal({
     <LayerContext.Provider value={z}>
       <div
         className={cn(
-          "zf-in-fade fixed inset-0 flex items-start justify-center overflow-y-auto bg-scrim p-3 sm:p-6",
-          top === "palette" ? "pt-[12vh] sm:pt-[12vh]" : "pt-[8vh] sm:pt-[10vh]",
+          "zf-in-fade fixed inset-0 flex items-start overflow-y-auto bg-scrim p-3 sm:p-6",
+          placement === "top-end"
+            ? "justify-center pt-12 sm:justify-end sm:pt-12 sm:pr-3"
+            : cn("justify-center", top === "palette" ? "pt-[12vh] sm:pt-[12vh]" : "pt-[8vh] sm:pt-[10vh]"),
         )}
         style={{ zIndex: z }}
       >
@@ -132,6 +144,7 @@ export function Modal({
         >
           {!bare && (
             <div className={cn("flex shrink-0 items-center gap-3 border-b border-hairline pr-2 pl-4", description ? "h-15" : "h-11")}>
+              {icon}
               <div className="min-w-0 flex-1">
                 <div className="truncate text-heading font-semibold text-fg-1">{title}</div>
                 {description && <div className="truncate text-data text-fg-3">{description}</div>}

@@ -43,8 +43,11 @@ export interface TokenCardProps {
   socials: boolean;
   counters: boolean;
   miniChart: boolean;
+  /** Wide+ fees / net-buy track: on in the layout and some card in the column reports either value. */
   feesNetBuy: boolean;
   colored: boolean;
+  /** Comfortable density (80 px cards): sizes the avatar image request. */
+  comfortable: boolean;
   /** Keyboard cursor row. */
   cursor: boolean;
   /** The token last opened in the token page (Instant Trade target). */
@@ -68,7 +71,7 @@ const AVATAR_TRACK_NARROW = "[--zf-card-avatar:44px] in-data-[density=comfortabl
  * Pulse token card (DESIGN.md 4.4): 68 px compact / 80 px comfortable including the 1 px
  * divider. Three lines (identity; age, socials, counters; risk chips and flags), metrics on the
  * right, then the quick-buy pill. Narrow columns move MC and V into lines 1 and 2 and drop the
- * chip letters; wide+ adds a mini chart and fees / net buy. Hover and the keyboard cursor use
+ * risk icons; wide+ adds a mini chart and fees / net buy. Hover and the keyboard cursor use
  * surface-2 (the cursor adds a 2 px accent bar), the last-opened token surface-3, new cards the
  * highlight fade. Values never flash. Anatomy after Axiom's card and Binance Meme Rush (square
  * avatar with a status ring and launchpad badge): https://mobbin.com/screens/2aa0b210-3bdf-44dd-b04a-8fa2556db2f5
@@ -87,6 +90,8 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
   const aged = Number.isFinite(view.createdAt) && view.createdAt > 0;
   const hasSocial = props.socials && (view.x !== "" || view.web !== "" || view.tg !== "");
   const fees = wideplus && props.feesNetBuy;
+  // The image box inside the bonding ring: the avatar track (cardView AVATAR_TRACK) less its 3 px frame.
+  const tilePx = (narrow ? 44 : 52) + (props.comfortable ? 8 : 0) - 6;
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard users open the cursor row with Enter on the grid (pulse.open hotkey)
@@ -145,6 +150,7 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
           imageUri={view.imageUri}
           launchpad={view.launchpad}
           size="card"
+          imagePx={tilePx}
           progress={view.ring >= 0 ? view.ring / 100 : null}
           migrated={view.migrated}
         />

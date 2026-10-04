@@ -45,8 +45,6 @@ const ORDER_TYPES: { id: OrderType; label: string; action: "token.market" | "tok
   { id: "advanced", label: "Advanced", action: "token.advanced" },
 ];
 
-const PROVIDER: Record<string, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
-
 /** Underline tabs for the order type (28 px; roving tabindex, Left/Right, Home/End). */
 function OrderTypeTabs({ value, onChange }: { value: OrderType; onChange: (t: OrderType) => void }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -152,7 +150,7 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
   const activeAddress = useWallet((s) => s.activeAddress);
   const mode = useWallet((s) => s.mode);
   const locked = useWallet((s) => s.service.locked);
-  const provider = useWallet((s) => s.service.connected?.provider ?? "phantom");
+  const walletName = useWallet((s) => s.service.connected?.name);
   const connection = useMarket((s) => s.connection);
   const requestUnlock = useUi((s) => s.requestUnlock);
   const openSettings = useUi((s) => s.openSettings);
@@ -272,7 +270,7 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
 
   // ---- CTA ----
   const sym = token.symbol;
-  const wallet = PROVIDER[provider] ?? "your wallet";
+  const wallet = walletName ?? "your wallet";
   const direct = mode === "direct";
   const limitText = (() => {
     const v = triggerValue(limitPrice, ui.triggerMetric, quote, token.supply, solUsd);

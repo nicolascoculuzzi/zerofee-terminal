@@ -1,6 +1,24 @@
-import { BadgeCheck, Check, Copy, Ellipsis, Eye, Globe, Lock, Send, Users, Zap } from "lucide-react";
+import {
+  BadgeCheck,
+  Boxes,
+  Check,
+  ChefHat,
+  Copy,
+  Crosshair,
+  Ellipsis,
+  Eye,
+  Ghost,
+  Globe,
+  Lock,
+  type LucideIcon,
+  Send,
+  UserStar,
+  Users,
+  Zap,
+} from "lucide-react";
 import { type RefObject, useLayoutEffect, useRef } from "react";
 import { type BrandMark, brandMaskUrl } from "../../components/ui/Logo";
+import type { RiskKey } from "../../lib/metrics";
 
 /*
  * Card icons as CSS masks (DESIGN.md 8: at most 45 DOM nodes per Pulse card). An inline lucide
@@ -10,7 +28,25 @@ import { type BrandMark, brandMaskUrl } from "../../components/ui/Logo";
  * currentColor through that mask: still lucide, still 12 px with a 1.5 px stroke, zero nodes.
  */
 
+/**
+ * Holder-risk glyphs (DESIGN.md 4.5), Axiom's metaphors: a starred user for the top 10, the
+ * chef's hat for the dev, a crosshair for snipers, a ghost for insiders, boxes for bundlers.
+ * Pulse cards paint them as masks; the column legend renders the same components inline.
+ */
+export const RISK_ICON: Record<RiskKey, LucideIcon> = {
+  top10: UserStar,
+  dev: ChefHat,
+  snipers: Crosshair,
+  insiders: Ghost,
+  bundlers: Boxes,
+};
+
 const SOURCES = {
+  top10: UserStar,
+  dev: ChefHat,
+  snipers: Crosshair,
+  insiders: Ghost,
+  bundlers: Boxes,
   users: Users,
   badge: BadgeCheck,
   eye: Eye,
@@ -33,6 +69,11 @@ export const ICON = "before:size-3 before:shrink-0 before:bg-current before:cont
 
 /** Mask per icon. Missing variables fall back to an empty mask (invisible, never a solid square). */
 export const MASK: Record<MaskIcon, string> = {
+  top10: "before:[mask:var(--zfp-top10,url(#zfp-none))_center/contain_no-repeat]",
+  dev: "before:[mask:var(--zfp-dev,url(#zfp-none))_center/contain_no-repeat]",
+  snipers: "before:[mask:var(--zfp-snipers,url(#zfp-none))_center/contain_no-repeat]",
+  insiders: "before:[mask:var(--zfp-insiders,url(#zfp-none))_center/contain_no-repeat]",
+  bundlers: "before:[mask:var(--zfp-bundlers,url(#zfp-none))_center/contain_no-repeat]",
   users: "before:[mask:var(--zfp-users,url(#zfp-none))_center/contain_no-repeat]",
   badge: "before:[mask:var(--zfp-badge,url(#zfp-none))_center/contain_no-repeat]",
   eye: "before:[mask:var(--zfp-eye,url(#zfp-none))_center/contain_no-repeat]",
