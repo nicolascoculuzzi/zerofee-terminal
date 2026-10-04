@@ -635,11 +635,11 @@ export function MobileTradesList({ supply }: { supply: number }) {
   const rows = trades.slice(0, 100);
   if (rows.length === 0) return <EmptyState title="No trades yet" body="New trades appear within about a second of landing." />;
   return (
-    <ul aria-label="Trades">
+    <ul aria-label="Trades" className="@container">
       {rows.map((t) => {
         const buy = t.side === "buy";
         return (
-          <li key={t.id} className="relative flex h-11 items-center gap-3 px-3 text-body">
+          <li key={t.id} className="relative flex h-11 items-center gap-3 px-3 text-body @max-[339px]:gap-2">
             <span
               aria-hidden="true"
               className={cn("absolute inset-y-0 right-0", buy ? "bg-bar-buy" : "bg-bar-sell")}
@@ -660,10 +660,10 @@ export function MobileTradesList({ supply }: { supply: number }) {
                 <span className="zf-unit">{quote === "USD" ? " MC" : " SOL MC"}</span>
               </span>
             )}
-            <span className="relative ml-auto truncate font-mono text-label text-fg-3">
+            <span className="relative ml-auto truncate font-mono text-label text-fg-3 @max-[339px]:hidden">
               {t.tags.includes("you") ? "YOU" : t.tags.includes("dev") ? "DEV" : shortAddr(t.maker)}
             </span>
-            <Age ts={t.ts} className="relative w-[4ch] text-right" />
+            <Age ts={t.ts} className="relative w-[4ch] text-right @max-[339px]:ml-auto" />
           </li>
         );
       })}
