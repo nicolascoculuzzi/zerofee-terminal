@@ -435,6 +435,19 @@ export const RAYDIUM_LAUNCHLAB_PLATFORMS: Readonly<Record<string, string>> = {
   "4Bu96XjU84XjPDSpveTVf6LYGCkfW5FK7SNkREWcEfV4": "Raydium", // SDK LAUNCHPAD_PLATFORM
 };
 
+/**
+ * CPMM AmmConfigs that LaunchLab coins graduate onto: PlatformConfig.cpswap_config of letsbonk.fun
+ * (FfYek5vE…, index 15), StonkFun (6BwHHDg3…) and TRiX (both CRRS5ieQ…, index 11), and Raydium's own platform
+ * (D4FPEruK…). Observed 2026-10-03 (test/fixtures/raydium-mainnet.json). Shared by every graduated coin of a
+ * platform, so armed orders may load them from the operator lookup table (armedStaticAccounts); always read
+ * the live PlatformConfig to know which config a coin graduates onto.
+ */
+export const RAYDIUM_CPMM_GRADUATION_AMM_CONFIGS: readonly Address[] = [
+  address("GtdipqAcw8eAYxGcANs3vpN7UaN7UH7u89Kd8wPqLThd"),
+  address("CRRS5ieQmBrZjWhcj99JuGrT5tyuWDaGAXLXLFjbAtjQ"),
+  address("D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"),
+];
+
 /** PDA seeds. LaunchLab: SDK src/raydium/launchpad/pda.ts, launch-cpi states.rs; CPMM: cp-swap states/*.rs, SDK cpmm/pda.ts. */
 export const RAYDIUM_SEEDS = {
   launchLabAuth: "vault_auth_seed",

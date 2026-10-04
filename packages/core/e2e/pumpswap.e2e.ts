@@ -19,11 +19,23 @@ import {
   WSOL_MINT,
 } from "../src";
 import { expectAmmFill, expectFee, expectLatencyThroughLanded, expectTipsLanded, venueInstruction } from "./expect";
-import { connectFork, type Fork, newWallet, runTrade, type TradeRun, type Wallet } from "./harness";
+import {
+  connectFork,
+  type Fork,
+  missingTarget,
+  newWallet,
+  runTrade,
+  type TradeRun,
+  targetOf,
+  type Wallet,
+  withSkipReason,
+} from "./harness";
 
 const disc = (run: TradeRun) => venueInstruction(run, PUMP_AMM_PROGRAM_ID).data?.subarray(0, 8) ?? new Uint8Array();
 
-describe("PumpSwap - canonical wSOL pool", () => {
+const noPool = missingTarget("pumpswap");
+
+describe.skipIf(noPool !== null)(withSkipReason("PumpSwap - canonical wSOL pool", noPool), () => {
   let fork: Fork;
   let wallet: Wallet;
   let target: ForkTarget;
@@ -32,9 +44,7 @@ describe("PumpSwap - canonical wSOL pool", () => {
 
   beforeAll(async () => {
     fork = await connectFork();
-    const t = fork.manifest.targets.find((x) => x.kind === "pumpswap");
-    if (!t) throw new Error("the fork has no pumpswap target; pass a migrated (PumpSwap) mint to fork:start");
-    target = t;
+    target = targetOf("pumpswap") as ForkTarget;
     wallet = await newWallet(fork);
     baseAta = await findAssociatedTokenAddress(wallet.address, target.mint, target.tokenProgram);
     wsolAta = await findAssociatedTokenAddress(wallet.address, WSOL_MINT, TOKEN_PROGRAM_ID);

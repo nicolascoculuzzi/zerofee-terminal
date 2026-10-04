@@ -28,7 +28,19 @@ export type ArmedOrderKind =
   | "dev-sell-exit";
 
 export type ArmedSide = "buy" | "sell";
-export type ArmedVenue = "pump" | "pumpswap";
+/** pump.fun curve, PumpSwap canonical pool, Raydium LaunchLab curve, Raydium CPMM pool. */
+export type ArmedVenue = "pump" | "pumpswap" | "launchlab" | "cpmm";
+
+/**
+ * Where a coin trades after its curve completes: pump.fun migrates to its canonical PumpSwap pool,
+ * LaunchLab (migrate_type 1) to its CPMM pool on PlatformConfig.cpswap_config.
+ */
+export const GRADUATION_VENUE: Readonly<Partial<Record<ArmedVenue, ArmedVenue>>> = { pump: "pumpswap", launchlab: "cpmm" };
+
+/** Venues a migration snipe can buy on (the graduation targets). */
+export function isGraduationTarget(venue: ArmedVenue): boolean {
+  return venue === "pumpswap" || venue === "cpmm";
+}
 
 export const ARMED_ORDER_SIDE: Record<ArmedOrderKind, ArmedSide> = {
   "limit-buy": "buy",
@@ -104,7 +116,7 @@ export type ArmedTrigger =
   | { type: "trailing"; trailBps: number; activationQuoteOut?: bigint }
   /** DCA tranche: fire after `notBeforeMs` while the live quote is at least `minQuoteOut` (the band edge). */
   | { type: "time"; notBeforeMs: number; minQuoteOut?: bigint }
-  /** Migration snipe: fire once the mint migrated AND the canonical pool is live (quote available). */
+  /** Migration snipe: fire once the mint migrated AND its graduation pool (PumpSwap / CPMM) is live (quote available). */
   | { type: "migration" }
   /** Dev-sell exit: fire when `creator` sells at least `minTokenAmount` of the mint. */
   | { type: "dev-sell"; creator: Address; minTokenAmount?: bigint };
@@ -112,13 +124,29 @@ export type ArmedTrigger =
 /** Per-venue account facts of the variants. */
 export interface FrozenVenueAccounts {
   venue: ArmedVenue;
-  /** bonding_curve.creator (pump) / pool.coin_creator (pumpswap) at signing; creator_vault derives from it. */
+  /**
+   * bonding_curve.creator (pump) / pool.coin_creator (pumpswap) / LaunchLab pool.creator at signing: the
+   * creator vault (pump), coin-creator vault authority (pumpswap) or creator fee vault [creator, quote_mint]
+   * (launchlab) derives from it. CPMM: the pool's pool_creator (informational, no swap account derives from it).
+   */
   creator: Address;
-  /** Bonding curve PDA (pump) or pool (pumpswap; the not-yet-existing canonical pool for migration orders). */
+  /**
+   * Bonding curve PDA (pump), pool (pumpswap / cpmm; the not-yet-existing graduation pool for migration
+   * orders) or LaunchLab pool PDA ["pool", base, quote].
+   */
   market: Address;
-  /** pump fee_recipient / PumpSwap protocol_fee_recipient named by the variants (must stay in the live list). */
-  feeRecipient: Address;
-  buybackFeeRecipient: Address;
+  /**
+   * pump fee_recipient / PumpSwap protocol_fee_recipient named by the variants (must stay in the live list).
+   * Raydium venues have none: fees go to PDAs of the pool's own configs (LaunchLab) or stay in the pool (CPMM).
+   */
+  feeRecipient?: Address;
+  /** pump / PumpSwap buyback fee recipient named by the variants (absent on Raydium venues). */
+  buybackFeeRecipient?: Address;
+  /**
+   * Raydium: the LaunchLab platform_config (its fee vault [platform_config, quote_mint] is named by the
+   * variants) or the CPMM amm_config the pool trades on. Fixed per pool; recorded for verification.
+   */
+  config?: Address;
   /** Coin flags that shape the account list (mayhem: fee recipient list; cashback: PumpSwap remaining accounts). */
   isMayhemMode?: boolean;
   isCashbackCoin?: boolean;

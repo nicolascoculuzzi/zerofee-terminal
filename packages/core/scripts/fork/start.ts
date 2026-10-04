@@ -1,8 +1,11 @@
 /**
- * Local mainnet fork:  bun run fork:start [mint ...] [--reuse] [--no-feature-set]
+ * Local mainnet fork:  bun run fork:start [mint ...] [--reuse] [--no-feature-set] [--allow-missing]
  *
  *  1. Picks targets - the mints you pass, the previous fork's (--reuse), or auto-picked from recent on-chain
- *     activity - and resolves every account their trades touch (accounts.ts). Mainnet is read READ-ONLY: the
+ *     activity - and resolves every account their trades touch (accounts.ts). Required kinds (a Token-2022
+ *     curve coin and a canonical PumpSwap pool) missing from the mints you pass are discovered; when
+ *     discovery cannot find one either, it fails fast with how to pass one (or starts anyway with
+ *     --allow-missing, and the e2e cases that need it are skipped). Mainnet is read READ-ONLY: the
  *     clone-source client refuses every method that is not a read.
  *  2. Launches solana-test-validator bound to 127.0.0.1 with a fresh ledger in FORK_DIR (outside the repo by
  *     default), cloning exactly that set plus mainnet's feature set. It runs detached: `bun run fork:stop`.
@@ -34,7 +37,16 @@ import {
   signTransaction,
 } from "@solana/kit";
 import { fetchRawAccounts, maxBig, PUMP_AMM_PROGRAM_ID, PUMP_FEE_PROGRAM_ID, PUMP_PROGRAM_ID, systemTransferInstruction } from "../../src";
-import { classifyMints, createReadOnlyRpc, discoverTargets, programElfFingerprints, resolveCloneList } from "./accounts";
+import {
+  classifyMints,
+  createReadOnlyRpc,
+  type DiscoveryStats,
+  describeStats,
+  discoverTargets,
+  programElfFingerprints,
+  REQUIRED_KINDS,
+  resolveCloneList,
+} from "./accounts";
 import {
   assertLoopbackUrl,
   cloneSourceUrl,
@@ -51,9 +63,32 @@ import {
   readManifest,
   redactUrl,
   sleep,
+  type TargetKind,
   toJson,
   validatorBinary,
 } from "./env";
+
+const USAGE = "usage: bun run fork:start [mint ...] [--reuse] [--no-feature-set] [--allow-missing]";
+const OPTIONS = new Set(["--reuse", "--no-feature-set", "--allow-missing"]);
+const KIND_HINT: Partial<Record<TargetKind, string>> = {
+  curve2022: "a Token-2022 (create_v2) pump.fun coin still on its bonding curve, not within 10% of completion",
+  pumpswap: "a migrated pump.fun coin trading on its canonical PumpSwap wSOL pool",
+};
+
+/** The clear failure when a required target is missing after discovery. */
+function missingTargetsMessage(missing: readonly TargetKind[], source: string, stats: DiscoveryStats | null): string {
+  const lines = [`no ${missing.join(" / ")} target found.`];
+  for (const k of missing) lines.push(`  ${k}: ${KIND_HINT[k] ?? k}`);
+  if (stats) lines.push(`  discovery read ${describeStats(stats)} through ${redactUrl(source)}`);
+  lines.push(
+    "  The public RPC throttles getTransaction, so discovery can come up empty. Any of these fixes it:",
+    "    - pass the mints:  bun run fork:start <token-2022 curve mint> <pumpswap mint>   (missing kinds are still discovered)",
+    "    - point FORK_CLONE_URL at your own RPC, or raise FORK_DISCOVERY_TIMEOUT_MS",
+    "    - run it again (discovery reads newer activity each time)",
+    "    - add --allow-missing to start anyway: the e2e cases that need the missing target are skipped",
+  );
+  return lines.join("\n");
+}
 
 const START_TIMEOUT_MS = Number(process.env.FORK_START_TIMEOUT_MS ?? 240_000);
 
@@ -181,10 +216,11 @@ async function normalizeRent(
 
 async function main() {
   const args = process.argv.slice(2);
-  const unknown = args.filter((a) => a.startsWith("-") && a !== "--reuse" && a !== "--no-feature-set");
-  if (unknown.length) fail(`unknown option(s) ${unknown.join(" ")}\nusage: bun run fork:start [mint ...] [--reuse] [--no-feature-set]`);
+  const unknown = args.filter((a) => a.startsWith("-") && !OPTIONS.has(a));
+  if (unknown.length) fail(`unknown option(s) ${unknown.join(" ")}\n${USAGE}`);
   const reuse = args.includes("--reuse");
   const cloneFeatureSet = !args.includes("--no-feature-set");
+  const allowMissing = args.includes("--allow-missing");
   const mints = args.filter((a) => !a.startsWith("-")).map((a) => address(a));
 
   const paths = forkPaths();
@@ -214,22 +250,28 @@ async function main() {
   const mainnet = createReadOnlyRpc(source);
 
   let targets: ForkTarget[];
-  if (mints.length) {
-    log(`classifying ${mints.length} mint(s)...`);
-    targets = await classifyMints(mainnet, mints);
-  } else if (reuse && previous?.targets.length) {
-    log("re-classifying the previous fork's targets...");
-    targets = await classifyMints(
-      mainnet,
-      previous.targets.map((t) => t.mint),
-    );
+  let stats: DiscoveryStats | null = null;
+  const onStats = (s: DiscoveryStats) => {
+    stats = s;
+  };
+  if (mints.length || (reuse && previous?.targets.length)) {
+    const explicit = mints.length ? mints : (previous?.targets ?? []).map((t) => t.mint);
+    log(mints.length ? `classifying ${mints.length} mint(s)...` : "re-classifying the previous fork's targets...");
+    targets = await classifyMints(mainnet, explicit);
+    const missing = REQUIRED_KINDS.filter((k) => !targets.some((t) => t.kind === k));
+    if (missing.length) {
+      log(`discovering the missing ${missing.join(" / ")} target(s) from recent activity...`);
+      targets = [...targets, ...(await discoverTargets(mainnet, { log, kinds: missing, exclude: explicit, onStats }))];
+    }
   } else {
     log("auto-picking targets from recent pump / Mayhem / PumpSwap activity...");
-    targets = await discoverTargets(mainnet, { log });
+    targets = await discoverTargets(mainnet, { log, onStats });
   }
-  if (targets.length === 0) fail("no eligible targets found; pass mints explicitly");
-  for (const kind of ["curve2022", "pumpswap"] as const) {
-    if (!targets.some((t) => t.kind === kind)) log(`warn: no ${kind} target; the matching e2e cases will fail`);
+  const missing = REQUIRED_KINDS.filter((k) => !targets.some((t) => t.kind === k));
+  if (missing.length) {
+    const msg = missingTargetsMessage(missing, source, stats);
+    if (!allowMissing || targets.length === 0) fail(msg);
+    log(`warn: ${msg.split("\n")[0]} Starting anyway (--allow-missing): the e2e cases that need it are skipped.`);
   }
   if (!targets.some((t) => t.kind === "migration")) {
     log("note: no migration target (a second Token-2022 curve coin); the armed migration-snipe case will be skipped");
@@ -359,7 +401,7 @@ async function main() {
     log("");
     log(`fork ready in ${elapsed()}: solana-test-validator ${manifest.validatorVersion} on 127.0.0.1 (pid ${manifest.pid})`);
     log(`  ledger       ${paths.ledgerDir}`);
-    for (const t of targets) log(`  ${t.kind.padEnd(12)} ${t.mint}  ${t.venue === "pumpswap" ? `pool ${t.market}, ` : ""}${t.note}`);
+    for (const t of targets) log(`  ${t.kind.padEnd(12)} ${t.mint}  ${t.venue === "pump" ? "" : `pool ${t.market}, `}${t.note}`);
     log(
       `  cloned       ${programs.length} programs (ELF identical to mainnet), ${clone.accounts.length} accounts, ` +
         `${presentMaybe.length}/${clone.maybeAccounts.length} optional`,
