@@ -252,7 +252,7 @@ export function curveMintSupply(curve: { tokenTotalSupply: bigint; isMayhemMode:
 /**
  * Market cap in quote base units using the real mint supply (1e15 normal, 2e15 mayhem). Mayhem curves can
  * legitimately sit far below the ~28 SOL a standard curve starts at: the Mayhem agent's trades rewrite the
- * curve's virtual SOL reserves (offsets of 0.009-0.5 SOL instead of 30 SOL were seen on 2026-10-04).
+ * curve's virtual SOL reserves (virtual minus real SOL from 0.009 to 44.5 SOL instead of 30, seen 2026-10-04).
  */
 export function curveMarketCapForDisplay(
   curve: Pick<CurveState, "virtualQuoteReserves" | "virtualTokenReserves">,

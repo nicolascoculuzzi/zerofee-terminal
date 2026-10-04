@@ -16,7 +16,7 @@ const TXS: Record<string, string> = {
   "mayhem-create": "2FCBGU2avg2hbMx4jUmygZFGGHhskw7Bj3qZSpfADfZ9RJLqLVVuJDDoTeWqK32s2XTMs1gaXSurwTG85pGFYugF",
   // MHK: the mayhem agent's sell through the Mayhem program; the curve's virtual SOL drops from 30 to 20.17 SOL
   "mayhem-agent-sell": "kyCQp5519BLYsNNTmsZ73zcRgNZXbWhbqt6WvP1byxnisRbw7Pne2DNCQukzf4KnNBoLuBctvHZ7STFpR2MXKeB",
-  // MHK, 23 min later: virtual SOL offset 0.53 SOL, on-chain implied MC ~1 SOL with the 2B mint supply
+  // MHK, six minutes later: virtual SOL offset 0.53 SOL, on-chain implied MC ~1 SOL with the 2B mint supply
   "mayhem-agent-buy-late": "5V67DtqZqKdkoqVA2zniBp2EVtkHBjkbPL8AxiE3Ez4RMzaHsXLbz8bd7cJq6jKTzbgsGSaFGT9D6P8v4KRWrgYM",
   // BOOTY: create_v2 of a USDC-quoted mayhem coin + the dev buy
   "usdc-mayhem-create": "4nzNvz5eVTHwSYrSKUpxrLiXQXifD8FpMxjcjZKc5fDB256J9rBJH8utuZ8MMRcgi8x66jGrpJSB4H5eYjdVkhZj",

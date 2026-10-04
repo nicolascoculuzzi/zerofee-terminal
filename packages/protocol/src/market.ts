@@ -70,8 +70,8 @@ export interface TokenSummary {
   /**
    * priceSol x supply (the real mint supply: 2B for mayhem coins). A standard SOL curve starts at ~28 SOL
    * (30 virtual SOL / 1.073B virtual tokens x 1B), a mayhem curve at ~56 SOL, but mayhem curves can then sit
-   * far below either: the Mayhem agent's trades rewrite the curve's virtual SOL reserves (offsets of 0.01-20
-   * SOL over the real SOL instead of 30), so market caps of 0.01-1 SOL are real there, not a feed error.
+   * far below either: the Mayhem agent's trades rewrite the curve's virtual SOL reserves (virtual minus real SOL
+   * seen anywhere from 0.009 to 44.5 SOL instead of 30), so caps of 0.01-1 SOL are real there, not a feed error.
    */
   mcSol: number | null;
   mcUsd: number | null;
