@@ -27,7 +27,8 @@ export function findDevs(query: string, live: Record<string, TokenSummary>, toke
   const out: DevHit[] = [];
   const seen = new Set<string>();
   const add = (address: string, via: TokenSummary | null) => {
-    if (seen.has(address) || out.length >= limit) return;
+    // The live feed can carry a token before its creator is known: no address, no dev row.
+    if (!address || seen.has(address) || out.length >= limit) return;
     seen.add(address);
     const s = stats.get(address) ?? { launches: via ? 1 : 0, migrated: via !== null && via.migratedAt !== null ? 1 : 0 };
     out.push({ address, launches: s.launches, migrated: s.migrated, via });

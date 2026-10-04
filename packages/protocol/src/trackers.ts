@@ -2,8 +2,11 @@
  * Wallet tracker feed and copy trading (user topics + REST; session cookie required, mutations need an
  * allowed Origin).
  *
- * The server matches every decoded pump / PumpSwap trade against the deduplicated union of all users'
- * tracked wallets and copy-task leaders, in memory (SPEC "Data layer"). Matches are delivered on:
+ * The server matches every decoded pump / PumpSwap / Raydium LaunchLab / Raydium CPMM trade against the
+ * deduplicated union of all users' tracked wallets and copy-task leaders, in memory (SPEC "Data layer"). Raydium
+ * events carry no wallet: the trader is the swap instruction's payer, known when the source has the transaction
+ * (Yellowstone, or the RPC logs feed after it fetched it); unattributed trades (trader "") match nobody.
+ * Matches are delivered on:
  *
  *   tracked              the session user's live feed: trades and launches by their tracked wallets
  *   tracked:<mint>       chart markers: the user's tracked-wallet trades on one token (longer history)
@@ -28,7 +31,7 @@
  *   POST   /api/copy/signals/:id/result        CopySignalResult -> CopySignal
  *   GET    /api/tracked-trades?mint=&limit=100 -> TrackedTradeRow[] (REST twin of the topic snapshots)
  */
-import type { Launchpad, TradeTag } from "./market";
+import type { Launchpad, TradeTag, TradeVenue } from "./market";
 import type { PresetSlot } from "./user";
 
 // ---------------------------------------------------------------------------------------------
@@ -53,14 +56,14 @@ export interface TrackedTradeRow {
   tag: string;
   /** The user's own tags for the wallet (wallet manager groups). */
   walletTags: string[];
-  /** The trading wallet (event `user`): equals `wallet` unless role is feePayer. */
+  /** The trading wallet (event `user`; Raydium: the swap instruction's payer): equals `wallet` unless role is feePayer. */
   trader: string;
   mint: string;
   symbol: string;
   name: string;
   image: string | null;
   launchpad: Launchpad;
-  venue: "pump" | "pumpswap";
+  venue: TradeVenue;
   /** Trade size in SOL (0 for launches; null when the token's quote has no known SOL value). */
   amountSol: number | null;
   amountUsd: number | null;
@@ -336,7 +339,7 @@ export interface CopySignal {
   reason: string | null;
   mint: string;
   symbol: string;
-  venue: "pump" | "pumpswap";
+  venue: TradeVenue;
   leader: string;
   /** The leader trade this signal follows ("" for TP / SL exits, which follow the price, not a trade). */
   leaderSignature: string;

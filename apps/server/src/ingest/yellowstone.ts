@@ -1,6 +1,7 @@
 /**
  * YellowstoneSource - the production feed: one Yellowstone (Dragon's Mouth) gRPC subscription to
- * transactions that include the pump / PumpSwap programs (vote=false, failed=false) at processed
+ * transactions that include the pump / PumpSwap / Raydium LaunchLab / Raydium CPMM programs
+ * (`accountInclude`, which matches CPI'd programs too; vote=false, failed=false) at processed
  * commitment, plus `blocks_meta` (blockhash, block height, block time) and every slot status (to learn
  * confirmations and dead slots).
  *
@@ -186,7 +187,8 @@ export class YellowstoneSource implements Source {
           this.stats.decodeFailures++;
           this.sink?.decodeFailure?.({ source: this.name, signature: p.tx.signature, message });
         }
-        if (!p.tx.events.length) {
+        // LaunchLab graduations (migrate_to_cpswap) emit no event: keep them for their instruction accounts.
+        if (!p.tx.events.length && !p.tx.raydium?.migrations.length) {
           this.stats.txsWithoutEvents++;
           return;
         }

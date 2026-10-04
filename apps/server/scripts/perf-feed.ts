@@ -50,8 +50,12 @@ async function record(path: string, seconds: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     ws.onopen = () => {
       t0 = performance.now();
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [PUMP] }, { commitment: "processed" }] }));
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "logsSubscribe", params: [{ mentions: [PUMP_AMM] }, { commitment: "processed" }] }));
+      ws.send(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [PUMP] }, { commitment: "processed" }] }),
+      );
+      ws.send(
+        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "logsSubscribe", params: [{ mentions: [PUMP_AMM] }, { commitment: "processed" }] }),
+      );
       ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1000, method: "slotSubscribe" }));
       setTimeout(() => {
         ws.close();
@@ -85,7 +89,10 @@ const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function relabel(raw: string, lap: number): string {
   return raw
     .replace(/"slot":(\d+)/g, (_, n: string) => `"slot":${Number(n) + lap * 1_000_000}`)
-    .replace(/"signature":"([1-9A-HJ-NP-Za-km-z]+)"/, (_, sig: string) => `"signature":"${sig.slice(0, -2)}${B58[lap % 58]}${B58[Math.floor(lap / 58) % 58]}"`);
+    .replace(
+      /"signature":"([1-9A-HJ-NP-Za-km-z]+)"/,
+      (_, sig: string) => `"signature":"${sig.slice(0, -2)}${B58[lap % 58]}${B58[Math.floor(lap / 58) % 58]}"`,
+    );
 }
 
 /** Starts a fake RPC WebSocket replaying `rec`; returns its URL and a stop function. */

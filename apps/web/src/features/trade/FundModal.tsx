@@ -1,6 +1,8 @@
 import { Clock, LoaderCircle } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { Button } from "../../components/ui/Button";
+import { EmptyState } from "../../components/ui/bits";
 import { CopyButton, NumberInput, Segmented } from "../../components/ui/controls";
 import { HoldButton } from "../../components/ui/HoldButton";
 import { Modal } from "../../components/ui/Modal";
@@ -123,19 +125,31 @@ function FundFromConnected({ address }: { address: string }) {
   );
 }
 
+/*
+ * Deposit address after Phantom/OKX receive sheets and Buffer's QR dialog: the code on its own
+ * white plate, the address in mono on one line with an inline copy, then the transfer facts as
+ * label/value rows. https://mobbin.com/screens/6e4247f0-b45c-4016-9918-0f7c6882e4e3
+ */
 function Deposit({ address, label }: { address: string; label: string }) {
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-      <QrCode value={address} label={`QR code for ${label}'s address`} />
-      <div className="min-w-0 flex-1 space-y-3">
-        <div className="space-y-1">
-          <div className="zf-label">{label} · trading wallet address</div>
-          <div className="flex items-start gap-1 rounded-sm border border-hairline bg-surface-2 p-2 font-mono text-data break-all text-fg-1">
+      <span className="inline-flex shrink-0 self-center overflow-hidden rounded-md border border-hairline-strong sm:self-start">
+        <QrCode value={address} size={160} label={`QR code for ${label}'s address`} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="zf-label mb-1">{label} · trading wallet address</div>
+        <div className="flex h-8 items-center gap-1 rounded-sm border border-hairline-strong bg-surface-2 pr-1 pl-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-label text-fg-1" title={address}>
             {address}
-            <CopyButton text={address} label="Copy address" />
-          </div>
+          </span>
+          <CopyButton text={address} label="Copy address" />
         </div>
-        <p className="text-body text-fg-2">Send SOL on Solana only. The balance updates when the transfer lands; no memo is needed.</p>
+        <div className="mt-3 divide-y divide-hairline border-y border-hairline">
+          <Row label="Network">Solana</Row>
+          <Row label="Asset">SOL only</Row>
+          <Row label="Memo">Not needed</Row>
+          <Row label="Balance updates">When the transfer lands</Row>
+        </div>
       </div>
     </div>
   );
@@ -294,6 +308,7 @@ function Withdraw({ address }: { address: string }) {
 }
 
 export function FundModal() {
+  const navigate = useNavigate();
   const open = useUi((s) => s.fundOpen);
   const tab = useUi((s) => s.fundTab);
   const openFund = useUi((s) => s.openFund);
@@ -311,7 +326,22 @@ export function FundModal() {
       width={560}
     >
       {!address ? (
-        <p className="text-body text-fg-2">Create a trading wallet first.</p>
+        <EmptyState
+          title="No trading wallet yet"
+          body="Create one to get a deposit address and fund it from your wallet."
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                close();
+                navigate("/onboarding");
+              }}
+            >
+              Create trading wallet
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-4">
           <Segmented<FundTab>

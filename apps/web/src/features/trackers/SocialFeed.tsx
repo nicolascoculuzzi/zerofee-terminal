@@ -158,11 +158,12 @@ export function SocialFeed({ query, toolbarStart }: { query: string; toolbarStar
 
   const empty =
     posts.length === 0 ? (
-      <EmptyState title="No posts yet" body="Posts from the handles you track appear here as they're published." />
+      <EmptyState className="text-balance" title="No posts yet" body="Posts from the handles you track appear here as they're published." />
     ) : scope === "mine" && handleCount === 0 ? (
-      <EmptyState icon={<AtSign />} title="Your list is empty" body="Track handles to build your list." />
+      <EmptyState className="text-balance" icon={<AtSign />} title="Your list is empty" body="Track handles to build your list." />
     ) : (
       <EmptyState
+        className="text-balance"
         title={q ? `No posts match “${query.trim()}”` : "No posts match your switches"}
         body="Change the scope, the search or a handle's switches."
       />

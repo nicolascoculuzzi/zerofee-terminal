@@ -1,4 +1,4 @@
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { WalletBadge } from "../../components/ui/WalletIcon";
@@ -6,7 +6,7 @@ import { shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
 import type { ConnectedWallet, SiwsSession } from "../../services/walletService";
 import { fmtDateTime } from "../settings/format";
-import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
+import { InlineError, Panel, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 
 const STATEMENT = "Sign in to zerofee. This request will not trigger a transaction or cost any fees.";
 /** Preview only; the signed session carries the real expiry. */
@@ -73,29 +73,35 @@ export function SignInStep({
   return (
     <>
       <StepHeader frame={frame} />
-      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <span className="zf-label">{signed ? "Signed message" : "Message to sign"}</span>
-        <span className="inline-flex items-center gap-1 text-label text-fg-3">
-          <WalletBadge wallet={connected} /> · <span className="font-mono">{shortAddr(connected.address)}</span>
-        </span>
-      </div>
-      <pre className="overflow-x-auto rounded-sm bg-surface-2 p-3 font-mono text-label font-normal whitespace-pre-wrap break-all text-fg-2">
-        {signed
-          ? signed.message
-          : exact !== null
-            ? exact
-            : preview.map((line) => (
-                <span key={line.id} className="block">
-                  {line.text || " "}
-                  {line.pending && <span className="text-fg-3">({line.pending})</span>}
-                </span>
-              ))}
-      </pre>
-      <p className="mt-3 text-body text-fg-2">This signature proves you own this wallet. It can't move funds.</p>
+      <Panel>
+        <div className="flex h-9 items-center justify-between gap-2 border-b border-hairline bg-surface-2 px-3">
+          <span className="text-label font-medium text-fg-2">{signed ? "Signed message" : "Message to sign"}</span>
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-label text-fg-3">
+            <WalletBadge wallet={connected} className="text-fg-2" />
+            <span className="font-mono">{shortAddr(connected.address)}</span>
+          </span>
+        </div>
+        <pre className="max-h-64 overflow-auto p-3 font-mono text-label font-normal whitespace-pre-wrap break-all text-fg-2">
+          {signed
+            ? signed.message
+            : exact !== null
+              ? exact
+              : preview.map((line) => (
+                  <span key={line.id} className="block">
+                    {line.text || " "}
+                    {line.pending && <span className="text-fg-3">({line.pending})</span>}
+                  </span>
+                ))}
+        </pre>
+      </Panel>
+      <p className="mt-3 flex gap-2 text-label text-fg-3">
+        <ShieldCheck className="icon-xs mt-px shrink-0" />
+        This signature proves you own this wallet. It can't move funds or approve a transaction.
+      </p>
 
       {signed && (
-        <p className="mt-3 flex flex-wrap items-center gap-x-2 text-data text-fg-1">
-          <Check className="icon-xs" /> Signed in
+        <p className="mt-4 flex flex-wrap items-center gap-x-2 text-data text-fg-1">
+          <Check className="icon-xs text-buy" /> Signed in
           <span className="text-fg-3">· session until {fmtDateTime(signed.expiresAt)}</span>
         </p>
       )}

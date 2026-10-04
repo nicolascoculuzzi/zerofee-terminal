@@ -28,8 +28,9 @@ const identity = (mint: string): string => mint;
 const COL = {
   token: "min-w-0 flex-1",
   age: "@max-[340px]:hidden",
-  mc: "w-[9ch] justify-end",
-  change: "w-[8ch] justify-end",
+  // Tight numeric columns ("$12.6K", "+95.2%") leave the ticker room in the 320 / 360 px side column.
+  mc: "w-[7ch] justify-end",
+  change: "w-[7ch] justify-end",
   pill: "w-16 justify-end",
   star: "w-6 justify-center",
 } as const;
@@ -66,9 +67,7 @@ const CompactTokenRow = memo(function CompactTokenRow({ mint, fresh, active }: {
       <Cell className={cn("shrink-0 font-medium text-fg-1", COL.mc)}>
         <QuoteValue usd={t.marketCapUsd} sol={t.marketCapSol} />
       </Cell>
-      <Cell className={cn("shrink-0", COL.change)}>
-        <Num kind="pct" value={t.change5mPct} signed />
-      </Cell>
+      <Cell className={cn("shrink-0", COL.change)}>{t.change5mPct !== null && <Num kind="pct" value={t.change5mPct} signed />}</Cell>
       <Cell className={cn("shrink-0", COL.pill)}>
         <QuickBuyPill mint={t.mint} symbol={t.symbol} source="discover" size="row" tabIndex={tab} />
       </Cell>
@@ -173,12 +172,17 @@ export function WatchlistPanel({ header = true }: { header?: boolean }) {
         empty={
           watchlist.length === 0 ? (
             <EmptyState
+              className="text-balance"
               icon={<Star />}
               title="No watched tokens"
               body="Star a token in Trending, New pairs or on its page to keep it here."
             />
           ) : (
-            <EmptyState title="Watched tokens are offline" body="They left the live set. They come back here when they trade again." />
+            <EmptyState
+              className="text-balance"
+              title="Watched tokens are offline"
+              body="They left the live set. They come back here when they trade again."
+            />
           )
         }
         onOpen={open}
@@ -258,7 +262,7 @@ export function NewPairsPanel({ header = true }: { header?: boolean }) {
         rowHeight={mobile ? MOBILE_ROW_PX : rowPx}
         label="Newest tokens"
         header={mobile || shown.length === 0 ? undefined : <ColumnsHeader />}
-        empty={<EmptyState title="Waiting for new launches" body="New tokens appear here as they launch." />}
+        empty={<EmptyState className="text-balance" title="Waiting for new launches" body="New tokens appear here as they launch." />}
         paused={paused}
         pending={pending}
         onRelease={release}

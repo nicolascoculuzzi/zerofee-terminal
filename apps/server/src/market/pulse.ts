@@ -3,7 +3,8 @@
  *   new       not migrated, progress <  finalStretchBps (60%), created within newMaxAge
  *   final     not migrated, progress >= finalStretchBps (or curve complete), traded within finalMaxIdle
  *   migrated  migrated within migratedWindow (24 h)
- * Only pump.fun coins appear (PumpSwap-only tokens are tracked but not listed).
+ * pump.fun and Raydium LaunchLab coins appear (LaunchLab: curve progress against its own total_base_sell,
+ * Migrated once it graduated to its CPMM pool); PumpSwap-only tokens are tracked but not listed.
  *
  * Each column keeps every candidate's sort key (cheap) and publishes the top `listLimit`:
  *   new = newest first, final = highest progress first (then most recent trade), migrated = most recent first.
@@ -23,7 +24,7 @@ export interface PulseConfig {
 export const COLUMNS: readonly PulseColumn[] = ["new", "final", "migrated"];
 
 export function classify(s: TokenSummary, cfg: PulseConfig, now: number): PulseColumn | null {
-  if (s.launchpad !== "pump") return null;
+  if (s.launchpad !== "pump" && s.launchpad !== "launchlab") return null;
   if (s.migrated) return s.migratedAt !== null && now - s.migratedAt <= cfg.migratedWindowMs ? "migrated" : null;
   if (s.complete || s.bondingProgressBps >= cfg.finalStretchBps) {
     const last = s.lastTradeAt ?? s.createdAt ?? 0;

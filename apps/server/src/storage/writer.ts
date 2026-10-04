@@ -21,6 +21,9 @@ import { serializeRecord } from "./codec";
 
 const log = logger("storage");
 
+/** trades.venue: 0 pump, 1 PumpSwap, 2 Raydium LaunchLab, 3 Raydium CPMM. */
+export const VENUE_CODE: Record<Trade["venue"], number> = { pump: 0, pumpswap: 1, launchlab: 2, cpmm: 3 };
+
 export interface WriterOptions {
   flushMs: number;
   retentionHours: number;
@@ -157,7 +160,7 @@ export class StorageWriter implements StorageSink {
       evIndex,
       t.blockTime,
       t.receivedAt,
-      t.venue === "pump" ? 0 : 1,
+      VENUE_CODE[t.venue] ?? 1,
       t.side === "buy" ? 0 : 1,
       t.trader,
       t.quoteAmount,

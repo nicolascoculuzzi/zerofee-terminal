@@ -4,8 +4,9 @@
  * can run the whole thing in-process with a fake source and mocked network.
  */
 import type { Database } from "bun:sqlite";
-import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@zerofee/core";
+import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID } from "@zerofee/core";
 import type { HealthResponse } from "@zerofee/protocol";
+import { RaydiumRegistry } from "./accounts/raydium";
 import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
 import { Enricher, watchedMints } from "./enrich";
@@ -17,8 +18,9 @@ import { SolUsdFeed } from "./feeds/solUsd";
 import { AnonymousAuth, type AuthProvider } from "./gateway/auth";
 import { type DebugStats, Gateway } from "./gateway/server";
 import { TxHandler } from "./gateway/tx";
+import type { RpcJsonTx } from "./ingest/jsonTx";
 import { PumpPortalSource, Reconciler } from "./ingest/pumpPortal";
-import { RpcLogsSource } from "./ingest/rpcLogs";
+import { PROGRAM_IDS, type RaydiumTxFetchOptions, RpcLogsSource } from "./ingest/rpcLogs";
 import type { IngestSink, Source } from "./ingest/types";
 import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
@@ -84,17 +86,44 @@ export interface App {
   stop(): Promise<void>;
 }
 
-export function createSource(cfg: ServerConfig): Source {
-  const programs = cfg.rpcLogsPrograms.map((p) => (p === "pump" ? PUMP_PROGRAM_ID : PUMP_AMM_PROGRAM_ID));
+export interface SourceDeps {
+  /** The RPC client the logs source re-reads Raydium transactions with (RPC_LOGS_TX_FETCH_RPS). */
+  rpc?: RpcClient;
+  /** Which Raydium notifications are worth a getTransaction (MarketState.wantsRaydiumTx). */
+  wants?: RaydiumTxFetchOptions["wants"];
+}
+
+export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
+  const programs = cfg.rpcLogsPrograms.map((p) => PROGRAM_IDS[p]);
   if (cfg.source === "yellowstone") {
     return new YellowstoneSource({
       endpoint: cfg.yellowstoneEndpoint as string,
       xToken: cfg.yellowstoneXToken,
       commitment: cfg.yellowstoneCommitment,
-      programs: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID],
+      programs: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID],
     });
   }
-  return new RpcLogsSource({ wsUrl: cfg.rpcWsUrl, programs, commitment: cfg.rpcLogsCommitment, queueMax: cfg.rpcLogsQueueMax });
+  // Its own client: a getTransaction 429 cools down the Raydium re-reads, not the resolver's account reads.
+  const rpc = deps.rpc ? new RpcClient({ url: deps.rpc.url, maxConcurrent: 2 }) : undefined;
+  return new RpcLogsSource({
+    wsUrl: cfg.rpcWsUrl,
+    programs,
+    commitment: cfg.rpcLogsCommitment,
+    queueMax: cfg.rpcLogsQueueMax,
+    raydiumTx:
+      rpc && cfg.rpcLogsTxFetchPerSec > 0
+        ? {
+            perSec: cfg.rpcLogsTxFetchPerSec,
+            paused: () => rpc.coolingDown(),
+            fetch: (signature) =>
+              rpc.call<RpcJsonTx | null>("getTransaction", [
+                signature,
+                { encoding: "json", maxSupportedTransactionVersion: 1, commitment: "confirmed" },
+              ]),
+            ...(deps.wants ? { wants: deps.wants } : {}),
+          }
+        : null,
+  });
 }
 
 export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
@@ -135,6 +164,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       return row ? { image: row.summary.image ?? null, pump: row.summary.launchpad === "pump" } : null;
     },
   });
+  // Raydium LaunchLab / CPMM accounts share the resolver's batches.
+  const raydium = new RaydiumRegistry(resolver, {
+    launchLabPool: (info) => market?.onLaunchLabPoolReady(info),
+    launchLabPoolMissing: (pool) => market?.onLaunchLabPoolMissing(pool),
+    platform: (address) => market?.onPlatformConfig(address),
+    cpmmPool: (info) => market?.onCpmmPoolReady(info),
+    cpmmRejected: (pool) => market?.onCpmmRejected(pool),
+  });
   const metadata = new MetadataFetcher({
     gateways: cfg.metadataGateways,
     timeoutMs: cfg.metadataTimeoutMs,
@@ -161,6 +198,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
           walletFeed?.onTrade(t);
         }
       : undefined,
+    raydium,
   });
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
@@ -207,7 +245,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     o.user.halt.onChange((s) => chain.setHalt(s));
   }
   const programAccounts = new ProgramAccountsCache(rpc);
-  const source = o.source === undefined ? createSource(cfg) : o.source;
+  const source =
+    o.source === undefined ? createSource(cfg, { rpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) }) : o.source;
   if (source instanceof RpcLogsSource) {
     const delay = source.slotDelay;
     perf.externalStage("rpc.afterSlot", () => ringStat(delay));
@@ -257,6 +296,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       m.stats.decodeFailures++;
       log.debug(`decode failure (${info.source}) ${info.signature ?? ""}: ${info.message}`);
     },
+    hint: (h) => {
+      if (h.kind === "launchlabMigration") m.onLaunchLabMigrationHint();
+    },
   };
 
   const tx = new TxHandler({
@@ -305,6 +347,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       srcHealth[0].notes.push(
         ...notes,
         `rpc: ${rpc.stats.calls} calls, ${rpc.stats.errors} errors, ${rpc.stats.dataAllowance} data-allowance, ${rpc.stats.rateLimited} rate-limited`,
+        `raydium: launchlab ${m.stats.launchLabLaunches} launches, ${m.stats.launchLabTrades} trades, ${m.stats.launchLabCompletes} completed, ` +
+          `${m.stats.launchLabGraduations} graduated (+${m.stats.launchLabGraduatesFound} earlier graduates found); ` +
+          `cpmm ${m.stats.cpmmTrades} trades (${m.stats.cpmmIgnored} on other pools ignored); ` +
+          `${m.stats.unattributedTrades} trades without a wallet; registry ${raydium.launchLabPools.size} pools, ` +
+          `${raydium.cpmmPools.size} graduation pools, ${raydium.stats.rejected} CPMM pools rejected, ${raydium.platforms.size} platforms`,
         ...(enricher?.notes() ?? ["enrich: off"]),
         `metadata: ${metadata.stats.requested} requested, ${metadata.stats.cacheHits} cached, ${metadata.stats.fetched} fetched, ` +
           `${metadata.stats.failed} failed, ${metadata.stats.withImage} with an image; images: ${media.stats.requests} requests, ` +
@@ -460,6 +507,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     }),
   );
   const reconcileTimer = reconciler ? setInterval(() => reconciler.sweep(), 5_000) : null;
+  // LaunchLab platform / global configs and CPMM AmmConfigs: fee rates and graduation pools can change.
+  const raydiumTimer = o.pollers !== false ? setInterval(() => raydium.refreshConfigs(), 10 * 60_000) : null;
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
@@ -497,6 +546,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       stopped = true;
       await replay;
       clearInterval(evictTimer);
+      if (raydiumTimer) clearInterval(raydiumTimer);
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
       metrics.stop();

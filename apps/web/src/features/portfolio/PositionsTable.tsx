@@ -61,7 +61,8 @@ const SORT_VALUE: Record<SortKey, (p: Position) => number | string> = {
 const SELL_PCTS = [25, 50, 100] as const;
 
 /** Column widths in ch (DESIGN.md 4.9: fixed, one flexible label column). */
-const W = { bought: 10, sold: 10, holding: 17, mc: 9, pnl: 19, sell: 16, share: 3, held: 6, closed: 6 } as const;
+/** Sortable headers reserve 2ch for their arrow, so "Bought USD" and "Closed" never truncate. */
+const W = { bought: 12, sold: 11, holding: 18, mc: 10, pnl: 19, sell: 16, share: 3, held: 6, closed: 8 } as const;
 
 /** Entry or exit market cap: live supply when the token is in the live set, else the MC recorded with the fills. */
 function FillMc({ mint, priceSol, fallbackUsd }: { mint: string; priceSol: number | null; fallbackUsd: number | null }) {
@@ -185,7 +186,8 @@ const PositionRow = memo(function PositionRow({
         <Money sol={p.boughtSol} unit={false} quote={quote} />
       </td>
       <td className={cn(TD, "text-right")}>
-        {p.soldSol > 0 ? <Money sol={p.soldSol} unit={false} quote={quote} /> : <Num value={null} kind="sol" />}
+        {/* Nothing sold yet: an empty cell, not a column of dashes (Axiom omits it the same way). */}
+        {p.soldSol > 0 && <Money sol={p.soldSol} unit={false} quote={quote} />}
       </td>
       {!history && (
         <td className={cn(TD, "text-right")} title={holding ? `${fmtTokens(p.holdingTokens)} tokens held` : undefined}>
@@ -193,9 +195,7 @@ const PositionRow = memo(function PositionRow({
             <>
               <Num value={p.holdingTokens} kind="tokens" className="text-fg-3" /> <Money sol={p.valueSol} unit={false} quote={quote} />
             </>
-          ) : (
-            <Num value={null} kind="sol" />
-          )}
+          ) : null}
         </td>
       )}
       <td className={cn(TD, "text-right")}>

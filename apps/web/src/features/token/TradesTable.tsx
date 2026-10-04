@@ -18,7 +18,7 @@ import { useToken } from "../../state/token";
 import { type TrackedWallet, useTrackedMap } from "../../state/trackers";
 import { sizeBarPct } from "../trade/tradeMath";
 import { useQuote } from "./money";
-import { ALIGN, type Col, ch, flex, NewRowsBar, SkeletonRows, TableHeader, template, useLiveOrder, usePauseOnHover } from "./table";
+import { ALIGN, type Col, ch, fit, flex, NewRowsBar, SkeletonRows, TableHeader, template, useLiveOrder, usePauseOnHover } from "./table";
 import { useTokenUi } from "./tokenUi";
 
 /*
@@ -40,14 +40,14 @@ type Arrivals = Map<string, number>;
 
 function columns(showPrice: boolean, quoteUnit: string): Col<ColKey>[] {
   const cols: Col<ColKey>[] = [
-    { key: "age", label: "Age", width: ch(5), align: "right" },
+    { key: "age", label: "Age", width: fit(5, 7), align: "right" },
     { key: "side", label: "", width: ch(3), align: "center" },
-    { key: "mc", label: quoteUnit === "USD" ? "MC" : "MC SOL", width: ch(8), align: "right" },
-    { key: "price", label: "Price", width: ch(10), align: "right" },
-    { key: "sol", label: "SOL", width: ch(10), align: "right" },
-    { key: "tokens", label: "Tokens", width: ch(8), align: "right" },
-    { key: "usd", label: "USD", width: ch(8), align: "right" },
-    { key: "trader", label: "Trader", width: flex(16) },
+    { key: "mc", label: quoteUnit === "USD" ? "MC" : "MC SOL", width: fit(8, 13), align: "right" },
+    { key: "price", label: "Price", width: fit(10, 14), align: "right" },
+    { key: "sol", label: "SOL", width: fit(10, 14), align: "right" },
+    { key: "tokens", label: "Tokens", width: fit(8, 12), align: "right" },
+    { key: "usd", label: "USD", width: fit(8, 12), align: "right" },
+    { key: "trader", label: "Trader", width: flex(18) },
     { key: "tx", label: "", width: ch(3), align: "center" },
   ];
   return showPrice ? cols : cols.filter((c) => c.key !== "price");

@@ -217,7 +217,8 @@ describe("config", () => {
       host: "127.0.0.1",
       dryRun: true,
       source: "rpc",
-      rpcLogsPrograms: ["pump", "pumpswap"],
+      rpcLogsPrograms: ["pump", "pumpswap", "launchlab", "cpmm"],
+      rpcLogsTxFetchPerSec: 2,
       allowAnonymousTx: false,
       pumpPortalEnabled: false,
     });

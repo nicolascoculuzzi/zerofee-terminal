@@ -28,4 +28,9 @@ describe("palette dev hits", () => {
     expect(findDevs("dev", live, [], 1)).toHaveLength(1);
     expect(findDevs("", live, [live.a!], 5)).toEqual([]);
   });
+
+  test("a token without a known creator yields no dev row", () => {
+    const anon = token("e", "");
+    expect(findDevs("e", { ...live, e: anon }, [anon], 5)).toEqual([]);
+  });
 });

@@ -538,6 +538,10 @@
   .zf-input::placeholder {
     color: var(--zf-text-4);
   }
+  /* Hover lightens the frame one step; focus keeps the ring and the resting border (4.23). */
+  .zf-input:hover:not(:disabled):not(:focus-visible):not([aria-invalid="true"]) {
+    border-color: var(--zf-text-4);
+  }
   .zf-input:focus-visible {
     outline: 2px solid var(--zf-focus);
     outline-offset: 2px;
@@ -548,6 +552,23 @@
   .zf-input:disabled {
     background: var(--zf-surface-1);
     color: var(--zf-text-4);
+  }
+
+  /* Loading bar for non-React markup; components use <Skeleton> (DESIGN.md 4.18): static, no shimmer. */
+  .zf-skeleton {
+    display: block;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--zf-surface-3);
+  }
+
+  /* Disclosure rows (<details>): no native triangle (a fallback glyph); draw a lucide chevron instead. */
+  .zf-summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .zf-summary::-webkit-details-marker {
+    display: none;
   }
 
   /* Field and stat labels: 11/500 text-3, sentence case (DESIGN.md 2.2 "label"). */

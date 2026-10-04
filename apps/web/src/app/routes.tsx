@@ -11,9 +11,12 @@ const PortfolioPage = lazy(() => import("../features/portfolio/PortfolioPage"));
 const OrdersPage = lazy(() => import("../features/orders/OrdersPage"));
 const OnboardingPage = lazy(() => import("../features/onboarding/OnboardingPage"));
 
-/** While a route chunk loads: one quiet line, top-left, no spinner or shimmer (DESIGN.md 4.18). */
+/**
+ * While a route chunk loads (usually well under a second): an empty, busy page area. No spinner, shimmer or
+ * placeholder copy (DESIGN.md 4.18); each page draws its own skeleton once its chunk is in.
+ */
 function PageFallback() {
-  return <div className="p-3 text-data text-fg-3">Loading…</div>;
+  return <div aria-busy="true" className="min-h-0 flex-1" />;
 }
 
 function page(node: ReactNode) {

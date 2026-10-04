@@ -5,6 +5,9 @@ import type { PoolInfo } from "../accounts/resolver";
 import type { MetadataStore } from "../feeds/metadata";
 import type { WalletFunderRow } from "./writer";
 
+/** trades.venue codes (writer.ts VENUE_CODE). */
+const VENUES: readonly Trade["venue"][] = ["pump", "pumpswap", "launchlab", "cpmm"];
+
 /** One launch of a creator: when (creation time, else first sighting) and whether it migrated. */
 export interface LaunchRow {
   mint: string;
@@ -39,7 +42,7 @@ export function rowToTrade(r: TradeRow): Trade {
     slot: r.slot,
     txIndex: r.tx_index,
     mint: r.mint,
-    venue: r.venue === 0 ? "pump" : "pumpswap",
+    venue: VENUES[r.venue] ?? "pumpswap",
     side: r.side === 0 ? "buy" : "sell",
     trader: r.trader,
     quoteAmount: r.quote_amount,

@@ -11,7 +11,7 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
 import { useCssPx } from "../../lib/cssVar";
-import { fmtInt, shortAddr } from "../../lib/format";
+import { fmtInt, MINUS, plainDecimal, shortAddr, signClass, solTapeParts } from "../../lib/format";
 import { navigateTo } from "../../lib/nav";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
@@ -36,9 +36,9 @@ const liveMc = (r: MonitorRow): number | null => useMarket.getState().tokens[r.m
  */
 const COL = {
   token: "min-w-0 flex-1",
-  holders: "w-[8ch] justify-end",
-  flow: "w-[10ch] justify-end",
-  first: "w-[6ch] justify-end @max-[600px]:hidden",
+  holders: "w-[9ch] justify-end",
+  flow: "w-[12ch] justify-end",
+  first: "w-[10ch] justify-end @max-[600px]:hidden",
   mc: "w-[9ch] justify-end @max-[480px]:hidden",
   risk: "w-[216px] @max-[760px]:hidden",
   pill: "w-16 justify-end",
@@ -50,6 +50,24 @@ function holderNames(holders: string[], tracked: ReadonlyMap<string, TrackedWall
   if (holders.length === 0) return "No tracked wallet holds it now";
   const names = holders.slice(0, 12).map((a) => tracked.get(a)?.name ?? shortAddr(a));
   return `Held by ${names.join(", ")}${holders.length > 12 ? ` and ${holders.length - 12} more` : ""}`;
+}
+
+/**
+ * Net SOL flow as a tape figure: explicit sign, exactly 3 decimals with trailing zeros in text-3
+ * (DESIGN.md 4.9 tape SOL), so the column lines up on the decimal point instead of jumping
+ * between "+16.615" and "+4.56".
+ */
+function FlowSol({ sol }: { sol: number | null | undefined }) {
+  if (typeof sol !== "number" || !Number.isFinite(sol)) return null;
+  const { main, dim } = solTapeParts(sol);
+  const sign = sol > 0 ? "+" : sol < 0 ? MINUS : "";
+  return (
+    <span role="img" aria-label={plainDecimal(sol)} className={cn("zf-num", signClass(sol))}>
+      {sign}
+      {main}
+      {dim && <span className="zf-dim">{dim}</span>}
+    </span>
+  );
 }
 
 const MonitorRowView = memo(
@@ -78,16 +96,14 @@ const MonitorRowView = memo(
           </Tooltip>
         </Cell>
         <Cell className={cn("shrink-0", COL.flow)}>
-          <Num kind="sol" value={row.flowSol} signed />
+          <FlowSol sol={row.flowSol} />
         </Cell>
-        <Cell className={cn("shrink-0", COL.first)}>
-          {row.firstBuyAt === null ? <Num kind="count" value={null} /> : <Age ts={row.firstBuyAt} />}
-        </Cell>
+        <Cell className={cn("shrink-0", COL.first)}>{row.firstBuyAt !== null && <Age ts={row.firstBuyAt} />}</Cell>
         <Cell className={cn("shrink-0 text-fg-1", COL.mc)}>
           <QuoteValue usd={t?.marketCapUsd ?? row.lastMcUsd} sol={t?.marketCapSol} />
         </Cell>
         <Cell className={cn("relative shrink-0", COL.risk)}>
-          <RiskChips risk={t?.risk ?? null} />
+          <RiskChips risk={t?.risk ?? null} pending="quiet" />
         </Cell>
         <Cell className={cn("shrink-0", COL.pill)}>
           <QuickBuyPill mint={row.mint} symbol={token.symbol} source="tracker" size="grid" tabIndex={active ? 0 : -1} />
@@ -124,7 +140,7 @@ const MobileMonitorRow = memo(
             </span>
           </span>
           <span className="relative flex h-5 min-w-0 items-center overflow-hidden">
-            <RiskChips risk={t?.risk ?? null} />
+            <RiskChips risk={t?.risk ?? null} pending="quiet" />
           </span>
         </Cell>
         <QuickBuyPill mint={row.mint} symbol={token.symbol} source="tracker" size="touch" />
@@ -163,7 +179,7 @@ const DEFAULT_DIR: Record<MonitorSortKey, SortDir> = { holders: "desc", flow: "d
  * https://mobbin.com/screens/37ad2b16-f814-48d2-861a-6f396445f479
  * https://mobbin.com/screens/09771a99-b9ea-406e-b3de-aed9a2fe4fb3
  */
-export function Monitor({ query, onAddWallet }: { query: string; onAddWallet: () => void }) {
+export function Monitor({ query, onAddWallet }: { query: string; onAddWallet?: () => void }) {
   const live = useTrackers((s) => s.live);
   const walletCount = useTrackers((s) => s.wallets.length);
   const tracked = useTrackedMap();
@@ -195,19 +211,31 @@ export function Monitor({ query, onAddWallet }: { query: string; onAddWallet: ()
   const empty =
     walletCount === 0 ? (
       <EmptyState
+        className="text-balance"
         icon={<Wallet />}
         title="No wallets tracked"
         body="Add a wallet to see which tokens it holds and how much SOL flows in."
         action={
-          <Button size="sm" variant="secondary" onClick={onAddWallet}>
-            Add wallet
-          </Button>
+          onAddWallet && (
+            <Button size="sm" variant="secondary" onClick={onAddWallet}>
+              Add wallet
+            </Button>
+          )
         }
       />
     ) : q ? (
-      <EmptyState title={`No tokens match “${query.trim()}”`} body="Search by ticker, name, contract address or holder." />
+      <EmptyState
+        className="text-balance"
+        title={`No tokens match “${query.trim()}”`}
+        body="Search by ticker, name, contract address or holder."
+      />
     ) : (
-      <EmptyState icon={<Radar />} title="No tracked holdings yet" body="Tokens show up here as soon as a tracked wallet buys." />
+      <EmptyState
+        className="text-balance"
+        icon={<Radar />}
+        title="No tracked holdings yet"
+        body="Tokens show up here as soon as a tracked wallet buys."
+      />
     );
 
   return (

@@ -44,7 +44,20 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { minutes: 3, clients: 1, db: null, saveDb: null, port: 0, json: null, profile: false, quiet: false, freshPglite: false, replay: null, speed: 1, entry: "apps/server/src/main.ts" };
+  const a: Args = {
+    minutes: 3,
+    clients: 1,
+    db: null,
+    saveDb: null,
+    port: 0,
+    json: null,
+    profile: false,
+    quiet: false,
+    freshPglite: false,
+    replay: null,
+    speed: 1,
+    entry: "apps/server/src/main.ts",
+  };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = () => {

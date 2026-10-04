@@ -19,31 +19,49 @@ export interface StepFrame {
 }
 
 /*
- * Step layout (DESIGN.md 4.19, 5.6): a "Back" ghost xs at the top-left of the content, the title
- * at 16/600, one line of description at 13 text-2, the body, then one primary action. Top-left
- * aligned, never centred, no hero and no illustration.
+ * Step layout (DESIGN.md 4.19, 5.6): inside the setup card, a "Back" ghost xs above the title, the
+ * title at 20/600, one line of description at 13 text-2, the body, then one primary action. No hero,
+ * no illustration.
  */
 export function StepHeader({ frame }: { frame: StepFrame }) {
   return (
     <header className="mb-6">
-      <div className="mb-4 h-5">
+      <div className="mb-3 flex h-6 items-center">
         {frame.onBack && (
-          <Button size="xs" variant="ghost" icon={<ArrowLeft />} onClick={frame.onBack} className="-ml-1.5 max-md:h-11 [&_svg]:size-3.5">
+          <Button size="sm" variant="ghost" icon={<ArrowLeft />} onClick={frame.onBack} className="-ml-2 text-fg-3 max-md:h-11">
             Back
           </Button>
         )}
       </div>
-      <h1 id={STEP_TITLE_ID} className="text-title font-semibold text-fg-1">
+      <h1 id={STEP_TITLE_ID} className="text-display-2 font-semibold text-fg-1">
         {frame.title}
       </h1>
-      <p className="mt-1 text-body text-fg-2">{frame.description}</p>
+      <p className="mt-1.5 max-w-[60ch] text-body text-fg-2">{frame.description}</p>
     </header>
   );
 }
 
-/** The step's actions: the one primary action first, then at most a quiet secondary. */
+/**
+ * The step's actions: the one primary action first, then at most a quiet secondary under it. Full width
+ * across the content column, like the CTAs of a connect or login modal.
+ */
 export function StepActions({ children }: { children: ReactNode }) {
-  return <div className="mt-6 flex flex-wrap items-center gap-2">{children}</div>;
+  return <div className="mt-8 flex flex-col gap-2 [&>a]:w-full [&>button]:w-full">{children}</div>;
+}
+
+/** A quiet grouped surface for step content: rounded 6 px, hairline border, hairline row dividers. */
+export function Panel({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("overflow-hidden rounded-md border border-hairline bg-surface-1", className)}>{children}</div>;
+}
+
+/** Label-value row inside a Panel (Phantom's summary rows: https://mobbin.com/screens/d1e9b056-98fc-4a66-a090-60e46c10304a). */
+export function PanelRow({ label, children, className }: { label: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("flex min-h-10 items-center justify-between gap-4 border-hairline px-3 py-2 not-first:border-t", className)}>
+      <span className="shrink-0 text-data text-fg-3">{label}</span>
+      <span className="min-w-0 text-right text-data text-fg-1">{children}</span>
+    </div>
+  );
 }
 
 export function InlineError({ children }: { children: ReactNode }) {
