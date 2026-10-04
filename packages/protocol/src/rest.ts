@@ -4,6 +4,7 @@
  * Market (public):
  *   GET  /api/health                         HealthResponse
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
+ *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
  *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
  *   GET  /api/program-accounts               ProgramAccountsResponse  (pump Global / FeeConfig, PumpSwap GlobalConfig / FeeConfig)
  *   POST /api/tx                             TxSubmitRequest -> TxSubmitResponse (503 "halted" while the kill switch is on)
@@ -84,6 +85,15 @@ export interface HealthResponse {
 export interface TokenResponse {
   token: TokenSummary;
   tradeContext: TradeContext | null;
+}
+
+/**
+ * GET /api/search. A contract address matches that token exactly (in memory or in the database); any other
+ * query matches tickers and names of the tokens the server holds in memory (live and recently active ones),
+ * best first: exact ticker, ticker prefix, then name; ties go to the most recently traded.
+ */
+export interface SearchResponse {
+  tokens: TokenSummary[];
 }
 
 export interface CandlesResponse {

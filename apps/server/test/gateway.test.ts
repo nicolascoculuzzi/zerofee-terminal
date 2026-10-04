@@ -4,7 +4,7 @@
  * POST /api/tx in dry-run.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { HealthResponse, SourceHealth, TokenResponse, TxSubmitResponse } from "@zerofee/protocol";
+import type { HealthResponse, SearchResponse, SourceHealth, TokenResponse, TxSubmitResponse } from "@zerofee/protocol";
 import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
@@ -202,6 +202,22 @@ describe("REST", () => {
     expect(body.tradeContext?.venue).toBe("pump");
     expect((await fetch(`${base}/api/tokens/${addr("unknown")}`)).status).toBe(404);
     expect((await fetch(`${base}/api/tokens/not-a-mint`)).status).toBe(400);
+  });
+
+  test("GET /api/search: exact contract address, ticker, name, no match, bad input", async () => {
+    const get = async (q: string, extra = "") => {
+      const r = await fetch(`${base}/api/search?q=${encodeURIComponent(q)}${extra}`);
+      return { status: r.status, body: (await r.json()) as SearchResponse };
+    };
+    const symbol = mint.slice(0, 4).toUpperCase(); // FakeCurve names: symbol = first 4 chars, name "Name <first 4>"
+    expect((await get(mint)).body.tokens.map((t) => t.mint)).toEqual([mint]);
+    expect((await get(symbol.toLowerCase())).body.tokens[0]?.mint).toBe(mint);
+    expect((await get(`$${symbol}`)).body.tokens[0]?.mint).toBe(mint);
+    expect((await get(`name ${mint.slice(0, 4)}`)).body.tokens.some((t) => t.mint === mint)).toBe(true);
+    expect((await get(addr("nobody-launched-this"))).body.tokens).toEqual([]);
+    expect((await get("zzzz-no-such-token")).body.tokens).toEqual([]);
+    expect((await get("", "&limit=5")).body.tokens).toEqual([]);
+    expect((await get("x".repeat(65))).status).toBe(400);
   });
 
   test("GET /api/candles merges stored and in-memory candles", async () => {

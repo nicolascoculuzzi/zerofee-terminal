@@ -7,7 +7,7 @@
  * rolled-back events go out as `correction` messages. Slow clients that exceed the backpressure limit
  * are disconnected (they reconnect and resnapshot).
  *
- * REST: GET /api/health, /api/tokens/:mint, /api/candles, /api/program-accounts; POST /api/tx;
+ * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts; POST /api/tx;
  * GET /debug; GET /metrics (Prometheus, token or loopback only: src/metrics.ts). Per-IP token-bucket
  * rate limits; an AuthProvider seam for SIWS sessions.
  *
@@ -25,11 +25,13 @@ import {
   type ClientMessage,
   type ErrorCode,
   type HealthResponse,
+  isAddressLike,
   isTimeframe,
   type OrdersDelta,
   type ParsedTopic,
   type PulseColumn,
   parseTopic,
+  type SearchResponse,
   TIMEFRAME_MS,
   type Timeframe,
   type TokenSummary,
@@ -314,6 +316,7 @@ export class Gateway {
         return new Response(DEBUG_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
       if (req.method === "GET" && url.pathname.startsWith("/api/tokens/"))
         return this.getToken(decodeURIComponent(url.pathname.slice("/api/tokens/".length)));
+      if (req.method === "GET" && url.pathname === "/api/search") return this.search(url);
       if (req.method === "GET" && url.pathname === "/api/candles") return this.getCandles(url);
       if (req.method === "GET" && url.pathname === "/api/program-accounts") {
         const v = this.d.programAccounts?.get();
@@ -354,6 +357,20 @@ export class Gateway {
     const token = this.d.market.summary(mint) ?? this.d.reader?.token(mint)?.summary ?? null;
     if (!token) return apiError(404, "not_found", "unknown token");
     return json({ token, tradeContext: this.d.market.tradeContext(mint) });
+  }
+
+  /** GET /api/search?q&limit: a contract address matches exactly; text matches tickers and names in memory. */
+  private search(url: URL): Response {
+    const q = (url.searchParams.get("q") ?? "").trim();
+    const limit = Math.min(50, Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? 20)) || 20));
+    if (q.length > 64) return apiError(400, "bad_request", "query too long");
+    let tokens: TokenSummary[];
+    if (isAddressLike(q)) {
+      const token = this.d.market.summary(q) ?? this.d.reader?.token(q)?.summary ?? null;
+      tokens = token ? [token] : [];
+    } else tokens = this.d.market.search(q, limit);
+    const body: SearchResponse = { tokens };
+    return json(body);
   }
 
   private getCandles(url: URL): Response {
