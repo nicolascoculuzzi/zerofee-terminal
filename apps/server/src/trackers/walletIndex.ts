@@ -10,8 +10,8 @@
  *
  * Memory is bounded: at most `maxTrackedPerUser` tracked wallets per user (the API's 10,000 cap,
  * re-checked here) and `maxEntries` watcher entries in total; entries past the global cap are refused
- * and counted (stats.refused) rather than growing without limit. About 250 bytes per watched address
- * with one watcher (measured in test/trackers.index.test.ts).
+ * and counted (stats.refused) rather than growing without limit. About 370 bytes per watched address
+ * with one watcher, ~480 with popular wallets shared by many users (scripts/tracker-bench.ts).
  */
 
 export interface TrackedMeta {

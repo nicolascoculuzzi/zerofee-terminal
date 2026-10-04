@@ -678,25 +678,32 @@ export class CopyEngine {
     const pos = task.positions.get(t.mint);
     if (!pos) return;
     const sold = BigInt(t.tokenAmount);
-    let fraction: number;
+    // The leader's sold share as an exact ratio num/den (1/1 = full exit).
+    let num = 1n;
+    let den = 1n;
     let source: CopySignal["fractionSource"];
     const b = ev.balance;
     if (b.source && b.before !== null && b.before > 0n) {
-      fraction = b.after === 0n ? 1 : Math.min(1, ratio(sold, b.before));
+      if (b.after !== 0n) {
+        num = sold < b.before ? sold : b.before;
+        den = b.before;
+      }
       source = b.source;
     } else if (pos.leaderTokens !== null && pos.leaderTokens > 0n) {
-      fraction = Math.min(1, ratio(sold, pos.leaderTokens));
+      num = sold < pos.leaderTokens ? sold : pos.leaderTokens;
+      den = pos.leaderTokens;
       source = "tracked";
     } else {
-      fraction = 1;
       source = "unknown";
     }
+    const fraction = ratio(num, den);
     pos.leaderTokens = b.after ?? (pos.leaderTokens === null ? null : max0(pos.leaderTokens - sold));
     task.stateDirty = true;
     if (!task.config.copySells) return;
     const available = pos.tokens - pos.pendingSellTokens;
     if (available <= 0n) return;
-    const tokens = fraction >= 0.999_999 ? available : (available * BigInt(Math.round(fraction * 1_000_000))) / 1_000_000n;
+    const full = num >= den;
+    const tokens = full ? available : (available * num) / den;
     if (tokens <= 0n) return;
     const token = this.o.token(t.mint);
     const s = this.withLeader(this.baseSignal(task, "sell", t.mint, token, now), t, token?.decimals ?? pos.decimals);
@@ -715,7 +722,7 @@ export class CopyEngine {
           leader: task.leader,
           leaderSignature: t.signature,
           fraction,
-          full: fraction >= 0.999_999,
+          full,
         });
         if (fired) log.info(`armed exit fired for task ${task.id} on ${t.mint}`);
       } catch (e) {

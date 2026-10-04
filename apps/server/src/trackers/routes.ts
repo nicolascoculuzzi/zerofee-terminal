@@ -106,8 +106,6 @@ export function mergeCopyConfig(base: CopyTaskConfig, patch: unknown): CopyTaskC
     if (b.mints !== undefined) c.blacklist.mints = addressList(b.mints, "config.blacklist.mints");
     if (b.devs !== undefined) c.blacklist.devs = addressList(b.devs, "config.blacklist.devs");
   }
-  if (c.maxPerBuySol > c.totalSpendLimitSol) throw badRequest("config.maxPerBuySol cannot exceed config.totalSpendLimitSol");
-  if (c.dailySpendLimitSol > c.totalSpendLimitSol) throw badRequest("config.dailySpendLimitSol cannot exceed config.totalSpendLimitSol");
   return c;
 }
 

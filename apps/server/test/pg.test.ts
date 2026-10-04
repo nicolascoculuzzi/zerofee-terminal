@@ -61,7 +61,10 @@ describe("migrations through Bun.sql (production path)", () => {
       await t.db.query("INSERT INTO admin_audit_log (at, actor, action, ok) VALUES (now(), 'x', 'y', true)");
       await expect(t.db.query("DELETE FROM admin_audit_log")).rejects.toThrow("append-only");
       // A failing migration rolls back entirely.
-      const broken = [...MIGRATIONS, { version: LATEST + 1, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" }];
+      const broken = [
+        ...MIGRATIONS,
+        { version: LATEST + 1, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" },
+      ];
       await expect(migrate(t.db, broken)).rejects.toThrow();
       expect(await t.db.query("SELECT to_regclass('public.ok_part') AS t")).toEqual([{ t: null }]);
       expect((await t.db.query("SELECT max(version) AS v FROM schema_migrations"))[0]?.v).toBe(LATEST);
