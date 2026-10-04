@@ -1,9 +1,9 @@
 import { useEffect } from "react";
-import { RouterProvider } from "react-router";
+import { BrowserRouter } from "react-router";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { startFeed } from "../state/feed";
 import { useSettings } from "../state/settings";
-import { router } from "./routes";
+import { AppRoutes } from "./routes";
 
 /**
  * Root: applies data-theme, data-density and data-cvd on <html> from settings (DESIGN.md 9.5
@@ -33,5 +33,9 @@ export function App() {
 
   useEffect(() => startFeed(), []);
 
-  return <RouterProvider router={router} />;
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
+  );
 }

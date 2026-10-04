@@ -12,7 +12,6 @@
  * accepts their armed orders. Backup confirmations and archived wallets are UI state kept in this browser.
  */
 
-import { createSignInMessageText } from "@zerofee/auth";
 import type { MeResponse, NonceResponse, TradingWallet as ServerTradingWallet, SignInRequest } from "@zerofee/protocol";
 import { isSignerError, type WalletInfo } from "@zerofee/signer";
 import { IS_LIVE } from "../../runtime";
@@ -35,7 +34,7 @@ import { firstSignature, toBase58, toBase64 } from "./bytes";
 import type { LiveDataSource } from "./LiveDataSource";
 import { signerConfigFromSettings } from "./signerConfig";
 import type { SignerHost } from "./signerHost";
-import { buildSolTransfer, simulationError, submitSigned, TransferError } from "./transfers";
+import { TransferError } from "./transferError";
 import { ConnectedSession, connectWallet, type DetectedWallet, detectWallets, onWalletsChanged, PROVIDERS } from "./walletStandard";
 
 const PROVIDER_NAME: Record<WalletProvider, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
@@ -267,7 +266,8 @@ export class LiveWalletService implements WalletService {
   async previewSignIn(): Promise<string> {
     const connected = this.state.connected;
     if (!connected) throw new Error("Connect a wallet first");
-    const n = await api<NonceResponse>("/api/auth/nonce");
+    // the SIWS formatter (and @solana/kit's address checks behind it) loads on sign-in, not on page load
+    const [n, { createSignInMessageText }] = await Promise.all([api<NonceResponse>("/api/auth/nonce"), import("@zerofee/auth")]);
     const text = createSignInMessageText({ ...n.input, address: connected.address });
     this.pendingSignIn = { input: n.input, expiresAt: n.expiresAt, text };
     return text;
@@ -365,12 +365,15 @@ export class LiveWalletService implements WalletService {
       return;
     }
     const have = new Set(known.map((w) => w.publicKey));
+    let added = false;
     for (const w of this.vaultWallets) {
       if (have.has(w.address)) continue;
       await api("/api/trading-wallets", { method: "POST", body: { publicKey: w.address, label: w.label } }).catch(() => undefined);
+      added = true;
     }
-    // The wallet topics answered "forbidden" for unregistered wallets: resubscribe with the new rights.
-    this.d.data.socket.reconnect();
+    // The wallet topics answered "forbidden" for unregistered wallets: resubscribe with the new rights. When
+    // every wallet was already registered nothing changed: keep the socket (a reconnect re-sends every snapshot).
+    if (added) this.d.data.socket.reconnect();
   }
 
   // -------------------------------------------------------------------------------------------
@@ -498,6 +501,8 @@ export class LiveWalletService implements WalletService {
     const conn = this.conn;
     if (!conn) throw new Error("Connect your wallet first");
     try {
+      // transaction building (packages/core) loads on first use: it is not needed for the first screen
+      const { buildSolTransfer } = await import("./transfers");
       const unsigned = buildSolTransfer({
         from: conn.address,
         to: tradingAddress,
@@ -516,6 +521,7 @@ export class LiveWalletService implements WalletService {
     if (!to) throw new Error("Connect your wallet first");
     if (this.state.locked) throw new Error("Unlock the trading wallet to withdraw");
     try {
+      const { buildSolTransfer } = await import("./transfers");
       const unsigned = buildSolTransfer({ from: tradingAddress, to, lamports: solToLamports(sol), chain: this.d.data.chain() });
       // The firewall allows SOL only to the connected wallet bound into the vault (and reviewed tips).
       const { signedTransaction } = await this.d.signer.rpc.call("sign", { walletId: tradingAddress, transaction: unsigned });
@@ -527,6 +533,7 @@ export class LiveWalletService implements WalletService {
   }
 
   private async submit(signed: Uint8Array): Promise<TransferReceipt> {
+    const { simulationError, submitSigned } = await import("./transfers");
     const res = await submitSigned(signed, "reduced");
     if (res.dryRun) {
       if (res.simulation?.err) throw new Error(`Simulation failed: ${simulationError(res.simulation.err, res.simulation.logs)}`);

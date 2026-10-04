@@ -10,6 +10,7 @@ import type {
   ChainDelta,
   ChainState,
   HealthResponse,
+  PulseBootstrapResponse,
   SearchResponse,
   TradeContext,
   Order as WireOrder,
@@ -115,6 +116,22 @@ export class LiveDataSource implements DataSource, ViewHost {
       active = false;
       if (v.remove(h) && this.views.get(topic) === v) this.views.delete(topic);
     };
+  }
+
+  /**
+   * Seeds the Pulse views with the REST bootstrap (GET /api/pulse) where the socket has not delivered its own
+   * snapshot yet. Views that do not exist yet are created (and kept until their first subscriber leaves).
+   */
+  seedPulse(b: PulseBootstrapResponse): void {
+    for (const column of ["new", "final", "migrated"] as const) {
+      const topic = `pulse:${column}` as const;
+      let view = this.views.get(topic);
+      if (!view) {
+        view = this.createView(topic);
+        this.views.set(topic, view);
+      }
+      if (view instanceof PulseView) view.seed(b.columns[column]);
+    }
   }
 
   getConnectionState(): FeedConnectionState {

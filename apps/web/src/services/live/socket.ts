@@ -17,6 +17,7 @@
  * (the `chain` topic ticks several times a second) is treated as dead and reopened.
  */
 import type { ClientMessage, CorrectionMessage, DeltaMessage, ErrorMessage, SnapshotMessage } from "@zerofee/protocol";
+import { mark, samples } from "../../lib/perf";
 
 export type WireMessage = SnapshotMessage | DeltaMessage | CorrectionMessage;
 
@@ -231,6 +232,7 @@ export class GatewaySocket {
       if (this.stats.connects > 1) this.stats.reconnects++;
       this.failures = 0;
       this.lastMessageAt = this.clock.now();
+      mark("zf:ws-open");
       this.setState("live");
       // Fresh connection: every topic starts over from a snapshot.
       this.queue.length = 0;
@@ -356,7 +358,9 @@ export class GatewaySocket {
     if (!e) return; // unsubscribed meanwhile
     if (msg.type === "snapshot") {
       e.lastSeq = msg.seq;
+      mark("zf:ws-first-snapshot");
     } else {
+      if (msg.ts !== undefined) samples.publishToReceive.add(Date.now() - msg.ts);
       if (e.lastSeq === null) return; // before the (re)snapshot
       if (msg.seq <= e.lastSeq) {
         this.stats.stale++;

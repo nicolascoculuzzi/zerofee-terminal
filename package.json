@@ -9,7 +9,7 @@
   "scripts": {
     "test": "bun test",
     "test:validator": "ZF_VALIDATOR_TESTS=1 bun test packages/core/test/integration",
-    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/core/tsconfig.e2e.json --noEmit && tsc -p packages/protocol --noEmit && tsc -p apps/cli --noEmit && tsc -p apps/server --noEmit && tsc -p packages/auth --noEmit && tsc -p packages/signer --noEmit && tsc -p packages/auth/tsconfig.test.json --noEmit && tsc -p packages/signer/tsconfig.test.json --noEmit && tsc -p deploy --noEmit && tsc -p apps/web --noEmit",
+    "typecheck": "tsc -p packages/core --noEmit && tsc -p packages/core/tsconfig.e2e.json --noEmit && tsc -p packages/protocol --noEmit && tsc -p apps/cli --noEmit && tsc -p apps/server --noEmit && tsc -p packages/auth --noEmit && tsc -p packages/signer --noEmit && tsc -p packages/auth/tsconfig.test.json --noEmit && tsc -p packages/signer/tsconfig.test.json --noEmit && tsc -p deploy --noEmit && tsc -p apps/web --noEmit && tsc -p apps/web/scripts --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "trade": "bun run apps/cli/src/index.ts",
@@ -18,7 +18,9 @@
     "fork:accounts": "bun run packages/core/scripts/fork/accounts.ts",
     "e2e": "bun run packages/core/e2e/run.ts",
     "e2e:orders": "bun test --timeout 300000 ./apps/server/e2e/armed.e2e.ts",
-    "perf": "bun apps/server/scripts/perf.ts"
+    "perf": "bun apps/server/scripts/perf.ts",
+    "perf:web": "bun run --cwd apps/web perf:load",
+    "preview:live": "bun run --cwd apps/web preview:live"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

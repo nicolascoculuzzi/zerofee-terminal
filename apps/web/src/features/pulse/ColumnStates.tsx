@@ -1,8 +1,10 @@
 import { SearchX, SlidersHorizontal } from "lucide-react";
+import { useEffect } from "react";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
 import { FINAL_STRETCH_PROGRESS } from "../../config";
 import { cn } from "../../lib/cn";
+import { mark } from "../../lib/perf";
 import type { PulseColumnId } from "../../protocol";
 
 /**
@@ -12,6 +14,7 @@ import type { PulseColumnId } from "../../protocol";
  * https://mobbin.com/screens/09371ef3-f0d0-4fc9-8ab1-607ab3d0e4ab
  */
 export function SkeletonCards({ count = 8, mobile }: { count?: number; mobile?: boolean }) {
+  useEffect(() => mark("zf:skeleton"), []);
   return (
     <div aria-hidden="true">
       {Array.from({ length: count }, (_, i) => (

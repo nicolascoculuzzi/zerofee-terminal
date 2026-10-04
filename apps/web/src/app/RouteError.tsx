@@ -1,19 +1,14 @@
 import { AlertTriangle } from "lucide-react";
-import { isRouteErrorResponse, useNavigate, useRouteError } from "react-router";
+import { useNavigate } from "react-router";
 import { Button } from "../components/ui/Button";
 
 /**
  * Route crash (DESIGN.md 4.18): top-left aligned, a warn icon, what happened, one way back.
  * Panels fail inline; this only catches a view that couldn't render at all.
  */
-export function RouteError() {
-  const error = useRouteError();
+export function RouteError({ error }: { error: unknown }) {
   const navigate = useNavigate();
-  const message = isRouteErrorResponse(error)
-    ? `${error.status} ${error.statusText}`
-    : error instanceof Error
-      ? error.message
-      : "Something went wrong";
+  const message = error instanceof Error ? error.message : "Something went wrong";
   return (
     <div className="min-h-screen bg-bg p-6">
       <div className="flex max-w-xl flex-col items-start gap-3">

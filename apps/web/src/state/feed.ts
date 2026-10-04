@@ -1,9 +1,9 @@
 import { fmtSol } from "../lib/format";
 import { navigateTo } from "../lib/nav";
+import { notePainted } from "../lib/perf";
 import { playTone } from "../lib/sound";
 import type { Order, PulseColumnId, TokenSummary, TrackedTrade } from "../protocol";
 import { getServices } from "../services";
-import { setApprovalRenderer } from "../services/mock/approvalBroker";
 import { type PulseBatch, useMarket } from "./market";
 import { useOrders } from "./orders";
 import { useSettings } from "./settings";
@@ -45,21 +45,28 @@ export function startFeed(): () => void {
   const stops: (() => void)[] = [];
 
   // Mock-only: render the simulated wallet-extension popup through the UI store (live mode uses the
-  // real extension's own popup).
-  if (services.simulated) {
-    setApprovalRenderer(
-      (request) =>
-        new Promise<boolean>((resolve) => {
-          useUi.getState().setApproval({
-            request,
-            resolve: (ok) => {
-              useUi.getState().setApproval(null);
-              resolve(ok);
-            },
-          });
-        }),
-    );
-    stops.push(() => setApprovalRenderer(null));
+  // real extension's own popup). Behind the build-time literal so live builds leave the mock module out.
+  if (import.meta.env.VITE_DATA_SOURCE !== "live" && services.simulated) {
+    let active = true;
+    void import("../services/mock/approvalBroker").then(({ setApprovalRenderer }) => {
+      if (!active) return;
+      setApprovalRenderer(
+        (request) =>
+          new Promise<boolean>((resolve) => {
+            useUi.getState().setApproval({
+              request,
+              resolve: (ok) => {
+                useUi.getState().setApproval(null);
+                resolve(ok);
+              },
+            });
+          }),
+      );
+      stops.push(() => setApprovalRenderer(null));
+    });
+    stops.push(() => {
+      active = false;
+    });
   }
 
   // Connection state.
@@ -73,6 +80,10 @@ export function startFeed(): () => void {
     migrated: { snapshot: null, upsert: new Map(), remove: new Set() },
   };
   let dirty = false;
+  /** A column snapshot is waiting: apply it on the next frame, whatever the Pulse rate setting. */
+  let snapshotPending = false;
+  /** performance.now() of the oldest buffered, not yet applied Pulse message (receive -> paint samples). */
+  let firstBufferedAt = 0;
   for (const column of COLUMNS) {
     stops.push(
       subscribeSequenced(
@@ -83,6 +94,8 @@ export function startFeed(): () => void {
           b.upsert.clear();
           b.remove.clear();
           dirty = true;
+          snapshotPending = true;
+          if (!firstBufferedAt) firstBufferedAt = performance.now();
         },
         (delta) => {
           const b = buffers[column];
@@ -95,6 +108,7 @@ export function startFeed(): () => void {
             b.upsert.set(t.mint, t);
           }
           dirty = true;
+          if (!firstBufferedAt) firstBufferedAt = performance.now();
         },
       ),
     );
@@ -106,10 +120,13 @@ export function startFeed(): () => void {
   const frame = (now: number) => {
     raf = requestAnimationFrame(frame);
     const hz = Math.min(10, Math.max(4, useSettings.getState().display.pulseHz));
-    if (now - lastFlush < 1000 / hz) return;
+    if (now - lastFlush < 1000 / hz && !snapshotPending) return;
     lastFlush = now;
     if (dirty) {
       dirty = false;
+      snapshotPending = false;
+      notePainted(firstBufferedAt);
+      firstBufferedAt = 0;
       const batches: PulseBatch[] = COLUMNS.map((column) => {
         const b = buffers[column];
         const batch: PulseBatch = {

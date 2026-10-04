@@ -1,11 +1,5 @@
 import { type ComponentType, lazy, type ReactNode, Suspense } from "react";
-import { ApprovalModal } from "../features/trade/ApprovalModal";
-import { UnlockModal } from "../features/trade/UnlockModal";
 import { useUi } from "../state/ui";
-import { PanicDialog } from "./PanicDialog";
-import { RiskConfirmDialog } from "./RiskConfirmDialog";
-import { Toasts } from "./Toasts";
-import { TradeReviewSheet } from "./TradeReviewSheet";
 
 /** React.lazy for a named export. */
 function lazyNamed<M, K extends keyof M>(load: () => Promise<M>, name: K) {
@@ -15,9 +9,10 @@ function lazyNamed<M, K extends keyof M>(load: () => Promise<M>, name: K) {
 /*
  * Overlays that aren't needed for the first paint load in their own chunks, keeping the shell
  * plus Pulse inside the initial-JS budget (DESIGN.md 8). They stay mounted, so their chunks load
- * right after start-up and open instantly; each has its own boundary so a slow chunk never hides
- * another overlay. The trade-critical ones (unlock, wallet approval, risk confirm, touch review,
- * Panic, toasts) stay in the main bundle.
+ * right after start-up (in parallel with the first data, a few KB each) and are in place long before
+ * anything can open them; each has its own boundary so a slow chunk never hides another overlay. That
+ * now includes the trade-critical ones (unlock, wallet approval, risk confirm, touch review, Panic,
+ * toasts): their state lives in stores, so nothing raised before a chunk lands is lost.
  */
 const SearchModal = lazyNamed(() => import("../features/search/SearchModal"), "SearchModal");
 const FundModal = lazyNamed(() => import("../features/trade/FundModal"), "FundModal");
@@ -25,6 +20,12 @@ const InstantTradeWindow = lazyNamed(() => import("../features/trade/InstantTrad
 const TrackerDock = lazyNamed(() => import("../features/trackers/TrackerDock"), "TrackerDock");
 const SettingsDrawer = lazy(() => import("../features/settings/SettingsDrawer"));
 const HotkeysHelp = lazyNamed(() => import("./HotkeysHelp"), "HotkeysHelp");
+const UnlockModal = lazyNamed(() => import("../features/trade/UnlockModal"), "UnlockModal");
+const ApprovalModal = lazyNamed(() => import("../features/trade/ApprovalModal"), "ApprovalModal");
+const PanicDialog = lazyNamed(() => import("./PanicDialog"), "PanicDialog");
+const RiskConfirmDialog = lazyNamed(() => import("./RiskConfirmDialog"), "RiskConfirmDialog");
+const TradeReviewSheet = lazyNamed(() => import("./TradeReviewSheet"), "TradeReviewSheet");
+const Toasts = lazyNamed(() => import("./Toasts"), "Toasts");
 
 function Lazy({ children }: { children: ReactNode }) {
   return <Suspense fallback={null}>{children}</Suspense>;
@@ -45,21 +46,33 @@ export function GlobalOverlays() {
       <Lazy>
         <FundModal />
       </Lazy>
-      <UnlockModal />
-      <ApprovalModal />
+      <Lazy>
+        <UnlockModal />
+      </Lazy>
+      <Lazy>
+        <ApprovalModal />
+      </Lazy>
       <Lazy>
         <HotkeysHelp />
       </Lazy>
-      <PanicDialog />
-      <RiskConfirmDialog />
-      <TradeReviewSheet />
+      <Lazy>
+        <PanicDialog />
+      </Lazy>
+      <Lazy>
+        <RiskConfirmDialog />
+      </Lazy>
+      <Lazy>
+        <TradeReviewSheet />
+      </Lazy>
       <Lazy>
         <InstantTradeWindow />
       </Lazy>
       <Lazy>
         <TrackerDock />
       </Lazy>
-      <Toasts />
+      <Lazy>
+        <Toasts />
+      </Lazy>
     </>
   );
 }

@@ -10,7 +10,31 @@
     <title>zerofee</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!--
+      Static boot skeleton (DESIGN.md 4.18): painted with the stylesheet alone, before any script runs, so the
+      first paint is the terminal's frame and skeleton rows instead of a blank page. React replaces it on its
+      first render. Classes only (the CSP forbids inline styles); the same bars as SkeletonCards.
+    -->
+    <div id="root"><div class="flex h-full min-h-0 flex-col bg-bg" aria-busy="true" aria-label="Loading">
+      <div class="h-11 shrink-0 border-b border-hairline bg-surface-1"></div>
+      <div class="grid min-h-0 flex-1 grid-cols-1 gap-px bg-hairline lg:grid-cols-3">
+        <div class="bg-surface-1"><div class="h-9 border-b border-hairline"></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+        </div>
+        <div class="hidden bg-surface-1 lg:block"><div class="h-9 border-b border-hairline"></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+        </div>
+        <div class="hidden bg-surface-1 lg:block"><div class="h-9 border-b border-hairline"></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+          <div class="grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-2"><span class="size-card-avatar rounded-sm bg-surface-3"></span><span class="flex flex-col gap-2"><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span><span class="h-2 w-3/5 rounded-xs bg-surface-3"></span></span><span class="flex flex-col items-end gap-2"><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span><span class="h-2 w-2/5 rounded-xs bg-surface-3"></span></span></div>
+        </div>
+      </div>
+    </div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
