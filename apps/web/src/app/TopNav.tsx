@@ -1,11 +1,12 @@
 import { ChevronDown, Lock, LockOpen, Menu, Search, Settings, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, useNavigate } from "react-router";
+import { Link, NavLink, useLocation, useNavigate } from "react-router";
 import { Button, IconButton } from "../components/ui/Button";
 import { CountBadge } from "../components/ui/bits";
 import { Hotkey, NumberInput, Segmented } from "../components/ui/controls";
 import { MenuItem, MenuSeparator, Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
+import { openSettingsAt } from "../features/settings/sections";
 import { cn } from "../lib/cn";
 import { fmtSol, fmtSolShort, shortAddr } from "../lib/format";
 import { compactLabel } from "../lib/hotkeys";
@@ -31,10 +32,12 @@ export const NAV_ITEMS = [
   { to: "/portfolio", label: "Portfolio" },
 ] as const;
 
-/** Landing chip: Reduced/Secure in text-2 with ShieldCheck; Fast in warn with Zap (sandwich risk). */
+/**
+ * Landing chip: Reduced/Secure in text-2 with ShieldCheck; Fast in warn with Zap (sandwich risk).
+ * Click opens Settings on the Landing section (DESIGN.md 4.1).
+ */
 export function LandingIndicator() {
   const preset = useSettings((s) => s.presets[s.activePreset]);
-  const openSettings = useUi((s) => s.openSettings);
   const info = LANDING_INFO[preset.buy.landing];
   const Icon = info.risky ? Zap : ShieldCheck;
   return (
@@ -52,7 +55,7 @@ export function LandingIndicator() {
     >
       <button
         type="button"
-        onClick={() => openSettings("presets")}
+        onClick={() => openSettingsAt("landing")}
         className={cn(
           "flex h-control items-center gap-1 rounded-sm px-2 text-data font-medium transition-colors hover:bg-surface-3",
           info.risky ? "text-warn" : "text-fg-2",
@@ -304,11 +307,16 @@ function NavMenu({ armed }: { armed: number }) {
   );
 }
 
-/** Mobile header (DESIGN.md 5.8): 44px, the mark, a quick-buy chip, the balance and search. */
+/**
+ * Mobile header (DESIGN.md 5.8): 44px, the mark, a quick-buy chip, the balance and search. Token
+ * pages draw their own phone header (back, avatar, ticker, star, share), so this one steps aside.
+ */
 function MobileHeader() {
+  const { pathname } = useLocation();
   const openSearch = useUi((s) => s.openSearch);
   const quickBuy = useSettings((s) => s.quickBuySol);
   const openSettings = useUi((s) => s.openSettings);
+  if (pathname.startsWith("/t/")) return null;
   return (
     <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline bg-surface-1 px-3 pt-[env(safe-area-inset-top)] md:hidden">
       <Link to="/pulse" aria-label="zerofee home" className="shrink-0">
