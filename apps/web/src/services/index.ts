@@ -1,4 +1,5 @@
 import type { DataSourceKind } from "../runtime";
+import type { CopyService } from "./copyService";
 import type { DataSource } from "./dataSource";
 import type { TradeService } from "./tradeService";
 import type { WalletService } from "./walletService";
@@ -39,6 +40,8 @@ export interface Services {
   simulated: boolean;
   source: DataSourceKind;
   features: ServiceFeatures;
+  /** Copy trading (live only; null in the simulation). */
+  copy: CopyService | null;
   /** Mock-only defaults (tracked wallets that exist in the simulated wallet pool). */
   defaults: { trackedWallets: DefaultTrackedWallet[] };
 }

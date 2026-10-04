@@ -44,6 +44,8 @@ interface TradeRequestBase {
 
 export interface BuyRequest extends TradeRequestBase {
   solAmount: number;
+  /** Copy trades: never pay more than this per whole token (SOL); the live engine raises the minimum out to match. */
+  maxPriceSol?: number | null;
 }
 
 export interface SellRequest extends TradeRequestBase {

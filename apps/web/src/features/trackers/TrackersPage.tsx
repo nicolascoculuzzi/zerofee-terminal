@@ -5,8 +5,10 @@ import { MenuItem, MenuSeparator, Popover } from "../../components/ui/Popover";
 import { cn } from "../../lib/cn";
 import { fmtInt } from "../../lib/format";
 import { BREAKPOINT, useMediaQuery } from "../../lib/useMediaQuery";
+import { getServices } from "../../services";
 import { MAX_TRACKED_WALLETS, useTrackers } from "../../state/trackers";
 import { SearchField } from "./bits";
+import { CopyPane } from "./CopyPane";
 import { ExportMenu, jsonExportActions, MenuList } from "./ExportMenu";
 import { useIsMobile, useQuickBuyHotkey } from "./hooks";
 import { ImportWalletsModal } from "./ImportWalletsModal";
@@ -32,6 +34,7 @@ function walletExportActions() {
 function searchPlaceholder(tab: TrackerTab | TrackerPane): string {
   if (tab === "x") return "Search posts or handles";
   if (tab === "monitor") return "Search tokens or holders";
+  if (tab === "copy") return "Search copy tasks or signals";
   return "Search wallets or tokens";
 }
 
@@ -135,7 +138,10 @@ export default function TrackersPage() {
   const deferredQuery = useDeferredValue(query);
   useQuickBuyHotkey();
 
-  const shown: TrackerTab = wide ? pane : tab;
+  // Copy trading exists in live mode only (Services.copy).
+  const copyOn = getServices().copy !== null;
+  const picked: TrackerTab = wide ? pane : tab;
+  const shown: TrackerTab = picked === "copy" && !copyOn ? "trades" : picked;
   const showTrades = (address: string) => {
     setQuery(address);
     setTab("trades");
@@ -156,6 +162,7 @@ export default function TrackersPage() {
       unread: unreadPosts,
       title: "X feed",
     },
+    ...(copyOn ? [{ id: "copy" as const, label: "Copy", title: "Copy trading" }] : []),
   ];
   const walletsTab: TabDef<TrackerTab> = { id: "wallets", label: "Wallets", count: fmtInt(walletCount) };
 
@@ -163,6 +170,7 @@ export default function TrackersPage() {
   if (shown === "wallets") content = <WalletManager query={deferredQuery} onShowTrades={showTrades} toolbar={<WalletPaneToolbar />} />;
   else if (shown === "trades") content = <LiveTrades query={deferredQuery} onAddWallet={openAdd} />;
   else if (shown === "monitor") content = <Monitor query={deferredQuery} onAddWallet={openAdd} />;
+  else if (shown === "copy") content = <CopyPane query={deferredQuery} />;
   else content = <XPane query={deferredQuery} />;
 
   const search = (

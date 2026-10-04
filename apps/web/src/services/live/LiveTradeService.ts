@@ -418,12 +418,21 @@ export class LiveTradeService implements TradeService {
       }
       if (amount <= 0n) throw new TradeError("Sell amount rounds to zero");
     }
-    const slippageBps = Math.min(MAX_SLIPPAGE_BPS, Math.max(0, Math.round(req.settings.slippagePct * 100)));
-    const trade = await buildTrade(
-      state,
-      { side, amount, slippageBps },
-      { jupiter: { ...this.d.jupiter, forJitoBundle: req.settings.landing === "secure" } },
-    );
+    let slippageBps = Math.min(MAX_SLIPPAGE_BPS, Math.max(0, Math.round(req.settings.slippagePct * 100)));
+    const opts = { jupiter: { ...this.d.jupiter, forJitoBundle: req.settings.landing === "secure" } };
+    let trade = await buildTrade(state, { side, amount, slippageBps }, opts);
+    const maxPriceSol = side === "buy" ? ((req as BuyRequest).maxPriceSol ?? null) : null;
+    if (maxPriceSol !== null && maxPriceSol > 0) {
+      // Never pay more than maxPriceSol per whole token (copy trades' drift guard): the minimum out is at
+      // least spend / maxPrice, in nano-lamports so tiny prices keep their precision.
+      const priceNano = BigInt(Math.max(1, Math.round(maxPriceSol * 1e18)));
+      const floor = (amount * 1_000_000_000n * 10n ** BigInt(state.mintInfo.decimals) + priceNano - 1n) / priceNano;
+      if (trade.quote.expectedOut < floor) throw new TradeError("Price moved past the copy's limit");
+      if (trade.quote.minOut < floor) {
+        slippageBps = Number(((trade.quote.expectedOut - floor) * 10_000n) / trade.quote.expectedOut);
+        trade = await buildTrade(state, { side, amount, slippageBps }, opts);
+      }
+    }
 
     let tables: Record<string, Address[]> | undefined;
     if (trade.lookupTables && Object.keys(trade.lookupTables).length > 0) {

@@ -23,6 +23,7 @@ export function createMockServices(): Services {
     simulated: true,
     source: "mock",
     features: MOCK_FEATURES,
+    copy: null,
     defaults: { trackedWallets: engine.defaultTracked },
   };
 }

@@ -1,6 +1,7 @@
 import type { JupiterTradeOptions } from "@zerofee/core";
 import { wsUrl } from "../../runtime";
 import type { Services } from "../index";
+import { CopyEngine } from "./copy";
 import { LiveDataSource } from "./LiveDataSource";
 import { LiveTradeService } from "./LiveTradeService";
 import { LiveWalletService } from "./LiveWalletService";
@@ -43,6 +44,9 @@ export async function createLiveServices(): Promise<Services> {
     onSessionChange: (listener) => wallet.subscribe(() => listener()),
     onError: (message) => console.warn(`tracked wallets: ${message}`),
   }).start();
+  // Copy-trade signals are acted on while this tab is open and the keystore unlocked.
+  const copy = new CopyEngine({ data, trade, locked: () => wallet.getState().locked });
+  copy.start();
   return {
     data,
     trade,
@@ -50,6 +54,7 @@ export async function createLiveServices(): Promise<Services> {
     simulated: false,
     source: "live",
     features: LIVE_FEATURES,
+    copy,
     defaults: { trackedWallets: [] },
   };
 }

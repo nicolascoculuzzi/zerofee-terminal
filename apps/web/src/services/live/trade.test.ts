@@ -387,6 +387,24 @@ describe("instant trades through the signer worker (dry run)", () => {
     expect(h.submitted).toHaveLength(0);
   });
 
+  test("copy buys: never priced above maxPriceSol (refused when the quote is past it; min-out raised to it)", async () => {
+    const ctx = await curveContext();
+    const h = harness({ ctx, token: wireToken({ mint: ctx.mint }) });
+    const price = Number(BigInt(ctx.virtualQuoteReserves)) / 1e9 / (Number(BigInt(ctx.virtualTokenReserves)) / 1e6);
+    const refused = await h.svc.buy({ ...request(ctx.mint), solAmount: 0.1, maxPriceSol: price * 0.5 });
+    expect(refused.status).toBe("failed");
+    expect(refused.error).toContain("Price moved");
+    expect(h.signCalls).toHaveLength(0);
+    // Just above the current price (fees included): slippage tightened so min-out >= spend / maxPrice.
+    const limit = price * 1.03;
+    const ok = await h.svc.buy({ ...request(ctx.mint), solAmount: 0.1, maxPriceSol: limit });
+    expect(ok.error).toBeNull();
+    const exp = h.signCalls[0]?.expectations?.[0];
+    expect(exp?.slippageBps).toBeLessThan(1500);
+    const minOut = ((exp?.expectedOut ?? 0n) * BigInt(10_000 - (exp?.slippageBps ?? 0))) / 10_000n;
+    expect(Number(minOut) / 1e6).toBeGreaterThanOrEqual((0.1 / limit) * 0.9999);
+  });
+
   test("a buy over the per-trade cap is refused by the signer firewall", async () => {
     const ctx = await curveContext();
     const h = harness({ ctx, token: wireToken({ mint: ctx.mint }) });
