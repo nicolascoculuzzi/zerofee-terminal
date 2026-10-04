@@ -25,11 +25,11 @@ Legend: ✅ merged and verified · 🔨 building · ⏳ queued · 🙋 needs you
 | Piece | Status |
 |---|---|
 | Armed orders core: nonce slots, lookup tables, variant grids, triggers | ✅ (validator suite 10/10; all armed txs pass the firewall; worst case 1,053 of 1,232 bytes) |
-| Armed orders: server engine + UI | ✅ end-to-end on the mainnet fork (TP, OCO, SL ladder, cancel, PumpSwap SL, live migration snipe: 19/19 e2e); 🔨 server engine; UI view built |
+| Armed orders: server engine + UI | ✅ end-to-end on the mainnet fork (TP, OCO, SL ladder, cancel, PumpSwap SL, live migration snipe: 19/19 e2e); ✅ server engine (intake, triggers, nonce monitor, halt/Panic cancels); UI view built, wiring pending |
 | Raydium LaunchLab + CPMM (StonkFun, Bonk) | ✅ engine (mainnet dry runs exact); 🔨 firewall rules |
 | Jupiter `/build` fallback for the long tail | ⏳ |
-| Wallet tracker + alerts (Web Push, Telegram, Discord) | ✅ alert delivery + accounts/settings server; 🔨 tracker matcher (Telegram bot token 🙋) |
-| Copy trading, trailing stops, DCA, dev-sell exits | ⏳ |
+| Wallet tracker + alerts (Web Push, Telegram, Discord) | ✅ server: matcher (4–6M trades/s), tracked feed, alerts (Telegram bot token 🙋) |
+| Copy trading, trailing stops, DCA, dev-sell exits | ✅ copy engine server + armed exits; trailing/dev-sell triggers in engine; UI wiring pending |
 | X tracker | ⏳ (X data key 🙋) |
 | Snipers (browser-open, hard caps), public API | ⏳ |
 
