@@ -1,5 +1,6 @@
 import type { JupiterTradeOptions } from "@zerofee/core";
 import type { PulseBootstrapResponse } from "@zerofee/protocol";
+import { mark } from "../../lib/perf";
 import { apiUrl, wsUrl } from "../../runtime";
 import type { CopyService } from "../copyService";
 import type { Services } from "../index";
@@ -30,7 +31,7 @@ function jupiterOptions(): JupiterTradeOptions {
 }
 
 /** How long the first render may wait for the session / keystore restore before rendering without it. */
-const WALLET_INIT_WAIT_MS = 300;
+const WALLET_INIT_WAIT_MS = 100;
 
 /** GET /api/pulse, the request index.html preloads (same URL and credentials mode, so the browser reuses it). */
 async function fetchPulseBootstrap(): Promise<PulseBootstrapResponse | null> {
@@ -60,7 +61,7 @@ export async function createLiveServices(): Promise<Services> {
   // Restores the session and the keystore's wallet list (local reads and one REST call); the wallet extension
   // reconnects silently in the background. The first render waits for it only briefly: the wallet store
   // updates when it lands, the Pulse lists never wait for it.
-  const walletReady = wallet.init();
+  const walletReady = wallet.init().then(() => mark("zf:wallet"));
   const trade = lazyTradeService(() =>
     import("./LiveTradeService").then((m) => new m.LiveTradeService({ data, signer, wallet, jupiter: jupiterOptions() })),
   );
