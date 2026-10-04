@@ -9,7 +9,7 @@
  * and each one, tampered with the way a compromised backend or app would, must be refused for the
  * right reason. A legitimate core transaction the firewall refuses is a bug in one of the two.
  * Venues: pump.fun bonding curve, PumpSwap, Raydium LaunchLab (BONK.fun and StonkFun curves) and
- * Raydium CPMM (their graduates).
+ * Raydium CPMM (their graduates). The Jupiter long-tail fallback has its own matrix: engine.jupiter.test.ts.
  */
 import { describe, expect, test } from "bun:test";
 import { type AccountMeta, AccountRole, type Address, type Instruction, isSignerRole } from "@solana/kit";
