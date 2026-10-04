@@ -19,8 +19,8 @@ import {
 } from "lightweight-charts";
 import { baseChartOptions, type ChartColors, chartColors, withAlpha } from "../../../lib/chartTheme";
 import type { ChartType } from "../tokenUi";
-import { lowerBound, padRange, visibleRange } from "./bars";
 import { type AxisFormat, minMoveFor } from "./axisFormat";
+import { lowerBound, padRange, visibleRange } from "./bars";
 import { ChartOverlay, type LineSpec, type MarkerGroup, type TimeLineSpec } from "./overlay";
 
 /*
