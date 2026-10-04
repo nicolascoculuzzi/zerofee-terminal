@@ -314,7 +314,11 @@ export type CopySkipReason = (typeof COPY_SKIP_REASONS)[number];
 /** Why the server withdrew a pending signal. */
 export type CopyRevokeReason = "leader_sold" | "leader_trade_rolled_back" | "task_paused" | "task_deleted" | "superseded";
 
-/** Why a sell signal was raised. */
+/**
+ * Why a sell signal was raised. A copy buy reported filled after the leader had already sold (the buy
+ * was revoked as "leader_sold") raises a full exit with trigger "leader_sell" and reason
+ * "leader_sold_before_fill".
+ */
 export type CopySellTrigger = "leader_sell" | "take_profit" | "stop_loss";
 
 export interface CopySignal {

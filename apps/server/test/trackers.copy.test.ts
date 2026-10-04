@@ -443,6 +443,26 @@ describe("sells and exits", () => {
     expect(pendingOf(e, g)[0]).toMatchObject({ fractionSource: "unknown", sellFraction: 1, sellTokenAmount: "1500000000000" });
   });
 
+  test("a copy buy that fills after the leader already sold is followed by a full exit", async () => {
+    const e = engineEnv();
+    const f = await follower(e);
+    const mint = newMint(e);
+    e.engine.onLeaderTrade(leaderTrade(f, { side: "buy", mint }));
+    const buy = pendingOf(e, f)[0];
+    e.engine.onLeaderTrade(leaderTrade(f, { side: "sell", mint, tokens: 3_000_000 }));
+    expect(pendingOf(e, f)).toEqual([]); // revoked: leader_sold
+    await e.engine.report(f.userId, buy.id, { status: "executed", signature: sig(), solAmount: 0.05, tokenAmount: "1500000000000" });
+    expect(pendingOf(e, f)).toEqual([
+      expect.objectContaining({
+        side: "sell",
+        trigger: "leader_sell",
+        reason: "leader_sold_before_fill",
+        sellFraction: 1,
+        sellTokenAmount: "1500000000000",
+      }),
+    ]);
+  });
+
   test("copySells off: leader sells raise nothing", async () => {
     const e = engineEnv();
     const f = await follower(e, { config: { copySells: false } });

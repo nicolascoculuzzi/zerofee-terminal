@@ -470,10 +470,10 @@ export class CopyEngine {
     const amount = BigInt(ev.trade.tokenAmount);
     const wanted: { task: TaskRt; size: number; user: UserRt }[] = [];
     for (const task of tasks) {
+      if (!this.remember(`${task.id}:${ev.trade.signature}:${ev.trade.mint}:buy`, ev.trade.slot)) continue; // duplicate delivery
       const pos = task.positions.get(ev.trade.mint);
       if (pos) pos.leaderTokens = ev.balance.after ?? (pos.leaderTokens ?? 0n) + amount;
       if (task.status !== "active") continue;
-      if (!this.remember(`${task.id}:${ev.trade.signature}:${ev.trade.mint}:buy`, ev.trade.slot)) continue; // duplicate delivery
       const r = this.evaluateBuy(task, ev, token, now);
       if ("skip" in r) this.skip(task, ev, token, r.skip, now);
       else wanted.push({ task, size: r.size, user: r.user });
@@ -951,6 +951,7 @@ export class CopyEngine {
     const now = this.o.now();
     const task = s.task;
     const prior = s.wire.status;
+    const priorReason = s.wire.reason;
     const wasPending = prior === "pending";
     if (wasPending) this.pending.delete(s.wire.id);
     // An expired or revoked signal the browser executed anyway: it counts as executed, not as both.
@@ -975,6 +976,21 @@ export class CopyEngine {
     task.stateDirty = true;
     this.publish(task.userId, { signals: [{ ...s.wire }], tasks: [this.taskWire(task)], positions: this.positionWires(task, s.wire.mint) });
     this.persist(s, () => this.o.repo.updateSignal({ ...s.wire }));
+    // The buy landed after the leader had already sold: follow them out (fraction unknown = full exit).
+    if (s.wire.side === "buy" && prior === "revoked" && priorReason === "leader_sold" && task.config.copySells) {
+      const pos = task.positions.get(s.wire.mint);
+      const available = pos ? pos.tokens - pos.pendingSellTokens : 0n;
+      if (pos && available > 0n) {
+        const exit = this.baseSignal(task, "sell", s.wire.mint, this.o.token(s.wire.mint), now);
+        exit.trigger = "leader_sell";
+        exit.reason = "leader_sold_before_fill";
+        exit.sellFraction = 1;
+        exit.sellTokenAmount = available.toString();
+        exit.fractionSource = "unknown";
+        exit.symbol ||= pos.symbol;
+        this.emitSell(task, pos, exit, available, `exit:${exit.id}`, now);
+      }
+    }
   }
 
   private newPosition(mint: string, symbol: string): PositionRt {
