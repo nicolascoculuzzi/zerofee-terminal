@@ -248,6 +248,8 @@ export class MarketState {
     launchLabCompletes: 0,
     launchLabGraduations: 0,
     cpmmTrades: 0,
+    /** Graduated LaunchLab coins found through their CPMM pool, graduation time unknown (not counted above). */
+    launchLabGraduatesFound: 0,
     /** Raydium trades recorded without a wallet (no instruction accounts). */
     unattributedTrades: 0,
     /** CPMM swaps on pools that are not graduation pools (ignored). */
@@ -1360,8 +1362,10 @@ export class MarketState {
     rec.pool = cpmmPool;
     if (rec.launchLab) rec.launchLab = { ...rec.launchLab, graduationPool: cpmmPool };
     rec.holders?.exclude(RAYDIUM_CPMM_AUTHORITY);
-    this.stats.migrations++;
-    this.stats.launchLabGraduations++;
+    if (at !== null) {
+      this.stats.migrations++;
+      this.stats.launchLabGraduations++;
+    } else this.stats.launchLabGraduatesFound++;
     if (ctx) this.changes.feed.push(this.feedItem("migration", rec, ctx, at ?? ctx.tx.receivedAt));
     this.touch(rec);
     this.changes.tradeCtx.add(rec.mint);

@@ -218,7 +218,7 @@ describe("config", () => {
       dryRun: true,
       source: "rpc",
       rpcLogsPrograms: ["pump", "pumpswap", "launchlab", "cpmm"],
-      rpcLogsTxFetchPerSec: 3,
+      rpcLogsTxFetchPerSec: 2,
       allowAnonymousTx: false,
       pumpPortalEnabled: false,
     });

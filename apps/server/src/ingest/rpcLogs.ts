@@ -52,6 +52,10 @@ export interface RaydiumTxFetchOptions {
   /** Tries before falling back to the logs-only record. Default 4. */
   maxAttempts?: number;
   maxConcurrent?: number;
+  /** While true no call starts (the RPC client is cooling down after a 429); waiting does not use up tries. */
+  paused?(): boolean;
+  /** A transaction still unfetched this long after its notification keeps its logs-only record. Default 20 s. */
+  maxAgeMs?: number;
   /** Which Raydium notifications are worth a call (default all): e.g. CPMM swaps only on tracked pools. */
   wants?(events: readonly DecodedEvent[], migration: boolean): boolean;
 }
@@ -147,7 +151,7 @@ export class RpcLogsSource implements Source {
   private fetchTokens = 1;
   private fetchInFlight = 0;
   private fetchLastRefill = 0;
-  readonly fetchStats = { queued: 0, fetched: 0, notFound: 0, errors: 0, fallbacks: 0, overflow: 0, skipped: 0, maxQueue: 0 };
+  readonly fetchStats = { queued: 0, fetched: 0, notFound: 0, errors: 0, fallbacks: 0, expired: 0, overflow: 0, skipped: 0, maxQueue: 0 };
   readonly stats = {
     connected: false,
     reconnects: 0,
@@ -397,6 +401,20 @@ export class RpcLogsSource implements Source {
     const elapsed = this.fetchLastRefill ? now - this.fetchLastRefill : 0;
     this.fetchLastRefill = now;
     this.fetchTokens = Math.min(Math.max(1, f.perSec), this.fetchTokens + (elapsed * f.perSec) / 1000);
+    // Too old to be worth the wait: the logs-only record goes out (in order).
+    const maxAge = f.maxAgeMs ?? 20_000;
+    for (let i = 0; i < this.fetchQueue.length; ) {
+      const job = this.fetchQueue[i] as FetchJob;
+      if (now - job.p.receivedAt <= maxAge) {
+        i++;
+        continue;
+      }
+      this.fetchQueue.splice(i, 1);
+      this.fetchStats.expired++;
+      this.fetchStats.fallbacks++;
+      this.emitFallback(job.p, job.fallback, job.migration);
+    }
+    if (f.paused?.()) return;
     while (this.fetchTokens >= 1 && this.fetchInFlight < (f.maxConcurrent ?? 4)) {
       const i = this.fetchQueue.findIndex((j) => j.notBefore <= now);
       if (i < 0) return;
@@ -466,7 +484,8 @@ export class RpcLogsSource implements Source {
         ...(this.opts.raydiumTx && this.opts.raydiumTx.perSec > 0
           ? [
               `raydium tx fetch: queue ${this.fetchQueue.length} (max ${this.fetchStats.maxQueue}), fetched ${this.fetchStats.fetched}, ` +
-                `not found ${this.fetchStats.notFound}, errors ${this.fetchStats.errors}, logs-only fallbacks ${this.fetchStats.fallbacks}, ` +
+                `not found ${this.fetchStats.notFound}, errors ${this.fetchStats.errors}, logs-only fallbacks ${this.fetchStats.fallbacks} ` +
+                `(${this.fetchStats.expired} waited too long), ` +
                 `overflow ${this.fetchStats.overflow}, skipped ${this.fetchStats.skipped}; graduations in logs ${this.stats.migrations}`,
             ]
           : []),

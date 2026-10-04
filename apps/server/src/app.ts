@@ -97,7 +97,8 @@ export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
       programs: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID],
     });
   }
-  const rpc = deps.rpc;
+  // Its own client: a getTransaction 429 cools down the Raydium re-reads, not the resolver's account reads.
+  const rpc = deps.rpc ? new RpcClient({ url: deps.rpc.url, maxConcurrent: 2 }) : undefined;
   return new RpcLogsSource({
     wsUrl: cfg.rpcWsUrl,
     programs,
@@ -107,6 +108,7 @@ export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
       rpc && cfg.rpcLogsTxFetchPerSec > 0
         ? {
             perSec: cfg.rpcLogsTxFetchPerSec,
+            paused: () => rpc.coolingDown(),
             fetch: (signature) =>
               rpc.call<RpcJsonTx | null>("getTransaction", [
                 signature,
@@ -296,7 +298,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         ...notes,
         `rpc: ${rpc.stats.calls} calls, ${rpc.stats.errors} errors, ${rpc.stats.dataAllowance} data-allowance, ${rpc.stats.rateLimited} rate-limited`,
         `raydium: launchlab ${m.stats.launchLabLaunches} launches, ${m.stats.launchLabTrades} trades, ${m.stats.launchLabCompletes} completed, ` +
-          `${m.stats.launchLabGraduations} graduated; cpmm ${m.stats.cpmmTrades} trades (${m.stats.cpmmIgnored} on other pools ignored); ` +
+          `${m.stats.launchLabGraduations} graduated (+${m.stats.launchLabGraduatesFound} earlier graduates found); ` +
+          `cpmm ${m.stats.cpmmTrades} trades (${m.stats.cpmmIgnored} on other pools ignored); ` +
           `${m.stats.unattributedTrades} trades without a wallet; registry ${raydium.launchLabPools.size} pools, ` +
           `${raydium.cpmmPools.size} graduation pools, ${raydium.stats.rejected} CPMM pools rejected, ${raydium.platforms.size} platforms`,
         ...(enricher?.notes() ?? ["enrich: off"]),

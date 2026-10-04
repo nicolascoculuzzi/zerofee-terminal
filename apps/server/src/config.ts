@@ -305,7 +305,7 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcLogsCommitment: oneOf<RpcCommitment>(env, "RPC_LOGS_COMMITMENT", "processed", ["processed", "confirmed"]),
     rpcLogsPrograms: programs as ServerConfig["rpcLogsPrograms"],
     rpcLogsQueueMax: int(env, "RPC_LOGS_QUEUE_MAX", 50_000, 100, 10_000_000),
-    rpcLogsTxFetchPerSec: int(env, "RPC_LOGS_TX_FETCH_RPS", 3, 0, 1_000),
+    rpcLogsTxFetchPerSec: int(env, "RPC_LOGS_TX_FETCH_RPS", 2, 0, 1_000),
     blockhashPollMs: int(env, "BLOCKHASH_POLL_MS", 2_000, 250, 60_000),
     yellowstoneEndpoint: optional(env, "YELLOWSTONE_ENDPOINT"),
     yellowstoneXToken: optional(env, "YELLOWSTONE_X_TOKEN"),

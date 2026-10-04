@@ -159,7 +159,10 @@ function notification(signature: string, logs: string[], slot = 1, sub = 13): st
   });
 }
 
-function source(fetch: (sig: string) => Promise<RpcJsonTx | null>, o: { perSec?: number; wants?: () => boolean; maxQueue?: number } = {}) {
+function source(
+  fetch: (sig: string) => Promise<RpcJsonTx | null>,
+  o: { perSec?: number; wants?: () => boolean; maxQueue?: number; paused?: () => boolean; maxAgeMs?: number } = {},
+) {
   const txs: IngestTx[] = [];
   const hints: IngestHint[] = [];
   const src = new RpcLogsSource({
@@ -173,6 +176,8 @@ function source(fetch: (sig: string) => Promise<RpcJsonTx | null>, o: { perSec?:
       firstDelayMs: 0,
       retryDelayMs: 0,
       maxAttempts: 3,
+      maxAgeMs: o.maxAgeMs ?? 1e12,
+      ...(o.paused ? { paused: o.paused } : {}),
       ...(o.maxQueue !== undefined ? { maxQueue: o.maxQueue } : {}),
       ...(o.wants ? { wants: o.wants } : {}),
     },
@@ -263,6 +268,41 @@ describe("RpcLogsSource: Raydium transactions are re-read", () => {
     full.src.drain();
     expect(full.txs.map((t) => t.events[0]?.kind)).toEqual(["cpmmSwap", "pumpTrade"]);
     expect(full.src.fetchStats.overflow).toBe(1);
+  });
+
+  test("a cooling-down RPC pauses the calls without using up tries; a transaction left waiting too long goes out logs-only", async () => {
+    let calls = 0;
+    let paused = true;
+    const { src, txs } = source(
+      async () => {
+        calls++;
+        return raydiumJsonTx("bonkBuy");
+      },
+      { paused: () => paused, maxAgeMs: 20_000 },
+    );
+    const t = rtx("bonkBuy");
+    src.onMessage(notification(t.signature, t.logs, t.slot));
+    src.drain();
+    const now = Date.now();
+    src.fetchTick(now + 1_000);
+    src.fetchTick(now + 5_000);
+    await settle();
+    expect(calls).toBe(0);
+    expect(txs).toHaveLength(0);
+    paused = false;
+    src.fetchTick(now + 6_000);
+    await settle();
+    expect(calls).toBe(1);
+    expect(txs[0]?.raydium?.accounts[0]?.kind).toBe("launchlabSwap");
+
+    // never answered in time: expires to its logs-only record
+    paused = true;
+    src.onMessage(notification(`${t.signature.slice(0, -2)}zz`, t.logs, t.slot + 1));
+    src.drain();
+    src.fetchTick(Date.now() + 21_000);
+    expect(txs).toHaveLength(2);
+    expect(txs[1]?.accountKeys).toBeNull();
+    expect(src.fetchStats).toMatchObject({ expired: 1, fallbacks: 1 });
   });
 
   test("the calls-per-second cap holds", async () => {
