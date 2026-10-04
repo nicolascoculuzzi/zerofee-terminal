@@ -16,7 +16,11 @@
  *
  * Flags: --minutes N (3), --clients N (1), --db PATH (copied, never modified), --save-db PATH, --port N,
  * --json PATH, --profile (Bun --cpu-prof-md into the run's temp dir), --quiet (no server log tail),
- * --fresh-pglite (initialise a new PGlite user database instead of reusing $TMPDIR/zf-perf-pglite).
+ * --fresh-pglite (initialise a new PGlite user database instead of reusing $TMPDIR/zf-perf-pglite),
+ * --replay FILE [--speed X]: feed the server a recording (scripts/perf-feed.ts record) instead of the live RPC
+ * stream, looped, X times faster: the same input every run, to compare server builds (detection latency is
+ * meaningless there; read the queue / publish stages, loop lag and spans). --entry PATH runs another
+ * server entry point (e.g. an older checkout's main.ts) for A/B comparisons.
  * Extra server settings pass through the environment (e.g. ENRICH_ENABLED=false bun run perf).
  */
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -34,10 +38,13 @@ interface Args {
   profile: boolean;
   quiet: boolean;
   freshPglite: boolean;
+  replay: string | null;
+  speed: number;
+  entry: string;
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { minutes: 3, clients: 1, db: null, saveDb: null, port: 0, json: null, profile: false, quiet: false, freshPglite: false };
+  const a: Args = { minutes: 3, clients: 1, db: null, saveDb: null, port: 0, json: null, profile: false, quiet: false, freshPglite: false, replay: null, speed: 1, entry: "apps/server/src/main.ts" };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const v = () => {
@@ -54,6 +61,9 @@ function parseArgs(argv: string[]): Args {
     else if (k === "--profile") a.profile = true;
     else if (k === "--quiet") a.quiet = true;
     else if (k === "--fresh-pglite") a.freshPglite = true;
+    else if (k === "--replay") a.replay = resolve(v());
+    else if (k === "--speed") a.speed = Number(v());
+    else if (k === "--entry") a.entry = resolve(v());
     else throw new Error(`unknown flag ${k}`);
   }
   if (!(a.minutes > 0)) throw new Error("--minutes must be > 0");
@@ -230,11 +240,19 @@ async function main(): Promise<void> {
     LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
     PUBLIC_ORIGIN: process.env.PUBLIC_ORIGIN ?? `http://127.0.0.1:${port}`,
   };
+  let replay: { url: string; stop(): void } | null = null;
+  if (args.replay) {
+    const { loadRecording, serveRecording } = await import("./perf-feed");
+    const rec = loadRecording(args.replay);
+    replay = serveRecording(rec, { speed: args.speed, loop: true });
+    env.RPC_WS_URL = replay.url;
+    console.log(`perf: replaying ${rec.messages.length} recorded messages at ${args.speed}x from ${replay.url}`);
+  }
   const bunArgs = args.profile ? ["--cpu-prof", "--cpu-prof-md", `--cpu-prof-dir=${dir}`] : [];
   console.log(`perf: ${args.minutes} min, ${args.clients} client(s), db ${args.db ? `copy of ${args.db}` : "fresh"}, temp ${dir}`);
   console.log(`perf: RPC ${env.RPC_URL ?? "default public"} / WS ${env.RPC_WS_URL ?? "(derived)"}, source ${env.INGEST_SOURCE ?? "rpc"}`);
   const t0 = performance.now();
-  const child = Bun.spawn(["bun", ...bunArgs, "apps/server/src/main.ts"], { cwd: repo, env, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", ...bunArgs, args.entry], { cwd: repo, env, stdout: "pipe", stderr: "pipe" });
   const logLines: string[] = [];
   const pump = async (stream: ReadableStream<Uint8Array>) => {
     const dec = new TextDecoder();
@@ -291,6 +309,7 @@ async function main(): Promise<void> {
   child.kill("SIGINT");
   await Promise.race([child.exited, sleep(10_000)]);
   if (child.exitCode === null) child.kill("SIGKILL");
+  replay?.stop();
 
   const restoreLine = logLines.find((l) => l.includes("restored ")) ?? "";
   const s = perfRes.stages;
