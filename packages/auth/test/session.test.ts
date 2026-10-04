@@ -110,4 +110,30 @@ describe("nonce store", () => {
     store.issue(n, 1000);
     expect(() => store.issue(n, 1000)).toThrow();
   });
+
+  test("eviction skips consumed nonces: a re-issued nonce is not evicted through its old queue slot", () => {
+    const store = new InMemoryNonceStore({ maxEntries: 2 });
+    const [a, b, c] = ["aaaaaaaa1", "bbbbbbbb2", "cccccccc3"];
+    store.issue(a, 60_000);
+    expect(store.consume(a)).toBe(true);
+    store.issue(b, 60_000);
+    store.issue(a, 60_000); // same string again after use: its first queue slot is stale
+    store.issue(c, 60_000); // over capacity: evicts the oldest outstanding nonce, b
+    expect([store.consume(b), store.consume(a), store.consume(c)]).toEqual([false, true, true]);
+  });
+
+  test("issue stays cheap with many outstanding and consumed nonces (no full sweep per issue)", () => {
+    const store = new InMemoryNonceStore({ maxEntries: 50_000 });
+    const t0 = performance.now();
+    for (let i = 0; i < 150_000; i++) {
+      const n = `nonce${String(i).padStart(8, "0")}`;
+      store.issue(n, 600_000);
+      if (i % 2 === 0) store.consume(n); // half of the sign-ins complete
+    }
+    // a sweep of the whole map on every issue took minutes here; front pruning takes well under a second
+    expect(performance.now() - t0).toBeLessThan(5_000);
+    expect(store.size).toBe(50_000);
+    expect(store.consume("nonce00149999")).toBe(true);
+    expect(store.consume("nonce00000001")).toBe(false); // evicted long ago
+  });
 });

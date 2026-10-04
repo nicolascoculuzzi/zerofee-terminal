@@ -167,6 +167,33 @@ describe("reconnects (local WebSocket server)", () => {
       await src.stop();
     }
   });
+
+  test("refused upgrades back off exponentially (a refused attempt never resets the backoff)", async () => {
+    let attempts = 0;
+    const refusing = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        attempts++;
+        return new Response("rate limited", { status: 429 });
+      },
+    });
+    const src = new RpcLogsSource({
+      wsUrl: `ws://127.0.0.1:${refusing.port}`,
+      programs: [PUMP_PROGRAM_ID],
+      commitment: "processed",
+      queueMax: 10,
+    });
+    src.start({ tx: () => {} });
+    try {
+      await waitFor(() => attempts >= 3, 5_000);
+      // public RPC refuses upgrades with 429 when hammered; the old reset made every delay ~250-500 ms
+      expect((src as unknown as { backoff: { attempts: number } }).backoff.attempts).toBeGreaterThanOrEqual(2);
+    } finally {
+      await src.stop();
+      void refusing.stop(true);
+    }
+  });
 });
 
 describe("RpcLogsSource reconnect backoff", () => {
@@ -191,7 +218,7 @@ describe("RpcLogsSource reconnect backoff", () => {
         wsUrl: "ws://unused",
         programs: [PUMP_PROGRAM_ID],
         commitment: "processed",
-        queueMax: 1_000,
+        queueMax: 100,
         WebSocketImpl: NeverOpens as unknown as typeof WebSocket,
       });
       const internals = src as unknown as { connect(): void; backoff: { attempts: number } };

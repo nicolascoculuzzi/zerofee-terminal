@@ -33,14 +33,17 @@ import type { OrdersDelta, OrdersSnapshot } from "./orders";
 import type {
   CandlesTopic,
   ChainTopic,
+  CopyTopic,
   OrdersTopic,
   PulseTopic,
   TokenTopic,
   Topic,
+  TrackedTopic,
   TradeContextTopic,
   TradesTopic,
   WalletTopic,
 } from "./topics";
+import type { CopyDelta, CopySnapshot, TrackedCorrection, TrackedDelta, TrackedSnapshot } from "./trackers";
 
 /** Payload types per topic kind. `never` = the topic does not send that message type. */
 export interface TopicPayloads {
@@ -54,6 +57,9 @@ export interface TopicPayloads {
   chain: { snapshot: ChainSnapshot; delta: ChainDelta; correction: never };
   wallet: { snapshot: WalletSnapshot; delta: WalletDelta; correction: never };
   orders: { snapshot: OrdersSnapshot; delta: OrdersDelta; correction: never };
+  /** `tracked` and `tracked:<mint>`: rows of the user's tracked wallets; corrections drop rows of dead slots. */
+  tracked: { snapshot: TrackedSnapshot; delta: TrackedDelta; correction: TrackedCorrection };
+  copy: { snapshot: CopySnapshot; delta: CopyDelta; correction: never };
 }
 
 export type TopicKindOf<T extends Topic> = T extends PulseTopic
@@ -72,7 +78,11 @@ export type TopicKindOf<T extends Topic> = T extends PulseTopic
               ? "wallet"
               : T extends OrdersTopic
                 ? "orders"
-                : never;
+                : T extends TrackedTopic
+                  ? "tracked"
+                  : T extends CopyTopic
+                    ? "copy"
+                    : never;
 
 export type SnapshotData<T extends Topic> = TopicPayloads[TopicKindOf<T>]["snapshot"];
 export type DeltaData<T extends Topic> = TopicPayloads[TopicKindOf<T>]["delta"];

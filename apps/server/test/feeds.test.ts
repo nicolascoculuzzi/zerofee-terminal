@@ -120,17 +120,40 @@ describe("PumpPortal cross-check", () => {
       kind: "create",
       mint: "M1",
     });
-    expect(pp.handle(JSON.stringify({ signature: "s2", mint: "M2", txType: "migrate" }), 20)).toMatchObject({
+    expect(pp.handle(JSON.stringify({ signature: "s2", mint: "M2", txType: "migrate", pool: "pump-amm" }), 20)).toMatchObject({
       kind: "migrate",
       mint: "M2",
+      pool: "pump-amm",
     });
-    const r = new Reconciler(1_000);
+    expect(pp.stats.byPool).toEqual({ "create:?": 1, "migrate:pump-amm": 1 });
+    const r = new Reconciler(1_000, 2_000);
+    const missed: string[] = [];
+    r.onMismatch = (m) => missed.push(`${m.side}:${m.mint}:${m.info.signature ?? ""}`);
     r.seenPrimary("create", "A", 100);
     r.seenCross("create", "A", 400); // primary was 300 ms ahead
-    r.seenPrimary("create", "B", 100);
-    r.seenCross("create", "C", 100);
+    r.seenPrimary("create", "B", 100, { signature: "sigB" });
+    r.seenCross("create", "C", 100, { signature: "sigC", pool: "bonk" });
+    r.sweep(1_500); // past the window: B and C wait out the grace period
+    expect(r.stats).toMatchObject({ matched: 1, primaryOnly: 0, crossOnly: 0 });
     r.sweep(5_000);
     expect(r.stats).toMatchObject({ matched: 1, primaryOnly: 1, crossOnly: 1, leadMs: [300] });
+    expect(missed.sort()).toEqual(["cross:C:sigC", "primary:B:sigB"]);
+    expect(r.mismatches.find((m) => m.mint === "C")?.info.pool).toBe("bonk");
+  });
+
+  test("a counterpart after the window is a late match, not a miss on each side; repeats are ignored", () => {
+    const r = new Reconciler(1_000, 10_000);
+    r.seenPrimary("create", "A", 0);
+    r.sweep(2_000); // A is past the window
+    r.seenCross("create", "A", 4_000); // PumpPortal 4 s behind
+    r.seenPrimary("migrate", "B", 0);
+    r.seenCross("migrate", "B", 100);
+    r.seenPrimary("migrate", "B", 500); // the same transaction again in another fork
+    r.seenPrimary("create", "D", 0);
+    r.seenPrimary("create", "D", 10); // duplicate before any match
+    r.sweep(60_000);
+    expect(r.stats).toMatchObject({ matched: 1, late: 1, primaryOnly: 1, crossOnly: 0, repeats: 2 });
+    expect(r.pending).toBe(0);
   });
 });
 
@@ -208,5 +231,9 @@ describe("config", () => {
   test("redactUrl hides keys and credentials", () => {
     expect(redactUrl("https://mainnet.helius-rpc.com/?api-key=SECRET")).toBe("https://mainnet.helius-rpc.com/?api-key=***");
     expect(redactUrl("https://user:pass@host.example/x")).not.toContain("pass");
+    // Chainstack-style key in the path
+    const keyInPath = "https://solana-mainnet.core.chainstack.com/0123456789abcdef0123456789abcdef";
+    expect(redactUrl(keyInPath)).toBe("https://solana-mainnet.core.chainstack.com/***");
+    expect(redactUrl("https://api.mainnet-beta.solana.com/")).toBe("https://api.mainnet-beta.solana.com/");
   });
 });

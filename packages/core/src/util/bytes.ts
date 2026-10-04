@@ -50,6 +50,13 @@ export function u16le(n: number): Uint8Array {
   return out;
 }
 
+/** Big-endian u16 (Raydium CPMM AmmConfig PDA seed: `index.to_be_bytes()`). */
+export function u16be(n: number): Uint8Array {
+  const out = new Uint8Array(2);
+  new DataView(out.buffer).setUint16(0, n, false);
+  return out;
+}
+
 export function u32le(n: number): Uint8Array {
   const out = new Uint8Array(4);
   new DataView(out.buffer).setUint32(0, n, true);
@@ -181,5 +188,13 @@ export class Reader {
 
   pubkey(): Address {
     return addressDecoder.decode(this.slice(32));
+  }
+
+  /** Fixed-size, NUL-padded UTF-8 field (e.g. LaunchLab PlatformConfig name/web/img). */
+  fixedString(n: number): string {
+    const bytes = this.slice(n);
+    let end = bytes.indexOf(0);
+    if (end < 0) end = n;
+    return textDecoder.decode(bytes.subarray(0, end));
   }
 }

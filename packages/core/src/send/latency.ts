@@ -11,7 +11,7 @@ export type LatencyStage = "stateLoaded" | "quoted" | "built" | "signed" | "simu
 export interface LatencyRecord {
   id: string;
   side: "buy" | "sell";
-  venue: "pump" | "pumpswap";
+  venue: "pump" | "pumpswap" | "launchlab" | "cpmm";
   mint: string;
   dryRun: boolean;
   receivedAtEpochMs: number;

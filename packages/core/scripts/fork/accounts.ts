@@ -12,6 +12,9 @@
  *     constants fallbacks), and the quote ATAs PumpSwap pays into
  *   - per coin: mint, bonding curve, its token account, creator vault, sharing config; or pool, both vaults,
  *     coin-creator vault authority + quote ATA, pool-v2
+ *   - for the migration coin, also what `migrate` and the first trade on its new canonical pool touch: the
+ *     Global's withdraw authority, the coin-creator vault authority the pool inherits + its quote ATA, pool-v2,
+ *     and the PumpSwap protocol / buyback recipients with their quote ATAs
  *   - the 8 Jito + 10 Helius Sender tip accounts (a tip into a missing account fails the rent check)
  * Accounts that may legitimately not exist go to --maybe-clone. User-side accounts (ATAs, volume
  * accumulators) are created by the trades themselves.
@@ -244,7 +247,15 @@ async function classifyPools(rpc: ReadOnlyRpc, pools: Address[]): Promise<PoolCa
   return out;
 }
 
-/** Classifies explicitly requested mints: active SOL curve first, else the canonical PumpSwap pool. */
+/** A second eligible Token-2022 curve coin becomes the migration target (see TargetKind). */
+function asMigrationTarget(t: ForkTarget): ForkTarget {
+  return { ...t, kind: "migration", note: `${t.note}; the armed suite completes and migrates it` };
+}
+
+/**
+ * Classifies explicitly requested mints: active SOL curve first, else the canonical PumpSwap pool. The second
+ * Token-2022 curve coin becomes the migration target, so `--reuse` keeps every kind.
+ */
 export async function classifyMints(rpc: ReadOnlyRpc, mints: Address[]): Promise<ForkTarget[]> {
   const [globalAcc] = await fetchRawAccounts(rpc, [PUMP_GLOBAL]);
   if (!globalAcc) throw new Error("pump Global not found on the clone source");
@@ -257,7 +268,8 @@ export async function classifyMints(rpc: ReadOnlyRpc, mints: Address[]): Promise
     if (curveAcc) {
       const c = classifyCurve(mint, curveAddr, mintAcc, curveAcc, global);
       if (!c.reject) {
-        out.push(c.target);
+        const duplicate = c.target.kind === "curve2022" && out.some((t) => t.kind === "curve2022");
+        out.push(duplicate && !out.some((t) => t.kind === "migration") ? asMigrationTarget(c.target) : c.target);
         continue;
       }
       if (c.reject !== "curve complete") throw new Error(`${mint}: unsupported curve (${c.reject})`);
@@ -308,6 +320,7 @@ export interface DiscoverOptions {
  * Finds one coin per kind from recent on-chain activity, spending as few getTransaction calls as possible
  * (the public endpoint allows ~5 per 10 s):
  *   curve2022  Token-2022 (create_v2) coin on the curve - required; from recent pump trades
+ *   migration  a second Token-2022 curve coin for the armed migration snipe - optional; from the same scan
  *   mayhem     mayhem-mode curve - optional; from recent Mayhem-program activity (its agent trades via CPI)
  *   curveSpl   legacy SPL Token curve coin - optional; only if one shows up along the way (rare since create_v2)
  *   pumpswap   canonical wSOL pool - required; an SPL-base pool is preferred so both token programs are
@@ -321,23 +334,31 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
 
   const found = new Map<TargetKind, ForkTarget>();
   const seenMints = new Set<string>();
-  let rejected = 0;
+  const curveRejects = new Map<string, number>();
   const takeCurves = async (events: ReturnType<typeof decodeEventsFromLogs>) => {
     const mints = [...new Set(events.flatMap((e) => (e.kind === "pumpTrade" && !seenMints.has(e.mint) ? [e.mint] : [])))] as Address[];
     for (const m of mints) seenMints.add(m);
     if (mints.length === 0) return;
     for (const c of await classifyCurveMints(rpc, mints, global)) {
-      if (c.reject) rejected++;
+      if (c.reject) curveRejects.set(c.reject, (curveRejects.get(c.reject) ?? 0) + 1);
       else if (!found.has(c.target.kind)) {
         found.set(c.target.kind, c.target);
         log(`  picked ${c.target.kind.padEnd(9)} ${c.target.mint} (${c.target.note})`);
+      } else if (c.target.kind === "curve2022" && !found.has("migration")) {
+        const t = asMigrationTarget(c.target);
+        found.set("migration", t);
+        log(`  picked migration ${t.mint} (${t.note})`);
       }
     }
   };
 
-  let txs = await scanRecent(rpc, PUMP_PROGRAM_ID, 12, async (ev) => {
+  // curve2022 is required (up to 30 transactions: at times most recent curve coins are ineligible); the
+  // migration coin is worth up to 20.
+  let pumpTxs = 0;
+  let txs = await scanRecent(rpc, PUMP_PROGRAM_ID, 30, async (ev) => {
+    pumpTxs++;
     await takeCurves(ev);
-    return found.has("curve2022");
+    return found.has("curve2022") && (found.has("migration") || pumpTxs >= 20);
   });
   if (!found.has("mayhem")) {
     txs += await scanRecent(rpc, MAYHEM_PROGRAM_ID, 8, async (ev) => {
@@ -345,7 +366,8 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
       return found.has("mayhem");
     });
   }
-  log(`  ${txs} transactions, ${seenMints.size} curve mints classified (${rejected} ineligible)`);
+  const curveWhy = [...curveRejects].map(([reason, n]) => `${n} ${reason}`).join(", ");
+  log(`  ${txs} transactions, ${seenMints.size} curve mints classified${curveWhy ? ` (ineligible: ${curveWhy})` : ""}`);
 
   // Required: keep scanning up to 15 transactions, but stop at the first eligible pool once 6 transactions
   // have been spent looking for an SPL-base one.
@@ -373,7 +395,7 @@ export async function discoverTargets(rpc: ReadOnlyRpc, opts: DiscoverOptions = 
   const why = [...poolRejects].map(([reason, n]) => `${n} ${reason}`).join(", ");
   log(`  ${poolTxs} transactions, ${seenPools.size} PumpSwap pools classified${why ? ` (ineligible: ${why})` : ""}`);
 
-  const order: TargetKind[] = ["curve2022", "curveSpl", "mayhem", "pumpswap"];
+  const order: TargetKind[] = ["curve2022", "curveSpl", "mayhem", "migration", "pumpswap"];
   return order.flatMap((k) => {
     const t = found.get(k);
     return t ? [t] : [];
@@ -475,6 +497,20 @@ export async function resolveCloneList(rpc: ReadOnlyRpc, targets: readonly ForkT
       // Live creator: fee sharing / holder rewards rewrite it, so derive the vault from the account.
       opt(await creatorVaultPda(curve.creator), `${t.kind} creator vault (live bonding_curve.creator)`);
       opt(await sharingConfigPda(t.mint), `${t.kind} sharing config`);
+      if (t.kind === "migration") {
+        // `migrate` credits the Global's withdraw authority with what the migration fee leaves after rent, and
+        // the canonical pool it creates copies coin_creator from the curve. The first PumpSwap trade on that
+        // pool then reads pool-v2 and credits the creator vault and fee-recipient quote ATAs.
+        opt(global.withdrawAuthority, "pump withdraw authority (credited by migrate)");
+        const vaultAuthority = await coinCreatorVaultAuthorityPda(curve.creator);
+        opt(vaultAuthority, "migration coin: coin-creator vault authority of its future pool");
+        opt(await findAssociatedTokenAddress(vaultAuthority, WSOL_MINT, TOKEN_PROGRAM_ID), "migration coin: coin-creator vault wSOL ATA");
+        opt(await poolV2Pda(t.mint), "migration coin: pool-v2 PDA of its future pool");
+        for (const r of [...ammProtocol, ...ammBuyback]) {
+          opt(r, "PumpSwap fee recipient (read-only)");
+          opt(await findAssociatedTokenAddress(r, WSOL_MINT, TOKEN_PROGRAM_ID), "PumpSwap fee recipient wSOL ATA");
+        }
+      }
     } else {
       const [poolAcc] = await fetchRawAccounts(rpc, [t.market]);
       if (!poolAcc) throw new Error(`pool ${t.market} missing`);

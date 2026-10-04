@@ -158,6 +158,8 @@ export interface LandedTx {
   computeUnits: bigint;
   logs: string[];
   keys: Address[];
+  /** Accounts the runtime loaded from address lookup tables (v0). */
+  loaded: { writable: Address[]; readonly: Address[] };
   events: DecodedEvent[];
   lamports(a: Address): Delta;
   tokens(a: Address): Delta;
@@ -172,11 +174,11 @@ export async function fetchLandedTx(rpc: ForkRpc, signature: Signature): Promise
     const tx = await rpc.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0, encoding: "json" }).send();
     if (tx?.meta) {
       const meta = tx.meta;
-      const keys = [
-        ...tx.transaction.message.accountKeys,
-        ...(meta.loadedAddresses?.writable ?? []),
-        ...(meta.loadedAddresses?.readonly ?? []),
-      ] as Address[];
+      const loaded = {
+        writable: [...(meta.loadedAddresses?.writable ?? [])] as Address[],
+        readonly: [...(meta.loadedAddresses?.readonly ?? [])] as Address[],
+      };
+      const keys = [...tx.transaction.message.accountKeys, ...loaded.writable, ...loaded.readonly] as Address[];
       const index = new Map(keys.map((k, j) => [k, j]));
       const at = (a: Address) => {
         const j = index.get(a);
@@ -195,6 +197,7 @@ export async function fetchLandedTx(rpc: ForkRpc, signature: Signature): Promise
         computeUnits: BigInt(meta.computeUnitsConsumed ?? 0),
         logs,
         keys,
+        loaded,
         events: decodeEventsFromLogs(logs),
         lamports: (a) => {
           const j = at(a);
@@ -391,5 +394,10 @@ function recordReport(fork: Fork, run: TradeRun) {
     slotDelta: String(run.latency.slotDelta ?? ""),
     outcome: run.latency.outcome ?? "",
   };
+  appendReport(fork, line);
+}
+
+/** Appends one landed transaction to the run's report (`bun run e2e` prints the table). */
+export function appendReport(fork: Fork, line: ReportLine): void {
   if (existsSync(fork.paths.dir)) appendFileSync(fork.paths.reportPath, `${toJson(line, 0)}\n`);
 }

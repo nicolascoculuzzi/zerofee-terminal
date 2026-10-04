@@ -10,6 +10,8 @@
     "feed": "bun src/scripts/feed.ts",
     "vapid-keys": "bun scripts/generate-vapid-keys.ts",
     "signin-e2e": "bun scripts/signin-e2e.ts",
+    "tracker-bench": "bun scripts/tracker-bench.ts",
+    "tracker-live": "bun scripts/tracker-live.ts",
     "typecheck": "tsc -p . --noEmit"
   },
   "dependencies": {

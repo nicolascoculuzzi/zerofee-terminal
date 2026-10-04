@@ -28,7 +28,8 @@ export interface AlertingWallet {
   alerts: TrackedWalletAlerts;
 }
 
-const COLS = "address, label, emoji, tags, alert_buy, alert_sell, alert_create, alert_min_sol, created_at, updated_at";
+const COLS =
+  "address, label, emoji, tags, alert_buy, alert_sell, alert_create, alert_min_sol, alert_first_buy_only, created_at, updated_at";
 
 function mapTracked(r: Row): TrackedWallet {
   return {
@@ -36,9 +37,19 @@ function mapTracked(r: Row): TrackedWallet {
     label: String(r.label),
     emoji: String(r.emoji),
     tags: toJson<string[]>(r.tags) ?? [],
-    alerts: { buy: r.alert_buy === true, sell: r.alert_sell === true, create: r.alert_create === true, minSol: Number(r.alert_min_sol) },
+    alerts: alertsOf(r),
     createdAt: toMs(r.created_at),
     updatedAt: toMs(r.updated_at),
+  };
+}
+
+function alertsOf(r: Row): TrackedWalletAlerts {
+  return {
+    buy: r.alert_buy === true,
+    sell: r.alert_sell === true,
+    create: r.alert_create === true,
+    minSol: Number(r.alert_min_sol),
+    firstBuyOnly: r.alert_first_buy_only === true,
   };
 }
 
@@ -52,6 +63,7 @@ function toRecord(w: TrackedWalletWrite) {
     alert_sell: w.alerts.sell,
     alert_create: w.alerts.create,
     alert_min_sol: w.alerts.minSol,
+    alert_first_buy_only: w.alerts.firstBuyOnly === true,
   };
 }
 
@@ -112,6 +124,7 @@ export class TrackedWalletsRepo {
     if (patch.alerts?.sell !== undefined) add("alert_sell", patch.alerts.sell);
     if (patch.alerts?.create !== undefined) add("alert_create", patch.alerts.create);
     if (patch.alerts?.minSol !== undefined) add("alert_min_sol", patch.alerts.minSol, "::double precision");
+    if (patch.alerts?.firstBuyOnly !== undefined) add("alert_first_buy_only", patch.alerts.firstBuyOnly);
     const rows = await this.db.query(
       `UPDATE tracked_wallets SET ${sets.join(", ")} WHERE user_id = $1::uuid AND address = $2 RETURNING ${COLS}`,
       params,
@@ -130,7 +143,7 @@ export class TrackedWalletsRepo {
   /** Every alerting entry of every user (or one user's), for the in-memory index. */
   async listAlerting(userId?: string): Promise<AlertingWallet[]> {
     const rows = await this.db.query(
-      `SELECT user_id, address, label, emoji, alert_buy, alert_sell, alert_create, alert_min_sol
+      `SELECT user_id, address, label, emoji, alert_buy, alert_sell, alert_create, alert_min_sol, alert_first_buy_only
        FROM tracked_wallets WHERE (alert_buy OR alert_sell OR alert_create) ${userId ? "AND user_id = $1::uuid" : ""}`,
       userId ? [userId] : [],
     );
@@ -139,7 +152,7 @@ export class TrackedWalletsRepo {
       address: String(r.address),
       label: String(r.label),
       emoji: String(r.emoji),
-      alerts: { buy: r.alert_buy === true, sell: r.alert_sell === true, create: r.alert_create === true, minSol: Number(r.alert_min_sol) },
+      alerts: alertsOf(r),
     }));
   }
 }
@@ -157,17 +170,20 @@ async function upsert(
   for (let i = 0; i < wallets.length; i += 1_000) {
     const chunk = wallets.slice(i, i + 1_000).map(toRecord);
     const rows = await tx.query(
-      `INSERT INTO tracked_wallets (user_id, address, label, emoji, tags, alert_buy, alert_sell, alert_create, alert_min_sol, created_at, updated_at)
+      `INSERT INTO tracked_wallets (user_id, address, label, emoji, tags, alert_buy, alert_sell, alert_create, alert_min_sol,
+                                   alert_first_buy_only, created_at, updated_at)
        SELECT $1::uuid, r.address, r.label, r.emoji, r.tags, r.alert_buy, r.alert_sell, r.alert_create, r.alert_min_sol,
-              $3::timestamptz, $3::timestamptz
+              r.alert_first_buy_only, $3::timestamptz, $3::timestamptz
        FROM jsonb_to_recordset($2::text::jsonb) AS r(address text, label text, emoji text, tags jsonb, alert_buy boolean,
-                                                alert_sell boolean, alert_create boolean, alert_min_sol double precision)
+                                                alert_sell boolean, alert_create boolean, alert_min_sol double precision,
+                                                alert_first_buy_only boolean)
        ON CONFLICT (user_id, address) DO UPDATE SET
          label = EXCLUDED.label, emoji = EXCLUDED.emoji, tags = EXCLUDED.tags, updated_at = EXCLUDED.updated_at,
          alert_buy = CASE WHEN $4 THEN EXCLUDED.alert_buy ELSE tracked_wallets.alert_buy END,
          alert_sell = CASE WHEN $4 THEN EXCLUDED.alert_sell ELSE tracked_wallets.alert_sell END,
          alert_create = CASE WHEN $4 THEN EXCLUDED.alert_create ELSE tracked_wallets.alert_create END,
-         alert_min_sol = CASE WHEN $4 THEN EXCLUDED.alert_min_sol ELSE tracked_wallets.alert_min_sol END
+         alert_min_sol = CASE WHEN $4 THEN EXCLUDED.alert_min_sol ELSE tracked_wallets.alert_min_sol END,
+         alert_first_buy_only = CASE WHEN $4 THEN EXCLUDED.alert_first_buy_only ELSE tracked_wallets.alert_first_buy_only END
        RETURNING (xmax = 0) AS inserted`,
       [userId, JSON.stringify(chunk), iso(now), overwriteAlerts],
     );

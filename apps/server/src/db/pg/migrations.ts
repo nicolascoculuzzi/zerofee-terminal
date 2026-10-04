@@ -250,6 +250,65 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 2,
+    name: "copy trading, first-buy wallet alerts",
+    up: `
+      -- Tracked-wallet buy alerts can be limited to the wallet's opening buy of a token.
+      ALTER TABLE tracked_wallets ADD COLUMN alert_first_buy_only BOOLEAN NOT NULL DEFAULT false;
+
+      -- Copy tasks (trackers/copy.ts). config is validated JSON (protocol CopyTaskConfig). state holds the
+      -- server-kept open copy positions (from fills the browser reports), stats the decision counters.
+      -- No keys: the browser builds and signs every copy trade.
+      CREATE TABLE copy_tasks (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        leader TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('active', 'paused')),
+        paused_reason TEXT,
+        config JSONB NOT NULL,
+        state JSONB NOT NULL DEFAULT '{}'::jsonb,
+        stats JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL,
+        UNIQUE (user_id, leader)
+      );
+      CREATE INDEX copy_tasks_leader ON copy_tasks (leader);
+
+      -- Every signal pushed to a follower, and a rate-limited log of skipped leader trades. size_sol is a
+      -- buy's reservation against the spend caps (released when it fails, is declined, expires or is
+      -- revoked); filled_* are the reported (or feed-confirmed) amounts. detail is the wire CopySignal.
+      CREATE TABLE copy_signals (
+        id UUID PRIMARY KEY,
+        task_id UUID NOT NULL REFERENCES copy_tasks(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'executed', 'failed', 'declined', 'expired', 'revoked', 'skipped')),
+        reason TEXT,
+        mint TEXT NOT NULL,
+        leader TEXT NOT NULL,
+        leader_signature TEXT NOT NULL,
+        leader_slot BIGINT NOT NULL,
+        size_sol DOUBLE PRECISION,
+        filled_sol DOUBLE PRECISION,
+        filled_tokens TEXT,
+        signature TEXT,
+        confirmed BOOLEAN NOT NULL DEFAULT false,
+        detail JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ,
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE INDEX copy_signals_task_time ON copy_signals (task_id, created_at DESC);
+      CREATE INDEX copy_signals_user_time ON copy_signals (user_id, created_at DESC);
+      CREATE INDEX copy_signals_skipped_time ON copy_signals (created_at) WHERE status = 'skipped';
+      -- One actionable signal per leader event per task (duplicate deliveries); a signal revoked because
+      -- its slot died does not block the fork's replay. TP / SL exits use 'exit:<signal id>' as the key.
+      CREATE UNIQUE INDEX copy_signals_once ON copy_signals (task_id, leader_signature, mint, side)
+        WHERE status IN ('pending', 'executed', 'failed', 'declined', 'expired');
+    `,
+  },
+  {
+    version: 3,
     name: "armed orders engine",
     up: `
       -- The v1 placeholders were never written: replace them with the engine's schema.

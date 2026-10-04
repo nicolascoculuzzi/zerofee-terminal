@@ -107,7 +107,16 @@ export function loadConfig(): CliConfig {
 export function redactUrl(url: string): string {
   try {
     const u = new URL(url);
-    for (const k of [...u.searchParams.keys()]) if (/key|token|auth|uuid/i.test(k)) u.searchParams.set(k, "***");
+    if (u.username || u.password) {
+      u.username = "***";
+      u.password = "";
+    }
+    for (const k of [...u.searchParams.keys()]) if (/key|token|auth|uuid|secret/i.test(k)) u.searchParams.set(k, "***");
+    // Keys embedded in the path (e.g. Chainstack's /<key>) are long random segments.
+    u.pathname = u.pathname
+      .split("/")
+      .map((seg) => (seg.length >= 24 ? "***" : seg))
+      .join("/");
     return u.toString();
   } catch {
     return "<invalid url>";

@@ -562,7 +562,9 @@ describe("operator lookup tables", () => {
     const view = new DataView(data.buffer);
     view.setUint32(0, 1, true);
     view.setBigUint64(4, (1n << 64n) - 1n, true);
-    entries.forEach((e, i) => data.set(getAddressEncoder().encode(e), 56 + 32 * i));
+    entries.forEach((e, i) => {
+      data.set(getAddressEncoder().encode(e), 56 + 32 * i);
+    });
     env.chain.raw.set(table, { address: table, owner: ADDRESS_LOOKUP_TABLE_PROGRAM_ID, lamports: 1n, data });
     await engine.sweep(); // within the retry delay: no read yet
     await engine.settle();
@@ -670,6 +672,38 @@ describe("market events and trigger state", () => {
     await env.engine.settle();
     expect((env.submitter as RecordingSubmitter).variants).toEqual([expectedVariant(o, M0).tx.wireBase64]);
     expect((await env.repo.get(o.id))?.triggerState.devSold).toBe(true);
+  });
+
+  test("copy trading: a full leader exit fires the follower's armed dev-sell exit on that leader (CopyExitHook); partial sells do not", async () => {
+    const env = await makeEnv();
+    const sub = env.submitter as RecordingSubmitter;
+    const follower = await env.user("copy-follower");
+    const other = await env.user("copy-other");
+    const leader = addr("copy-leader") as Address;
+    const exit = (wallet?: string) =>
+      synthOrder({
+        kind: "dev-sell-exit",
+        amount: AMOUNT,
+        trigger: { type: "dev-sell", creator: leader, minTokenAmount: 1n },
+        minOuts: [pct(Q0, 97)],
+        tipLevels: [0],
+        armingQuoteOut: Q0,
+        ...(wallet ? { wallet } : {}),
+      });
+    const mine = exit();
+    const theirs = exit(addr("other-wallet"));
+    await env.arm(follower, [mine]);
+    await env.arm(other, [theirs]);
+    const ev = { userId: follower, taskId: "t1", mint: mine.mint, leader, leaderSignature: "sig", fraction: 0.5, full: false };
+    expect(env.engine.leaderSold(ev)).toBe(false);
+    expect(env.engine.leaderSold({ ...ev, leader: addr("someone-else") as Address, full: true })).toBe(false);
+    await env.engine.settle();
+    expect(sub.variants).toEqual([]);
+    expect(env.engine.leaderSold({ ...ev, fraction: 1, full: true })).toBe(true);
+    await env.engine.settle();
+    expect(sub.variants).toEqual([mine.attempts[0]?.variants[0]?.tx.wireBase64 as string]);
+    expect((await env.status(theirs.id)).status).toBe("armed");
+    expect((await env.repo.get(mine.id))?.triggerState.devSold).toBe(true);
   });
 
   test("a migration snipe waits for the migration event and the live pool", async () => {

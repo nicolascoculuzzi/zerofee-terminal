@@ -4,6 +4,8 @@
  * Never log secret values; use redactUrl() for URLs that may embed keys.
  */
 import { DEFAULT_RPC_URL, HELIUS_SENDER_ENDPOINTS, type HeliusSenderRegion, JITO_BLOCK_ENGINES, type JitoRegion } from "@zerofee/core";
+import { type EnrichConfig, loadEnrichConfig } from "./enrich/config";
+import { proTraderSet } from "./market/feeWallets";
 import { loadOrdersConfig, type OrdersConfig } from "./orders/config";
 
 export type IngestSourceKind = "rpc" | "yellowstone";
@@ -51,8 +53,14 @@ export interface ServerConfig {
   metrics: {
     sniperSlots: number;
     bundleMinBuyers: number;
+    /** Tight size band of the N-buyers-in-one-slot bundle rule (bps). */
+    bundleSizeBandBps: number;
+    /** insidersPct needs Helius funded-by: on when HELIUS_API_KEY is set. */
+    insiders: boolean;
     proTraderWallets: string[];
+    proTraderTokenAccounts: string[];
   };
+  enrich: EnrichConfig;
   flush: {
     pulseMs: number;
     tapeMs: number;
@@ -118,6 +126,39 @@ export interface ServerConfig {
     alertSweepMs: number;
     deliveryRetentionDays: number;
   };
+  /** GET /metrics access and alarm thresholds (src/metrics.ts). */
+  monitoring: {
+    /** Bearer token every /metrics caller must send; null = loopback, unproxied requests only. */
+    metricsToken: string | null;
+    /** zerofee_feed_stalled turns 1 after this long without an ingested transaction. */
+    feedStallMs: number;
+    /** Directory holding the edge kill-switch flag files (HALT_TX, MAINTENANCE); null = not reported. */
+    killSwitchDir: string | null;
+  };
+  /** Wallet tracker matching and copy trading (src/trackers). */
+  trackers: {
+    /** Watcher entries (user x address) the in-memory index may hold in total. */
+    maxEntries: number;
+    /** Live feed flush cadence (ms). */
+    flushMs: number;
+    /** Matches kept for `tracked` snapshots; per mint for `tracked:<mint>`; mints with marker history. */
+    feedRing: number;
+    mintRing: number;
+    mintRings: number;
+    maxRowsPerFrame: number;
+    /** Per-(wallet, mint) positions of watched wallets (first-buy detection). */
+    positions: number;
+    skipRetentionDays: number;
+    copy: {
+      /** SPEC "Limits": copy volume per leader per slot across all followers (SOL). */
+      leaderSlotCapSol: number;
+      buyTtlMs: number;
+      sellTtlMs: number;
+      minSol: number;
+      skipLogPerHour: number;
+      exitCooldownMs: number;
+    };
+  };
   /** Armed-orders engine (orders/config.ts). */
   orders: OrdersConfig;
 }
@@ -149,6 +190,13 @@ function int(env: Env, name: string, def: number, min: number, max: number): num
   return v;
 }
 
+function float(env: Env, name: string, def: number, min: number, max: number): number {
+  const raw = env[name]?.trim();
+  const v = raw ? Number(raw) : def;
+  if (!Number.isFinite(v) || v < min || v > max) throw new Error(`${name} must be a number in [${min}, ${max}]`);
+  return v;
+}
+
 function oneOf<T extends string>(env: Env, name: string, def: T, allowed: readonly T[]): T {
   const v = (env[name]?.trim() || def) as T;
   if (!allowed.includes(v)) throw new Error(`${name} must be one of ${allowed.join(", ")}`);
@@ -163,9 +211,6 @@ function list(env: Env, name: string, def: string[]): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 }
-
-/** Maestro's documented fee wallet (token_analytics notes); extend via PRO_TRADER_WALLETS. */
-const DEFAULT_PRO_TRADER_WALLETS = ["MaestroUL88UBnZr3wfoN7hqmNWFi3ZYCGqZoJJHE36"];
 
 /** Session cookie. `__Host-` makes browsers require Secure, Path=/ and no Domain attribute. */
 export const SESSION_COOKIE_NAME = "__Host-zf_session";
@@ -239,6 +284,8 @@ function base64UrlBytes(text: string): Uint8Array | null {
 export function loadConfig(env: Env = process.env): ServerConfig {
   const rpcUrl = str(env, "RPC_URL", DEFAULT_RPC_URL);
   const programs = list(env, "RPC_LOGS_PROGRAMS", ["pump", "pumpswap"]);
+  // Curated, source-cited fee-wallet registry (market/feeWallets.ts) plus operator additions.
+  const pros = proTraderSet(oneOf(env, "PRO_TRADER_PROVENANCE", "all", ["all", "vendor-docs"]), list(env, "PRO_TRADER_WALLETS", []));
   for (const p of programs) if (p !== "pump" && p !== "pumpswap") throw new Error("RPC_LOGS_PROGRAMS entries must be pump or pumpswap");
   const cfg: ServerConfig = {
     host: str(env, "SERVER_HOST", "127.0.0.1"),
@@ -277,8 +324,12 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     metrics: {
       sniperSlots: int(env, "SNIPER_SLOTS", 3, 0, 100),
       bundleMinBuyers: int(env, "BUNDLE_MIN_BUYERS", 4, 2, 100),
-      proTraderWallets: list(env, "PRO_TRADER_WALLETS", DEFAULT_PRO_TRADER_WALLETS),
+      bundleSizeBandBps: int(env, "BUNDLE_SIZE_BAND_BPS", 1_000, 0, 100_000),
+      insiders: optional(env, "HELIUS_API_KEY") !== null,
+      proTraderWallets: pros.wallets,
+      proTraderTokenAccounts: pros.tokenAccounts,
     },
+    enrich: loadEnrichConfig(env, rpcUrl),
     flush: {
       pulseMs: int(env, "PULSE_FLUSH_MS", 200, 50, 5_000),
       tapeMs: int(env, "TAPE_FLUSH_MS", 75, 10, 5_000),
@@ -326,6 +377,29 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       alertSweepMs: int(env, "ALERT_SWEEP_MS", 10_000, 1_000, 3_600_000),
       deliveryRetentionDays: int(env, "ALERT_DELIVERY_RETENTION_DAYS", 30, 1, 3_650),
     },
+    monitoring: {
+      metricsToken: optional(env, "METRICS_TOKEN"),
+      feedStallMs: int(env, "METRICS_FEED_STALL_SEC", 30, 5, 3_600) * 1_000,
+      killSwitchDir: optional(env, "KILL_SWITCH_DIR"),
+    },
+    trackers: {
+      maxEntries: int(env, "TRACKER_MAX_ENTRIES", 2_000_000, 1, 100_000_000),
+      flushMs: int(env, "TRACKER_FLUSH_MS", 100, 10, 5_000),
+      feedRing: int(env, "TRACKER_FEED_RING", 20_000, 100, 10_000_000),
+      mintRing: int(env, "TRACKER_MINT_RING", 300, 10, 100_000),
+      mintRings: int(env, "TRACKER_MINT_RINGS", 10_000, 10, 10_000_000),
+      maxRowsPerFrame: int(env, "TRACKER_MAX_ROWS_PER_FRAME", 500, 1, 100_000),
+      positions: int(env, "TRACKER_POSITIONS", 200_000, 1_000, 100_000_000),
+      skipRetentionDays: int(env, "COPY_SKIP_RETENTION_DAYS", 7, 1, 3_650),
+      copy: {
+        leaderSlotCapSol: float(env, "COPY_LEADER_SLOT_CAP_SOL", 25, 0.001, 1_000_000),
+        buyTtlMs: int(env, "COPY_BUY_TTL_MS", 15_000, 1_000, 600_000),
+        sellTtlMs: int(env, "COPY_SELL_TTL_MS", 60_000, 1_000, 3_600_000),
+        minSol: float(env, "COPY_MIN_SOL", 0.001, 0.000001, 1_000),
+        skipLogPerHour: int(env, "COPY_SKIP_LOG_PER_HOUR", 120, 0, 1_000_000),
+        exitCooldownMs: int(env, "COPY_EXIT_COOLDOWN_MS", 30_000, 0, 3_600_000),
+      },
+    },
     orders: loadOrdersConfig(env),
   };
   if (cfg.source === "yellowstone" && !cfg.yellowstoneEndpoint) throw new Error("INGEST_SOURCE=yellowstone requires YELLOWSTONE_ENDPOINT");
@@ -333,6 +407,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     throw new Error("DATABASE_URL must be a postgres:// URL");
   if (cfg.adminToken) parseAdminTokens(cfg.adminToken);
   validateNotifications(env, cfg);
+  if (cfg.monitoring.metricsToken !== null && cfg.monitoring.metricsToken.length < 16)
+    throw new Error("METRICS_TOKEN must be at least 16 characters (openssl rand -hex 32)");
   return cfg;
 }
 
@@ -392,6 +468,11 @@ export function redactUrl(url: string): string {
       u.password = "";
     }
     for (const k of [...u.searchParams.keys()]) if (/key|token|auth|uuid|secret/i.test(k)) u.searchParams.set(k, "***");
+    // Keys embedded in the path (e.g. Chainstack's /<key>) are long random segments.
+    u.pathname = u.pathname
+      .split("/")
+      .map((seg) => (seg.length >= 24 ? "***" : seg))
+      .join("/");
     return u.toString();
   } catch {
     return "<invalid url>";

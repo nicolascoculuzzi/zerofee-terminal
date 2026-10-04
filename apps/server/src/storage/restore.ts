@@ -4,10 +4,8 @@
  * tokens created within `replayHours` (their full trade history is in the trades table); older tokens
  * come back with untracked (null) audit metrics and windows that refill from live trades.
  */
-import { INCINERATOR } from "@zerofee/core";
 import { logger } from "../log";
 import type { OrderKey } from "../market/candles";
-import { HolderBook, type MetricsConfig } from "../market/holders";
 import type { MarketState } from "../market/state";
 import type { TokenRecord, TradeEntry } from "../market/token";
 import { deserializeRecord } from "./codec";
@@ -20,7 +18,6 @@ export interface RestoreOptions {
   sinceMs: number;
   /** Replay trades (holders, windows) for tokens created after this time. */
   replaySinceMs: number;
-  metrics: MetricsConfig;
   now: number;
 }
 
@@ -36,10 +33,9 @@ export function restoreMarket(
     try {
       const { rec, hadHolders } = deserializeRecord(row.state, o.now);
       if (hadHolders && rec.createdAt !== null && rec.createdAt >= o.replaySinceMs) {
-        rec.holders = new HolderBook(rec.createdSlot, o.metrics);
+        rec.holders = market.newHolderBook(rec.createdSlot);
         rec.holders.exclude(rec.bondingCurve);
         rec.holders.exclude(rec.pool);
-        rec.holders.exclude(INCINERATOR);
         rec.holders.addDev(rec.creatorAtCreate);
         rec.holders.addDev(rec.creator);
         replay.push(rec);
@@ -80,7 +76,7 @@ function replayTrade(rec: TokenRecord, r: TradeRow, txBuyers: Set<string>): void
   const delta = isBuy ? amount : -amount;
   if (rec.holders) {
     rec.holders.applyDelta(r.trader, delta);
-    if (isBuy) rec.holders.classifyBuy(r.trader, r.slot, txBuyers);
+    if (isBuy) rec.holders.classifyBuy(r.trader, r.slot, txBuyers, BigInt(r.quote_amount));
   }
   rec.windows.add(r.block_time, r.amount_sol, isBuy);
   const trade = rowToTrade(r);

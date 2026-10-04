@@ -11,4 +11,5 @@ export * from "./messages";
 export * from "./orders";
 export * from "./rest";
 export * from "./topics";
+export * from "./trackers";
 export * from "./user";

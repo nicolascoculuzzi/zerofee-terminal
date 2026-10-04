@@ -20,6 +20,14 @@ export interface TokenSocials {
 }
 
 /**
+ * Where a token's holder balances were last reconciled from (see `TokenSummary.holdersSource`):
+ *  - "trades": only our own trade-based book (live, but blind to wallet-to-wallet transfers);
+ *  - "rpc": the 20 largest token accounts (`getTokenLargestAccounts`) corrected the biggest balances;
+ *  - "das": a full token-account scan (Helius DAS `getTokenAccounts`) reset every balance.
+ */
+export type HoldersSource = "trades" | "rpc" | "das";
+
+/**
  * Everything a Pulse card, the Pulse filters and the token header need. Metric definitions follow
  * SPEC.md "Token metric definitions"; see the server's /api/health `metrics` block for the live config.
  */
@@ -66,19 +74,55 @@ export interface TokenSummary {
   txns: number;
   buys: number;
   sells: number;
-  /** Wallets with a positive balance (tracked from trades); null when the token's history was not observed. */
+  /**
+   * Wallets with a positive balance, excluding the curve, pool vaults and burn addresses. Tracked live from
+   * trades and periodically reconciled against the chain (see `holdersSource`); null when the token's
+   * history was not observed.
+   */
   holders: number | null;
   /** % of supply held by the 10 largest holders, excluding the curve, pool vaults and burn addresses. */
   top10Pct: number | null;
+  /**
+   * Last reconciliation of the balances behind `holders`, `top10Pct`, `devPct`, `snipersPct`, `bundlersPct`
+   * and `insidersPct`: "trades" = never reconciled (our trade-based book only); "rpc" = the 20 largest token
+   * accounts corrected the biggest balances at `holdersCheckedAt` (top10Pct exact then, the holder count
+   * still trade-based); "das" = a full token-account scan at `holdersCheckedAt` reset every balance (holder
+   * count and top10Pct exact then). Trades after the reconciliation keep moving the numbers live.
+   * Reconciled tokens: the focused token and the Final Stretch / Migrated lists. null when holders are null.
+   */
+  holdersSource: HoldersSource | null;
+  /** When the holder balances were last reconciled against the chain (ms); null if never. */
+  holdersCheckedAt: number | null;
   /** % of supply held by the dev wallets (live creator, plus the original creator if fee sharing rewrote it). */
   devPct: number | null;
+  /** The dev wallets held tokens and now hold none (sold or moved everything). null when holders are null. */
+  devSoldAll: boolean | null;
+  /**
+   * Earlier launches by this token's creator (the creator recorded at creation) that the server's database
+   * saw, and how many of them migrated. A lower bound: the database only covers launches since the server
+   * started recording. null when the creator is unknown.
+   */
+  devLaunches: number | null;
+  devMigrated: number | null;
   /** % of supply held by snipers (non-dev wallets whose first buy landed within N slots of creation). */
   snipersPct: number | null;
-  /** % of supply held by insiders. null: needs transfer/funding data (not computed yet). */
+  /**
+   * % of supply held by insiders: holders who received tokens by transfer and never bought, plus wallets the
+   * creator funded within two hops (funder = first incoming SOL transfer, from Helius `funded-by`).
+   * null when the server has no HELIUS_API_KEY (or its plan lacks funded-by), when the token's history was
+   * not observed, or until the token's top holders have been checked (only tokens likely to be shown are).
+   */
   insidersPct: number | null;
-  /** % of supply held by bundlers (creation-slot co-buyers, N+ distinct buyers in one slot, multi-wallet txs). */
+  /**
+   * % of supply held by bundlers: non-dev creation-slot co-buyers; N+ distinct buyers in one slot whose buy
+   * sizes fall in a tight band or who share one funder (funder data optional); several wallets in one tx.
+   */
   bundlersPct: number | null;
-  /** Distinct traders routing through known terminal fee wallets; null when the source lacks account keys. */
+  /**
+   * Distinct traders whose swap transactions paid a known terminal fee wallet (the server's curated,
+   * source-cited registry: Axiom, GMGN, Photon, Trojan, Maestro ...). null when the ingest source lacks
+   * account keys (the RPC logs feed); the Yellowstone feed has them.
+   */
   proTraders: number | null;
   /** 0..10000; 10000 once the curve is complete or migrated. */
   bondingProgressBps: number;
@@ -89,8 +133,14 @@ export interface TokenSummary {
   /** Canonical PumpSwap pool after migration (or the pool a pool-only token trades in). */
   pool: string | null;
   socials: TokenSocials;
-  /** DexScreener "Dex Paid"; null = not checked. */
+  /**
+   * DexScreener "Dex Paid": `/orders/v1/solana/{mint}` lists an approved `tokenProfile` order. null = not
+   * checked yet (only tokens likely to be shown are checked: the focused token, Final Stretch, Migrated and
+   * recently active tokens, plus any token that appears in DexScreener's new-profiles feed).
+   */
   dexPaid: boolean | null;
+  /** Payment time of the approved token profile (ms), when `dexPaid` is true. */
+  dexPaidAt: number | null;
   athMcSol: number;
   isMayhem: boolean;
   lastTradeAt: number | null;

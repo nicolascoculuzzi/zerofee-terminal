@@ -41,9 +41,27 @@ export interface InMemoryNonceStoreOptions {
   now?: () => number;
 }
 
-/** Single-process nonce store with TTL. Entries are removed on use and swept lazily when issuing. */
+interface NonceEntry {
+  expiresAt: number;
+  /** Issue sequence number: tells the live entry from a stale copy in the issue-order queue. */
+  seq: number;
+}
+
+/**
+ * Single-process nonce store with TTL. Entries are removed on use; expired and evicted ones leave from
+ * the front of an issue-order queue, so `issue` costs amortized O(1) however many nonces are
+ * outstanding (issuing is unauthenticated: it must stay cheap).
+ *
+ * The queue replaces evicting with `map.keys().next()` and sweeping the whole map on every issue: the
+ * sweep was O(outstanding) per issue, and in JavaScriptCore deleted entries stay in a Map's iteration
+ * list until the table is rehashed, so every front read walks past all earlier deletions.
+ */
 export class InMemoryNonceStore implements NonceStore {
-  readonly #expiresAt = new Map<string, number>();
+  readonly #entries = new Map<string, NonceEntry>();
+  /** Issue order (oldest first, from #head); entries consumed or evicted since stay as stale copies. */
+  #queue: { nonce: string; seq: number }[] = [];
+  #head = 0;
+  #seq = 0;
   readonly #maxEntries: number;
   readonly #now: () => number;
 
@@ -56,31 +74,60 @@ export class InMemoryNonceStore implements NonceStore {
   issue(nonce: string, ttlMs: number): void {
     if (!isValidNonce(nonce)) throw new TypeError("nonce must be at least 8 alphanumeric characters");
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new RangeError("ttlMs must be positive");
-    if (this.#expiresAt.has(nonce)) throw new Error("nonce already issued");
-    this.sweep();
-    while (this.#expiresAt.size >= this.#maxEntries) {
-      // Map iteration order is insertion order: evict the oldest outstanding nonce.
-      const oldest = this.#expiresAt.keys().next();
-      if (oldest.done) break;
-      this.#expiresAt.delete(oldest.value);
+    if (this.#entries.has(nonce)) throw new Error("nonce already issued");
+    const now = this.#now();
+    this.#prune(now);
+    // over capacity: evict the oldest outstanding nonce (front of the queue)
+    while (this.#entries.size >= this.#maxEntries && this.#head < this.#queue.length) {
+      const q = this.#queue[this.#head++] as { nonce: string; seq: number };
+      if (this.#entries.get(q.nonce)?.seq === q.seq) this.#entries.delete(q.nonce);
     }
-    this.#expiresAt.set(nonce, this.#now() + ttlMs);
+    const seq = this.#seq++;
+    this.#entries.set(nonce, { expiresAt: now + ttlMs, seq });
+    this.#queue.push({ nonce, seq });
+    this.#compact();
   }
 
   consume(nonce: string): boolean {
-    const expiresAt = this.#expiresAt.get(nonce);
-    if (expiresAt === undefined) return false;
-    this.#expiresAt.delete(nonce);
-    return this.#now() < expiresAt;
+    const e = this.#entries.get(nonce);
+    if (e === undefined) return false;
+    this.#entries.delete(nonce);
+    return this.#now() < e.expiresAt;
   }
 
-  /** Drops expired entries. */
+  /** Drops stale and expired entries at the front of the queue (stops at the first live, unexpired one). */
+  #prune(now: number): void {
+    while (this.#head < this.#queue.length) {
+      const q = this.#queue[this.#head] as { nonce: string; seq: number };
+      const e = this.#entries.get(q.nonce);
+      if (e && e.seq === q.seq && e.expiresAt > now) break;
+      if (e && e.seq === q.seq) this.#entries.delete(q.nonce);
+      this.#head++;
+    }
+  }
+
+  /** Keeps the queue O(outstanding nonces): drops the consumed prefix and, if needed, stale copies. */
+  #compact(): void {
+    if (this.#head > 1_024 && this.#head * 2 > this.#queue.length) {
+      this.#queue = this.#queue.slice(this.#head);
+      this.#head = 0;
+    }
+    // Consumed nonces behind a long-lived one cannot leave from the front: filter them out once the
+    // queue holds twice the capacity (at most once per `maxEntries` issues, so still amortized O(1)).
+    if (this.#queue.length - this.#head > 2 * this.#maxEntries) {
+      this.#queue = this.#queue.slice(this.#head).filter((q) => this.#entries.get(q.nonce)?.seq === q.seq);
+      this.#head = 0;
+    }
+  }
+
+  /** Drops every expired entry (a full pass; `issue` only prunes the front of the queue). */
   sweep(): void {
     const now = this.#now();
-    for (const [nonce, expiresAt] of this.#expiresAt) if (expiresAt <= now) this.#expiresAt.delete(nonce);
+    this.#prune(now);
+    for (const [nonce, e] of this.#entries) if (e.expiresAt <= now) this.#entries.delete(nonce);
   }
 
   get size(): number {
-    return this.#expiresAt.size;
+    return this.#entries.size;
   }
 }

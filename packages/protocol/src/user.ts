@@ -267,6 +267,8 @@ export interface TrackedWalletAlerts {
   create: boolean;
   /** Ignore trades smaller than this (SOL). */
   minSol: number;
+  /** Buy alerts only for the wallet's opening buy of a token (its first buy), not for adds. Default false. */
+  firstBuyOnly?: boolean;
 }
 
 export interface TrackedWallet {

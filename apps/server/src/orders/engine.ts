@@ -59,6 +59,7 @@ import type { HaltState, Order, OrdersDelta } from "@zerofee/protocol";
 import type { OrderEvent } from "../alerts/engine";
 import type { IngestTx } from "../ingest/types";
 import { logger } from "../log";
+import type { CopyExitHook } from "../trackers/copy";
 import { type ChainReader, isConfirmed, lookupTableState, nonceSnapshot, tokenAmount } from "./chain";
 import type { OrdersConfig } from "./config";
 import type { SendReport, Submitter } from "./lanes";
@@ -149,7 +150,7 @@ export interface EngineStats {
   pollErrors: number;
 }
 
-export class OrderEngine {
+export class OrderEngine implements CopyExitHook {
   private readonly orders = new Map<string, Tracked>();
   private readonly byMint = new Map<string, Set<string>>();
   private readonly byNonce = new Map<string, Set<string>>();
@@ -573,6 +574,32 @@ export class OrderEngine {
     } catch (e) {
       log.error(`orders ingest hook failed: ${errText(e)}`);
     }
+  }
+
+  /**
+   * CopyExitHook (trackers/copy.ts): a copy-trade leader sold while no browser of the follower was
+   * connected. The browser arms a copy position's tab-closed exit as a full-exit dev-sell-exit order on
+   * the leader (trigger `dev-sell`, creator = the leader); on a FULL leader exit that order's sticky
+   * flag is set and it is evaluated now, so it submits through the protected path like any trigger.
+   * Partial leader sells return false: only full exits can be armed safely (never ladder partial sells).
+   * Returns true when an exit was fired.
+   */
+  leaderSold(ev: Parameters<CopyExitHook["leaderSold"]>[0]): boolean {
+    if (!ev.full) return false;
+    let fired = false;
+    const now = this.now();
+    for (const id of this.byMint.get(ev.mint) ?? []) {
+      const t = this.orders.get(id);
+      const o = t?.order;
+      if (!t || !o || t.userId !== ev.userId || o.status !== "armed" || o.side !== "sell" || !o.fullExit) continue;
+      if (o.trigger.type !== "dev-sell" || o.trigger.creator !== ev.leader) continue;
+      if (!t.state.devSold) {
+        t.state = { ...t.state, devSold: true };
+        t.stateDirty = true;
+      }
+      if (this.evaluate(t, undefined, now)?.fire && t.firing) fired = true;
+    }
+    return fired;
   }
 
   /** Re-evaluates every armed order (time triggers, quiet markets) and persists trigger states. */

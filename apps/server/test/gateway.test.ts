@@ -243,6 +243,19 @@ describe("REST", () => {
     expect((await fetch(`${base}/api/tx`, { method: "POST", body: JSON.stringify({ tx: "AAAA", preset: "yolo" }) })).status).toBe(400);
     expect((await fetch(`${base}/api/tx`, { method: "GET" })).status).toBe(405);
   });
+
+  test("enrichment is wired in: a pass runs against the (mocked) network and health reports budgets", async () => {
+    expect(app.enricher).not.toBeNull();
+    app.enricher?.tick();
+    await waitFor(() => (app.enricher?.stats.dexErrors ?? 0) >= 1); // the mock answers DexScreener with 404
+    const h = (await (await fetch(`${base}/api/health`)).json()) as HealthResponse;
+    const notes = h.sources[0]?.notes.join("\n") ?? "";
+    expect(notes).toContain("enrich dex paid:");
+    expect(notes).toContain("budget 60 per 60 s");
+    expect(notes).toContain("enrich funding: off: no HELIUS_API_KEY");
+    const token = (await (await fetch(`${base}/api/tokens/${mint}`)).json()) as TokenResponse;
+    expect(token.token).toMatchObject({ holdersSource: "trades", insidersPct: null, devSoldAll: false });
+  });
 });
 
 describe("rate limiting", () => {

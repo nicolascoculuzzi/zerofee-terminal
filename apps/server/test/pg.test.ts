@@ -24,14 +24,16 @@ import { bunSqlDb, DRIVERS, type TestDb } from "./pgHelpers";
 
 setLogLevel("error");
 const T0 = Date.UTC(2026, 9, 3, 12, 0, 0);
+/** Latest schema version (assertions follow MIGRATIONS so adding one does not rewrite them). */
+const LATEST = Math.max(...MIGRATIONS.map((m) => m.version));
 
 describe("migrations through Bun.sql (production path)", () => {
   test("an empty database migrates over the wire protocol, in one transaction, idempotently", async () => {
     const t = await bunSqlDb({ migrate: false });
     try {
       expect(await t.db.query("SELECT to_regclass('public.users') AS t")).toEqual([{ t: null }]);
-      expect(await migrate(t.db, MIGRATIONS, () => T0)).toEqual({ applied: [1, 2], version: 2 });
-      expect(await migrate(t.db)).toEqual({ applied: [], version: 2 });
+      expect(await migrate(t.db, MIGRATIONS, () => T0)).toEqual({ applied: MIGRATIONS.map((m) => m.version), version: LATEST });
+      expect(await migrate(t.db)).toEqual({ applied: [], version: LATEST });
       const tables = (await t.db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")).map(
         (r) => r.tablename,
       );
@@ -42,6 +44,8 @@ describe("migrations through Bun.sql (production path)", () => {
         "armed_order_events",
         "armed_orders",
         "blacklists",
+        "copy_signals",
+        "copy_tasks",
         "nonce_slots",
         "notification_channels",
         "presets",
@@ -58,10 +62,13 @@ describe("migrations through Bun.sql (production path)", () => {
       await t.db.query("INSERT INTO admin_audit_log (at, actor, action, ok) VALUES (now(), 'x', 'y', true)");
       await expect(t.db.query("DELETE FROM admin_audit_log")).rejects.toThrow("append-only");
       // A failing migration rolls back entirely.
-      const broken = [...MIGRATIONS, { version: 3, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" }];
+      const broken = [
+        ...MIGRATIONS,
+        { version: LATEST + 1, name: "broken", up: "CREATE TABLE ok_part (x int); SELECT no_such_function();" },
+      ];
       await expect(migrate(t.db, broken)).rejects.toThrow();
       expect(await t.db.query("SELECT to_regclass('public.ok_part') AS t")).toEqual([{ t: null }]);
-      expect((await t.db.query("SELECT max(version) AS v FROM schema_migrations"))[0]?.v).toBe(2);
+      expect((await t.db.query("SELECT max(version) AS v FROM schema_migrations"))[0]?.v).toBe(LATEST);
     } finally {
       await t.close();
     }
@@ -83,7 +90,7 @@ describe.each(DRIVERS)("$name", ({ open }) => {
   describe("driver", () => {
     test("migrations are recorded and idempotent; a newer schema refuses to start", async () => {
       const again = await migrate(t.db);
-      expect(again).toEqual({ applied: [], version: 2 });
+      expect(again).toEqual({ applied: [], version: LATEST });
       const rows = await t.db.query("SELECT version, name FROM schema_migrations ORDER BY version");
       expect(rows.map((r) => toInt(r.version))).toEqual(MIGRATIONS.map((m) => m.version));
       await expect(migrate(t.db, [])).rejects.toThrow("newer than this server");
@@ -258,7 +265,13 @@ describe.each(DRIVERS)("$name", ({ open }) => {
 
       const alerting = await store.tracked.listAlerting();
       expect(alerting.filter((x) => x.userId === u.id)).toEqual([
-        { userId: u.id, address: addr("a"), label: "whale A", emoji: "🐳", alerts: { buy: true, sell: false, create: false, minSol: 1 } },
+        {
+          userId: u.id,
+          address: addr("a"),
+          label: "whale A",
+          emoji: "🐳",
+          alerts: { buy: true, sell: false, create: false, minSol: 1, firstBuyOnly: false },
+        },
       ]);
 
       const r3 = await store.tracked.upsertMany(u.id, [w("c"), w("d")], { now: T0 + 2, max: 10, replace: true });
