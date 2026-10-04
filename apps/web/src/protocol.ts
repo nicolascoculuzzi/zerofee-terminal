@@ -454,19 +454,27 @@ export type OrderKind =
   | "migration_buy"
   | "migration_sell"
   | "copy_buy"
-  | "dev_snipe";
+  | "dev_snipe"
+  /** Armed-order kinds of the live engine (@zerofee/core ArmedOrderKind) without a simulated twin. */
+  | "trailing_stop"
+  | "dca_tranche"
+  | "dev_sell_exit";
 
 /** `stale` = the pre-signed transactions can no longer land and the order needs re-arming. */
 export type OrderStatus = "armed" | "submitted" | "filled" | "stale" | "cancelled" | "failed";
 
 export interface OrderTrigger {
-  /** `mc` triggers on market cap (USD), `price` on SOL price, `migration` on graduation. */
-  metric: "mc" | "price" | "migration" | "leader_buy" | "dev_launch";
+  /**
+   * `mc` triggers on market cap (USD), `price` on SOL price, `migration` on graduation. Live armed
+   * orders add `trailing` (value = trail %), `time` (value = not-before, ms) and `dev_sell`.
+   */
+  metric: "mc" | "price" | "migration" | "leader_buy" | "dev_launch" | "trailing" | "time" | "dev_sell";
   direction: "above" | "below" | null;
   value: number | null;
 }
 
-export type OrderSize = { kind: "sol"; sol: number } | { kind: "pct"; pct: number };
+/** `tokens`: a fixed token amount (UI units), how live armed sells that are not full exits are sized. */
+export type OrderSize = { kind: "sol"; sol: number } | { kind: "pct"; pct: number } | { kind: "tokens"; tokens: number };
 
 /** One pre-signed variant on an order's min-out grid. */
 export interface OrderVariant {

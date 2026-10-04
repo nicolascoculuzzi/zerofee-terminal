@@ -2305,7 +2305,7 @@ export class SimEngine {
       expected = o.size.kind === "sol" ? o.size.sol / price : 0;
     } else {
       const holding = this.users.get(o.wallet)?.positions.get(t.mint)?.holding ?? 0;
-      const tokens = o.size.kind === "pct" ? (holding * o.size.pct) / 100 : o.size.sol / price;
+      const tokens = o.size.kind === "pct" ? (holding * o.size.pct) / 100 : o.size.kind === "sol" ? o.size.sol / price : o.size.tokens;
       expected = tokens * price;
     }
     const tips = [tipSol, tipSol * 2, tipSol * 4];

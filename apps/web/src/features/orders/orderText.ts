@@ -27,6 +27,9 @@ export const KIND_LABEL: Record<OrderKind, string> = {
   migration_sell: "Migration sell",
   copy_buy: "Copy buy",
   dev_snipe: "Dev snipe",
+  trailing_stop: "Trailing",
+  dca_tranche: "DCA",
+  dev_sell_exit: "Dev-sell exit",
 };
 
 /** Full names for the drawer and dialogs. */
@@ -39,6 +42,9 @@ export const KIND_NAME: Record<OrderKind, string> = {
   migration_sell: "Migration sell",
   copy_buy: "Copy buy",
   dev_snipe: "Dev snipe",
+  trailing_stop: "Trailing stop",
+  dca_tranche: "DCA tranche",
+  dev_sell_exit: "Dev-sell exit",
 };
 
 /** Lane column (8ch): where the pre-signed transaction is sent (SPEC "Landing presets"). */
@@ -111,6 +117,12 @@ export function triggerParts(order: Order, ctx: TriggerContext): TriggerParts {
       return { kind: "text", text: "When the leader buys" };
     case "dev_launch":
       return { kind: "text", text: "When the dev launches" };
+    case "trailing":
+      return { kind: "text", text: t.value === null ? "Trailing stop" : `Trails ${plainDecimal(t.value)}% below the high` };
+    case "time":
+      return { kind: "text", text: t.value === null ? "On a schedule" : `After ${new Date(t.value).toLocaleString()}` };
+    case "dev_sell":
+      return { kind: "text", text: "When the dev sells" };
   }
 }
 
@@ -137,10 +149,13 @@ export function triggerDistance(order: Order, live: { mcUsd: number | null; pric
   return { pct: ((value - current) / current) * 100, crossed };
 }
 
-/** "Sell 25%", "Buy 0.5 SOL" (user-entered amounts as entered, DESIGN.md 3.4). */
+/** "Sell 25%", "Buy 0.5 SOL", "Sell 1.2M tokens" (user-entered amounts as entered, DESIGN.md 3.4). */
 export function sizeText(order: Order): string {
   const verb = order.side === "buy" ? "Buy" : "Sell";
-  return order.size.kind === "sol" ? `${verb} ${fmtSolShort(order.size.sol)} SOL` : `${verb} ${fmtSolShort(order.size.pct)}%`;
+  const s = order.size;
+  if (s.kind === "sol") return `${verb} ${fmtSolShort(s.sol)} SOL`;
+  if (s.kind === "pct") return `${verb} ${fmtSolShort(s.pct)}%`;
+  return `${verb} ${fmtCompact(s.tokens)} tokens`;
 }
 
 /**
