@@ -4,6 +4,7 @@
  * Never log secret values; use redactUrl() for URLs that may embed keys.
  */
 import { DEFAULT_RPC_URL, HELIUS_SENDER_ENDPOINTS, type HeliusSenderRegion, JITO_BLOCK_ENGINES, type JitoRegion } from "@zerofee/core";
+import { type EnrichConfig, loadEnrichConfig } from "./enrich/config";
 import { proTraderSet } from "./market/feeWallets";
 
 export type IngestSourceKind = "rpc" | "yellowstone";
@@ -53,9 +54,12 @@ export interface ServerConfig {
     bundleMinBuyers: number;
     /** Tight size band of the N-buyers-in-one-slot bundle rule (bps). */
     bundleSizeBandBps: number;
+    /** insidersPct needs Helius funded-by: on when HELIUS_API_KEY is set. */
+    insiders: boolean;
     proTraderWallets: string[];
     proTraderTokenAccounts: string[];
   };
+  enrich: EnrichConfig;
   flush: {
     pulseMs: number;
     tapeMs: number;
@@ -166,9 +170,11 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       sniperSlots: int(env, "SNIPER_SLOTS", 3, 0, 100),
       bundleMinBuyers: int(env, "BUNDLE_MIN_BUYERS", 4, 2, 100),
       bundleSizeBandBps: int(env, "BUNDLE_SIZE_BAND_BPS", 1_000, 0, 100_000),
+      insiders: optional(env, "HELIUS_API_KEY") !== null,
       proTraderWallets: pros.wallets,
       proTraderTokenAccounts: pros.tokenAccounts,
     },
+    enrich: loadEnrichConfig(env, rpcUrl),
     flush: {
       pulseMs: int(env, "PULSE_FLUSH_MS", 200, 50, 5_000),
       tapeMs: int(env, "TAPE_FLUSH_MS", 75, 10, 5_000),

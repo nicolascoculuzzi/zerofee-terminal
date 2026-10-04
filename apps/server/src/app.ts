@@ -8,6 +8,7 @@ import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from "@zerofee/core";
 import type { HealthResponse } from "@zerofee/protocol";
 import { AccountResolver } from "./accounts/resolver";
 import type { ServerConfig } from "./config";
+import { Enricher, watchedMints } from "./enrich";
 import { ChainPublisher } from "./feeds/chain";
 import { MetadataFetcher } from "./feeds/metadata";
 import { ProgramAccountsCache } from "./feeds/programAccounts";
@@ -39,8 +40,10 @@ export interface AppOverrides {
   fetchFn?: typeof fetch;
   /** Skip the Binance socket (tests). */
   solUsd?: SolUsdFeed | null;
-  /** Skip periodic network pollers (blockhash, fees, tip floor, program accounts). */
+  /** Skip periodic network pollers (blockhash, fees, tip floor, program accounts, enrichment timer). */
   pollers?: boolean;
+  /** false: no enrichment at all (Dex Paid, holder reconciliation, funding, dev history). */
+  enrich?: boolean;
 }
 
 export interface App {
@@ -56,6 +59,7 @@ export interface App {
   source: Source | null;
   sink: IngestSink;
   reconciler: Reconciler | null;
+  enricher: Enricher | null;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -81,8 +85,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const reader = new StorageReader(db);
   const solUsd = o.solUsd === undefined ? new SolUsdFeed({ urls: cfg.binanceWsUrls, staleMs: cfg.solUsdStaleMs }) : o.solUsd;
 
-  // MarketState and the resolver reference each other through callbacks.
+  // MarketState, the resolver and the enricher reference each other through callbacks.
   let market: MarketState | null = null;
+  let enricher: Enricher | null = null;
   const resolver = new AccountResolver(rpc, {
     pool: (p) => market?.onPoolReady(p),
     mint: (m) => market?.onMintResolved(m),
@@ -103,6 +108,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     solUsd: () => solUsd?.current() ?? null,
     requestMetadata: (mint, uri) => metadata.request(mint, uri),
     storage: writer,
+    funderOf: (w) => enricher?.funderOf(w) ?? null,
+    onLaunch: (rec) => enricher?.onLaunch(rec),
+    onMigrate: (rec) => enricher?.onMigrate(rec),
   });
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
@@ -115,6 +123,17 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
 
   const pulse = new PulseBoard(cfg.pulse);
   let gateway: Gateway | null = null;
+  if (cfg.enrich.enabled && o.enrich !== false) {
+    enricher = new Enricher({
+      cfg: cfg.enrich,
+      market: m,
+      pulse,
+      focused: () => (gateway ? watchedMints(gateway.hub) : []),
+      launches: reader,
+      fundingStore: { get: (w) => reader.walletFunder(w), put: (row) => writer.walletFunder(row) },
+      fetchFn: o.fetchFn,
+    });
+  }
   const chain = new ChainPublisher({
     rpc,
     blockhashMode: cfg.source === "yellowstone" ? "stream" : "rpc",
@@ -201,6 +220,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       srcHealth[0].notes.push(
         ...notes,
         `rpc: ${rpc.stats.calls} calls, ${rpc.stats.errors} errors, ${rpc.stats.dataAllowance} data-allowance, ${rpc.stats.rateLimited} rate-limited`,
+        ...(enricher?.notes() ?? ["enrich: off"]),
       );
     return {
       ok: !!source && srcHealth[0]?.connected === true,
@@ -263,6 +283,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   if (o.pollers !== false) {
     chain.start();
     programAccounts.start();
+    enricher?.start();
   }
   source?.start(sink);
   pumpPortal?.start((ev) =>
@@ -294,10 +315,12 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     source,
     sink,
     reconciler,
+    enricher,
     health,
     async stop() {
       clearInterval(evictTimer);
       if (reconcileTimer) clearInterval(reconcileTimer);
+      enricher?.stop();
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();
