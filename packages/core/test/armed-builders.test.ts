@@ -149,7 +149,9 @@ describe("min-out x tip grid on ONE nonce", async () => {
     expect(JITO_TIP_ACCOUNTS_FALLBACK).toContain(order.frozen.tipAccounts[0] as Address);
     expect(order.frozen.lookupTables).toHaveLength(1);
     expect(order.frozen.interfaceVersion).toBe(currentInterfaceVersion());
-    expect(currentInterfaceVersion()).toMatch(/^pump:[0-9a-f]{12}\|pump_amm:[0-9a-f]{12}\|pump_fees:[0-9a-f]{12}$/);
+    expect(currentInterfaceVersion()).toMatch(
+      /^pump:[0-9a-f]{12}\|pump_amm:[0-9a-f]{12}\|pump_fees:[0-9a-f]{12}\|raydium_launchpad:[0-9a-f]{12}\|raydium_cp_swap:[0-9a-f]{12}$/,
+    );
   });
 
   test("reservation and daily-cap cost of a sell", () => {
@@ -396,7 +398,9 @@ describe("buy grids, canonical pools, snipes, dual venue", async () => {
     await expect(armOrder(await stopLossSpec(wallet, 1, { minOuts: [5n, 5n] }), signer)).rejects.toThrow("duplicate min-out");
     await expect(armOrder(await stopLossSpec(wallet, 1, { minOuts: [0n] }), signer)).rejects.toThrow("> 0");
     await expect(armOrder(await stopLossSpec(wallet, 1, { amount: 5n }), signer)).rejects.toThrow("template amount");
-    await expect(armOrder(await stopLossSpec(wallet, 1, { trigger: { type: "migration" } }), signer)).rejects.toThrow("PumpSwap template");
+    await expect(armOrder(await stopLossSpec(wallet, 1, { trigger: { type: "migration" } }), signer)).rejects.toThrow(
+      "graduation venue (PumpSwap or CPMM)",
+    );
     const [n] = await nonceRefs(wallet, 1);
     await expect(
       armOrder(await stopLossSpec(wallet, 1, { nonces: [{ ...(n as never), authority: other.address }] }), signer),

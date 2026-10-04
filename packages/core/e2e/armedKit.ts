@@ -101,6 +101,7 @@ import {
   LatencyTracker,
   type LiveMarketState,
   type LookupTableState,
+  liveMarketFromState,
   liveQuoteOut,
   loadTokenState,
   nonceSlotAddresses,
@@ -531,22 +532,9 @@ export function nonceConsumed(
   };
 }
 
-/** The trigger engine's market view, from the same state loadTokenState returns. */
+/** The trigger engine's market view, from the same state loadTokenState returns (core's liveMarketFromState). */
 export function liveMarket(s: TokenState): LiveMarketState {
-  if (s.venue === "pump") {
-    return { venue: "pump", curve: s.curve, global: s.global, feeConfig: s.feeConfig, mintSupply: s.mintInfo.supply };
-  }
-  // Armed orders cover pump.fun and PumpSwap; Raydium venues have no armed builders yet.
-  if (s.venue !== "pumpswap") throw new Error(`armed orders don't support venue ${s.venue}`);
-  return {
-    venue: "pumpswap",
-    pool: s.pool,
-    reserves: s.reserves,
-    isCanonical: s.isCanonical,
-    baseMintSupply: s.mintInfo.supply,
-    feeConfig: s.feeConfig,
-    globalConfig: s.globalConfig,
-  };
+  return liveMarketFromState(s);
 }
 
 export function pumpContext(s: PumpCurveState, user: Address): PumpTradeContext {
@@ -647,6 +635,8 @@ export function marketAfter(market: LiveMarketState, side: "buy" | "sell", amoun
     }
     return { ...market, curve: applySell(market.curve, quoteSell(market.curve, amount, rates)) };
   }
+  // The fork suite moves pump and PumpSwap markets only (no Raydium accounts are cloned).
+  if (market.venue !== "pumpswap") throw new Error(`marketAfter does not model venue ${market.venue}`);
   const rates = ammFeeRates({
     pool: market.pool,
     isCanonical: market.isCanonical,

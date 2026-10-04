@@ -1,10 +1,12 @@
 /**
  * Market events that trigger armed orders, adapted from the stream decoders in ../events:
- *  - pump TradeEvent / PumpSwap SellEvent      -> "trade" (dev-sell exits)
- *  - CompletePumpAmmMigrationEvent (pumpMigrate) -> "migration" (migration snipes)
+ *  - pump TradeEvent / PumpSwap SellEvent / LaunchLab TradeEvent -> "trade" (dev-sell exits)
+ *  - CompletePumpAmmMigrationEvent (pumpMigrate)                  -> "migration" (migration snipes)
+ *  - a LaunchLab coin's graduation CPMM pool going live            -> "migration" (no event: the engine
+ *    sees the pool account appear, or a cpmmSwap on it; marketEventFromLaunchLabGraduation)
  */
 import type { Address } from "@solana/kit";
-import type { AmmSwapEvent, DecodedEvent, PumpMigrationEvent, PumpTradeEvent } from "../events";
+import type { AmmSwapEvent, DecodedEvent, LaunchLabTradeEvent, PumpMigrationEvent, PumpTradeEvent } from "../events";
 import type { ArmedSide } from "./model";
 
 export type ArmedMarketEvent =
@@ -34,12 +36,39 @@ export function marketEventFromAmmSwap(ev: AmmSwapEvent, baseMint: Address, slot
 }
 
 /**
- * Converts any decoded event the armed engine cares about; null for the rest. PumpSwap swaps need
- * `baseMintOfPool` (the engine's pool -> mint map) because their events lack the mint.
+ * LaunchLab TradeEvents carry neither the mint nor the trader: pass the pool's base mint and the trader
+ * (the transaction's fee payer). The token amount is what moved on the curve (buy: base out of the vault;
+ * sell: base into the vault, after any Token-2022 transfer fee).
+ */
+export function marketEventFromLaunchLabTrade(
+  ev: LaunchLabTradeEvent,
+  baseMint: Address,
+  trader: Address,
+  slot?: bigint,
+): ArmedMarketEvent {
+  return {
+    type: "trade",
+    mint: baseMint,
+    trader,
+    side: ev.isBuy ? "buy" : "sell",
+    tokenAmount: ev.isBuy ? ev.amountOut : ev.amountIn,
+    ...withSlot(slot),
+  };
+}
+
+/** A LaunchLab coin graduated: its CPMM pool (launchLabGraduationPoolContext) exists. */
+export function marketEventFromLaunchLabGraduation(mint: Address, cpmmPool: Address, slot?: bigint): ArmedMarketEvent {
+  return { type: "migration", mint, pool: cpmmPool, ...withSlot(slot) };
+}
+
+/**
+ * Converts any decoded event the armed engine cares about; null for the rest. PumpSwap swaps and
+ * LaunchLab trades need `baseMintOfPool` (the engine's pool -> mint map) because their events lack the
+ * mint; LaunchLab trades also need `trader` (the transaction's fee payer).
  */
 export function marketEventFromDecoded(
   ev: DecodedEvent,
-  opts: { slot?: bigint; baseMintOfPool?: (pool: Address) => Address | undefined } = {},
+  opts: { slot?: bigint; baseMintOfPool?: (pool: Address) => Address | undefined; trader?: Address } = {},
 ): ArmedMarketEvent | null {
   switch (ev.kind) {
     case "pumpTrade":
@@ -50,6 +79,10 @@ export function marketEventFromDecoded(
     case "ammSell": {
       const mint = opts.baseMintOfPool?.(ev.pool);
       return mint ? marketEventFromAmmSwap(ev, mint, opts.slot) : null;
+    }
+    case "launchlabTrade": {
+      const mint = opts.baseMintOfPool?.(ev.pool);
+      return mint && opts.trader ? marketEventFromLaunchLabTrade(ev, mint, opts.trader, opts.slot) : null;
     }
     default:
       return null;

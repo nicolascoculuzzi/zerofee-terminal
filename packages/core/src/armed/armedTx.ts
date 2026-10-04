@@ -10,7 +10,8 @@
  * static (see staticAccounts.ts): the nonce account (also SIMD-0242), tips and the jitodontfront
  * marker, token programs, mints, the System program, every account of System / Token / ATA
  * instructions (transfer destinations, ATAs, owners, close destinations), and the venue accounts
- * the firewall pins (pump: mints, token programs, user ATAs; PumpSwap: also the pool).
+ * the firewall pins (pump: mints, token programs, user ATAs; PumpSwap: also the pool; Raydium
+ * LaunchLab / CPMM: LAUNCHLAB_ / CPMM_FIREWALL_STATIC_POSITIONS).
  */
 import {
   type AccountLookupMeta,
