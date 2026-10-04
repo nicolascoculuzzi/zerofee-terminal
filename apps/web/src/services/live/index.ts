@@ -1,8 +1,10 @@
 import { wsUrl } from "../../runtime";
 import type { Services } from "../index";
 import type { TradeService } from "../tradeService";
-import type { WalletService, WalletServiceState } from "../walletService";
 import { LiveDataSource } from "./LiveDataSource";
+import { LiveWalletService } from "./LiveWalletService";
+import { SignerHost } from "./signerHost";
+import { createSignerWorker } from "./signerWorker";
 
 const LIVE_FEATURES: Services["features"] = {
   passkey: false,
@@ -11,36 +13,10 @@ const LIVE_FEATURES: Services["features"] = {
   pnlHistory: false,
   otherWallets: false,
   exportNeedsPassword: true,
+  otherDestinations: false,
 };
 
 const notYet = (what: string) => () => Promise.reject(new Error(`${what} is not available in this build yet`));
-
-/** Read-only wallet service until the wallet layer is wired (no connected wallet, no trading wallets). */
-function readOnlyWallet(): WalletService {
-  const state: WalletServiceState = { connected: null, session: null, tradingWallets: [], locked: true, autoLockAt: null };
-  return {
-    getState: () => state,
-    subscribe: () => () => {},
-    connect: notYet("Connecting a wallet"),
-    disconnect: async () => {},
-    signIn: notYet("Sign-in"),
-    createTradingWallet: notYet("Creating a trading wallet"),
-    confirmBackup: notYet("Backup"),
-    exportKey: notYet("Key export"),
-    archiveTradingWallet: notYet("Archiving"),
-    changeUnlockMethod: notYet("Changing the unlock method"),
-    reclaimRent: notYet("Reclaiming rent"),
-    unlock: notYet("Unlocking"),
-    unlockWithPasskey: notYet("Passkey unlock"),
-    lock: () => {},
-    setAutoLock: () => {},
-    touch: () => {},
-    balances: async () => ({ connectedSol: Number.NaN, trading: {} }),
-    fundFromConnected: notYet("Funding"),
-    withdrawToConnected: notYet("Withdrawing"),
-    approveWithConnected: async () => false,
-  };
-}
 
 function readOnlyTrade(): TradeService {
   return {
@@ -58,10 +34,15 @@ function readOnlyTrade(): TradeService {
 /** The live stack: gateway data source, wallet + signer worker, trade engine. */
 export async function createLiveServices(): Promise<Services> {
   const data = new LiveDataSource({ socket: { url: wsUrl } });
+  const signer = new SignerHost(createSignerWorker);
+  const wallet = new LiveWalletService({ data, signer });
+  // Restores the session and the keystore's wallet list before the first render (both are local or one
+  // REST call); the wallet extension reconnects silently in the background.
+  await wallet.init();
   return {
     data,
     trade: readOnlyTrade(),
-    wallet: readOnlyWallet(),
+    wallet,
     simulated: false,
     source: "live",
     features: LIVE_FEATURES,

@@ -22,6 +22,7 @@ export function UnlockModal() {
   const [busy, setBusy] = useState<"password" | "passkey" | null>(null);
   const hasPasskey = wallets.some((w) => w.unlockMethod === "passkey");
   const simulated = getServices().simulated;
+  const passkeys = getServices().features.passkey;
 
   const done = () => {
     const next = unlock.onUnlocked;
@@ -54,9 +55,11 @@ export function UnlockModal() {
       width={400}
       footer={
         <div className="flex items-center justify-end gap-2">
-          <Button size="md" variant="secondary" onClick={() => void run("passkey")} disabled={busy !== null} icon={<KeyRound />}>
-            {hasPasskey ? "Use passkey" : "Use passkey (simulated)"}
-          </Button>
+          {passkeys && (
+            <Button size="md" variant="secondary" onClick={() => void run("passkey")} disabled={busy !== null} icon={<KeyRound />}>
+              {hasPasskey ? "Use passkey" : "Use passkey (simulated)"}
+            </Button>
+          )}
           <Button type="submit" form="unlock-form" variant="primary" size="md" disabled={busy !== null || !password}>
             Unlock
           </Button>

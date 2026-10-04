@@ -27,6 +27,8 @@ export interface ServiceFeatures {
   otherWallets: boolean;
   /** Key export re-asks for the keystore passphrase (the live signer does; the mock doesn't). */
   exportNeedsPassword: boolean;
+  /** Withdrawal destinations other than the connected wallet (connected-wallet signature + 24 h delay). */
+  otherDestinations: boolean;
 }
 
 export interface Services {

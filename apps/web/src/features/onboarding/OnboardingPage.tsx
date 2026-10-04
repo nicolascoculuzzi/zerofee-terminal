@@ -69,12 +69,25 @@ export default function OnboardingPage() {
   const navigate = useNavigate();
   const autoLockMinutes = useSettings((s) => s.autoLockMinutes);
   const caps = useSettings((s) => s.caps);
-  const [step, setStep] = useState(0);
+  // Live: a returning user starts from what is already true (connected wallet, session, the keystore's
+  // first wallet and its backup) instead of creating another wallet. The simulation always walks the flow.
+  const [initial] = useState(() => {
+    const s = getServices();
+    const st = s.wallet.getState();
+    if (s.simulated) return { step: 0, connected: null, session: null, created: null, backedUp: false };
+    const connected = st.connected;
+    const session = connected && st.session?.address === connected.address ? st.session : null;
+    const created = st.tradingWallets.find((w) => !w.archived) ?? null;
+    const backedUp = created?.backedUpAt != null;
+    const step = !connected ? 0 : !session ? 1 : !created ? 2 : !backedUp ? 3 : 4;
+    return { step, connected, session, created, backedUp };
+  });
+  const [step, setStep] = useState(initial.step);
   const [busy, setBusy] = useState(false);
-  const [connected, setConnected] = useState<ConnectedWallet | null>(null);
-  const [session, setSession] = useState<SiwsSession | null>(null);
-  const [created, setCreated] = useState<TradingWallet | null>(null);
-  const [backedUp, setBackedUp] = useState(false);
+  const [connected, setConnected] = useState<ConnectedWallet | null>(initial.connected);
+  const [session, setSession] = useState<SiwsSession | null>(initial.session);
+  const [created, setCreated] = useState<TradingWallet | null>(initial.created);
+  const [backedUp, setBackedUp] = useState(initial.backedUp);
   const [limitsSet, setLimitsSet] = useState(false);
   const [funded, setFunded] = useState<FundResult | null>(null);
   const [fundSkipped, setFundSkipped] = useState(false);

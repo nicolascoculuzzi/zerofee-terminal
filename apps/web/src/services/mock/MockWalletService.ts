@@ -2,6 +2,7 @@ import { fmtSol } from "../../lib/format";
 import type {
   ApprovalRequest,
   ConnectedWallet,
+  ProviderInfo,
   SiwsSession,
   TradingWallet,
   UnlockMethod,
@@ -91,6 +92,15 @@ export class MockWalletService implements WalletService {
       `Expiration Time: ${new Date(expiresAt).toISOString()}`,
     ].join("\n");
     return { address, domain, nonce: n, issuedAt, expiresAt, message, signature: fakeSignature(this.engine.rng) };
+  }
+
+  /** The simulation offers every provider as installed; none has a real logo. */
+  providers(): ProviderInfo[] {
+    return [
+      { provider: "phantom", name: "Phantom", icon: null, installed: true },
+      { provider: "solflare", name: "Solflare", icon: null, installed: true },
+      { provider: "backpack", name: "Backpack", icon: null, installed: true },
+    ];
   }
 
   async connect(provider: WalletProvider): Promise<ConnectedWallet> {

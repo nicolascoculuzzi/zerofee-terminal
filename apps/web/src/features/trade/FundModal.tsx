@@ -56,8 +56,16 @@ function FundFromConnected({ address }: { address: string }) {
     if (!amount || over) return;
     setBusy(true);
     try {
-      await getServices().wallet.fundFromConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: `From ${provider}` });
+      const r = await getServices().wallet.fundFromConnected(address, amount);
+      useToasts.getState().push(
+        r.simulated
+          ? {
+              kind: "info",
+              title: `Dry run: funding ${fmtSolShort(amount)} SOL simulated`,
+              body: "The server simulated the signed transfer and sent nothing.",
+            }
+          : { kind: "success", title: `Funded ${fmtSolShort(amount)} SOL`, body: `From ${provider}` },
+      );
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Funding failed", body: e instanceof Error ? e.message : String(e) });
@@ -168,8 +176,16 @@ function Withdraw({ address }: { address: string }) {
     }
     setBusy(true);
     try {
-      await getServices().wallet.withdrawToConnected(address, amount);
-      useToasts.getState().push({ kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: `To ${provider}` });
+      const r = await getServices().wallet.withdrawToConnected(address, amount);
+      useToasts.getState().push(
+        r.simulated
+          ? {
+              kind: "info",
+              title: `Dry run: withdrawal of ${fmtSolShort(amount)} SOL simulated`,
+              body: "The server simulated the signed transfer and sent nothing.",
+            }
+          : { kind: "success", title: `Withdrew ${fmtSolShort(amount)} SOL`, body: `To ${provider}` },
+      );
       close();
     } catch (e) {
       useToasts.getState().push({ kind: "error", title: "Withdrawal failed", body: e instanceof Error ? e.message : String(e) });

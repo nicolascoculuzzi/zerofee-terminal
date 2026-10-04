@@ -79,6 +79,8 @@ export function FundStep({
   const [connectedSol, setConnectedSol] = useState<number | null>(null);
   const [amount, setAmount] = useState<number | null>(1);
   const [copied, setCopied] = useTransient<true>(1200);
+  /** The server only simulated the transfer (DRY_RUN): nothing arrives on-chain. */
+  const [simulated, setSimulated] = useState(false);
   const name = PROVIDER_NAME[connected.provider];
   const balance = useDepositWatcher(wallet.address, onFunded, funded === null);
 
@@ -111,6 +113,7 @@ export function FundStep({
     const sol = amount;
     const res = await run(() => getServices().wallet.fundFromConnected(wallet.address, sol));
     if (!res.ok) return;
+    setSimulated(res.value.simulated === true);
     refresh();
     fallback.current = setTimeout(() => {
       if (!fundedRef.current) onFunded({ sol, slot: null });
@@ -211,7 +214,11 @@ export function FundStep({
       )}
 
       <div className="mt-4 flex min-h-8 items-center border-y border-hairline py-2 text-data" aria-live="polite">
-        {funded ? (
+        {funded && simulated ? (
+          <span className="flex flex-wrap items-center gap-x-2 text-warn">
+            Dry run: the server simulated a {fmtSol(funded.sol)} SOL transfer and sent nothing.
+          </span>
+        ) : funded ? (
           <span className="flex flex-wrap items-center gap-x-2">
             <Check className="icon-xs text-buy" />
             <span className="text-buy">Received {fmtSol(funded.sol)} SOL</span>
@@ -219,7 +226,7 @@ export function FundStep({
           </span>
         ) : (
           <span className="flex items-center gap-2 text-fg-3">
-            Waiting for deposit · <span className="zf-num">{fmtSol(balance ?? 0)}</span> SOL
+            Waiting for deposit · <span className="zf-num">{fmtSol(balance)}</span> SOL
           </span>
         )}
       </div>

@@ -5,20 +5,20 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 /**
  * Strict Content-Security-Policy for production builds (SPEC.md, "Front-end integrity").
  * The simulation needs no network origin besides 'self'. A live build also connects to the gateway
- * (VITE_API_ORIGIN and its ws:/wss: twin; same-origin needs nothing extra) and shows token images from
- * wherever their metadata points (IPFS gateways, launchpad CDNs), so its img-src allows https:. Images
- * cannot run code; the cost is that those hosts see the viewer's IP. The signer worker is a same-origin
- * module ('self'); its Argon2 WebAssembly runs inside the worker, which this meta-tag policy does not
- * cover. Dev builds skip the policy because Vite injects inline styles for HMR.
+ * (VITE_API_ORIGIN and its ws:/wss: twin; same-origin needs nothing extra). Token images come through
+ * the gateway's same-origin image proxy, so img-src stays 'self' (data: covers wallet logos from Wallet
+ * Standard). The signer worker is a same-origin module ('self'); its Argon2 WebAssembly runs inside the
+ * worker, which this meta-tag policy does not cover. Dev builds skip the policy because Vite injects
+ * inline styles for HMR.
  */
-function csp(live: boolean, apiOrigin: string): string {
+function csp(apiOrigin: string): string {
   const connect = ["'self'"];
   if (apiOrigin) connect.push(apiOrigin, apiOrigin.replace(/^http/, "ws"));
   return [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self'",
-    live ? "img-src 'self' data: blob: https:" : "img-src 'self' data: blob:",
+    "img-src 'self' data: blob:",
     "font-src 'self'",
     `connect-src ${connect.join(" ")}`,
     "worker-src 'self'",
@@ -80,7 +80,7 @@ export default defineConfig(({ mode }) => {
   return {
     // A literal, so the bundler drops the implementation that is not selected (src/services/index.ts).
     define: { "import.meta.env.VITE_DATA_SOURCE": JSON.stringify(live ? "live" : "mock") },
-    plugins: [react(), tailwindcss(), contentSecurityPolicy(csp(live, apiOrigin)), preloadPrimaryFont()],
+    plugins: [react(), tailwindcss(), contentSecurityPolicy(csp(apiOrigin)), preloadPrimaryFont()],
     server: { port: 5173, strictPort: false, proxy },
     preview: { port: 4173, proxy },
     worker: { format: "es" as const },

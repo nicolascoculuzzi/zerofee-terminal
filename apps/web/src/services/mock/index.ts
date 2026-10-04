@@ -34,4 +34,5 @@ const MOCK_FEATURES: Services["features"] = {
   pnlHistory: true,
   otherWallets: true,
   exportNeedsPassword: false,
+  otherDestinations: true,
 };

@@ -48,7 +48,10 @@ export function WithdrawalDestinations() {
           : destinations.some((d) => d.address === trimmed)
             ? "Already in your list."
             : null;
-  const canAdd = connected !== null && trimmed !== "" && addressError === null && !busy;
+  // Live: the server has no delayed-destination flow yet and the signer refuses every destination but the
+  // connected wallet, so nothing can be added.
+  const supported = getServices().features.otherDestinations;
+  const canAdd = supported && connected !== null && trimmed !== "" && addressError === null && !busy;
 
   const add = async () => {
     if (!canAdd) return;
@@ -190,6 +193,11 @@ export function WithdrawalDestinations() {
             </div>
           )}
           {error && <div className="mt-1 text-label text-sell">{error}</div>}
+          {!supported && (
+            <div className="mt-1 text-label text-fg-3">
+              Not available yet: withdrawals go to your connected wallet only, and the signer refuses any other destination.
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
             <span className="max-w-[44ch] text-label text-fg-3">
               {connected

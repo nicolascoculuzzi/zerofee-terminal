@@ -1,5 +1,5 @@
 import { ArrowRight, Check } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { CopyButton } from "../../components/ui/controls";
 import { cn } from "../../lib/cn";
@@ -35,6 +35,13 @@ export function ConnectStep({
   const { busy, error, run } = useAction(onBusyChange);
   const [pending, setPending] = useState<WalletProvider | null>(null);
   const simulated = getServices().simulated;
+  // Extensions register through Wallet Standard as they load: look again shortly after mount.
+  const [providers, setProviders] = useState(() => getServices().wallet.providers());
+  useEffect(() => {
+    const t = setTimeout(() => setProviders(getServices().wallet.providers()), 600);
+    return () => clearTimeout(t);
+  }, []);
+  const info = new Map(providers.map((p) => [p.provider, p]));
 
   const connect = async (provider: WalletProvider) => {
     setPending(provider);
@@ -48,26 +55,33 @@ export function ConnectStep({
       <StepHeader frame={frame} />
       <ul className="divide-y divide-hairline border-y border-hairline">
         {PROVIDERS.map((id) => {
-          const name = PROVIDER_NAME[id];
+          const p = info.get(id);
+          const name = p?.name ?? PROVIDER_NAME[id];
+          const installed = p?.installed ?? false;
           const isConnected = connected?.provider === id;
           return (
             <li key={id}>
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || !installed}
                 onClick={() => void connect(id)}
                 className={cn(
-                  "focus-inset flex h-11 w-full items-center gap-3 px-2 text-left transition-colors hover:bg-surface-2 disabled:cursor-wait",
+                  "focus-inset flex h-11 w-full items-center gap-3 px-2 text-left transition-colors enabled:hover:bg-surface-2 disabled:cursor-not-allowed",
+                  busy && "disabled:cursor-wait",
                   isConnected && "bg-surface-2",
                 )}
               >
-                <span
-                  aria-hidden="true"
-                  className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-label font-semibold text-fg-1"
-                >
-                  {name.charAt(0)}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-body font-medium text-fg-1">{name}</span>
+                {p?.icon ? (
+                  <img src={p.icon} alt="" className="size-6 shrink-0 rounded-sm" />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-label font-semibold text-fg-1"
+                  >
+                    {name.charAt(0)}
+                  </span>
+                )}
+                <span className={cn("min-w-0 flex-1 truncate text-body font-medium", installed ? "text-fg-1" : "text-fg-3")}>{name}</span>
                 {pending === id ? (
                   <span className="flex items-center gap-1 text-label text-fg-2">
                     <Spinner /> Connecting
@@ -76,8 +90,10 @@ export function ConnectStep({
                   <span className="flex items-center gap-1 text-label text-fg-1">
                     <Check className="icon-xs" /> Connected
                   </span>
-                ) : (
+                ) : installed ? (
                   <Tag>Detected</Tag>
+                ) : (
+                  <span className="text-label text-fg-3">Not installed</span>
                 )}
               </button>
             </li>

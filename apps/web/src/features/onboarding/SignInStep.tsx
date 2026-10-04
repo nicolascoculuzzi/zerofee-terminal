@@ -1,5 +1,5 @@
 import { ArrowRight, Check } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { shortAddr } from "../../lib/format";
 import { getServices } from "../../services";
@@ -33,7 +33,21 @@ export function SignInStep({
 }) {
   const { busy, error, run } = useAction(onBusyChange);
   const [previewAt] = useState(() => Date.now());
-  const signed = session !== null && session.address === connected.address ? session : null;
+  const signed = session !== null && session.address === connected.address && session.message ? session : null;
+  // The live server issues the nonce: show the exact text the wallet will be asked to sign.
+  const [exact, setExact] = useState<string | null>(null);
+  useEffect(() => {
+    const preview = getServices().wallet.previewSignIn;
+    if (!preview || signed) return;
+    let live = true;
+    preview
+      .call(getServices().wallet)
+      .then((text) => live && setExact(text))
+      .catch(() => live && setExact(null));
+    return () => {
+      live = false;
+    };
+  }, [signed]);
   const domain = window.location.host;
   const wallet = PROVIDER_NAME[connected.provider];
 
@@ -68,12 +82,14 @@ export function SignInStep({
       <pre className="overflow-x-auto rounded-sm bg-surface-2 p-3 font-mono text-label font-normal whitespace-pre-wrap break-all text-fg-2">
         {signed
           ? signed.message
-          : preview.map((line) => (
-              <span key={line.id} className="block">
-                {line.text || " "}
-                {line.pending && <span className="text-fg-3">({line.pending})</span>}
-              </span>
-            ))}
+          : exact !== null
+            ? exact
+            : preview.map((line) => (
+                <span key={line.id} className="block">
+                  {line.text || " "}
+                  {line.pending && <span className="text-fg-3">({line.pending})</span>}
+                </span>
+              ))}
       </pre>
       <p className="mt-3 text-body text-fg-2">This signature proves you own this wallet. It can't move funds.</p>
 

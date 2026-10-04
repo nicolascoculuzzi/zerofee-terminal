@@ -6,6 +6,16 @@ export interface ConnectedWallet {
   address: string;
 }
 
+/** A wallet the connect step can offer. */
+export interface ProviderInfo {
+  provider: WalletProvider;
+  name: string;
+  /** The wallet's own logo (data URI) when it registered one; null draws a letter square. */
+  icon: string | null;
+  /** The extension is installed and registered through Wallet Standard. */
+  installed: boolean;
+}
+
 /** Sign-In With Solana session (SPEC "Sessions"). */
 export interface SiwsSession {
   address: string;
@@ -13,9 +23,9 @@ export interface SiwsSession {
   nonce: string;
   issuedAt: number;
   expiresAt: number;
-  /** The exact message the user signed. */
+  /** The exact message the user signed ("" for a session restored from the cookie). */
   message: string;
-  /** Base58 signature from the connected wallet. */
+  /** Base58 signature from the connected wallet ("" for a restored session). */
   signature: string;
 }
 
@@ -33,9 +43,17 @@ export interface TradingWallet {
 }
 
 export interface WalletBalances {
-  connectedSol: number;
+  /** Null while unknown (the live wallet feed has not reported it). */
+  connectedSol: number | null;
   /** SOL per trading-wallet address. */
   trading: Record<string, number>;
+}
+
+/** Result of a funding or withdrawal transfer. */
+export interface TransferReceipt {
+  signature: string;
+  /** The server only simulated it (DRY_RUN): nothing moved on-chain. */
+  simulated?: boolean;
 }
 
 export interface WalletServiceState {
@@ -63,12 +81,19 @@ export interface WalletService {
   getState(): WalletServiceState;
   subscribe(listener: (state: WalletServiceState) => void): () => void;
 
+  /** Wallets the connect step offers, installed or not. */
+  providers(): ProviderInfo[];
   connect(provider: WalletProvider): Promise<ConnectedWallet>;
   disconnect(): Promise<void>;
+  /**
+   * The exact SIWS message the next `signIn()` will ask the wallet to sign, when the service can know it
+   * ahead (the live server issues the nonce); undefined = show a preview.
+   */
+  previewSignIn?(): Promise<string>;
   /** Builds the SIWS message (domain, server nonce, issued-at, expiry) and asks the wallet to sign. */
   signIn(): Promise<SiwsSession>;
 
-  /** Generates and encrypts a trading key in the browser; returns the backup phrase once. */
+  /** Generates and encrypts a trading key in the browser; returns the backup phrase once (empty when the key itself is the backup). */
   createTradingWallet(options: {
     label: string;
     method: UnlockMethod;
@@ -77,14 +102,17 @@ export interface WalletService {
   confirmBackup(walletId: string): Promise<void>;
   /**
    * The trading key in base58 (the format Phantom imports), for backup and export. Needs an
-   * unlocked keystore. The live signer shows it in its own isolated window; the mock returns a
-   * simulated key that controls nothing.
+   * unlocked keystore; the live signer re-asks for the passphrase (`password`). The mock returns
+   * a simulated key that controls nothing.
    */
-  exportKey(walletId: string): Promise<string>;
+  exportKey(walletId: string, password?: string): Promise<string>;
   /** Hides a trading wallet from the app. Refused while it holds SOL or live armed orders. */
   archiveTradingWallet(walletId: string): Promise<void>;
-  /** Re-encrypts the keystore under a passkey or a new passphrase (inside the signer). Needs it unlocked. */
-  changeUnlockMethod(method: UnlockMethod, password?: string): Promise<void>;
+  /**
+   * Re-encrypts the keystore under a passkey or a new passphrase (inside the signer). Needs it
+   * unlocked; the live signer also needs the current passphrase.
+   */
+  changeUnlockMethod(method: UnlockMethod, password?: string, currentPassword?: string): Promise<void>;
   /** Closes durable-nonce accounts no armed order holds and returns their rent to each trading wallet. */
   reclaimRent(): Promise<{ closed: number; sol: number }>;
 
@@ -98,9 +126,9 @@ export interface WalletService {
   balances(): Promise<WalletBalances>;
 
   /** One connected-wallet popup moving SOL into a trading wallet. */
-  fundFromConnected(tradingAddress: string, sol: number): Promise<{ signature: string }>;
+  fundFromConnected(tradingAddress: string, sol: number): Promise<TransferReceipt>;
   /** One-click withdraw back to the connected wallet (other destinations need a delay). */
-  withdrawToConnected(tradingAddress: string, sol: number): Promise<{ signature: string }>;
+  withdrawToConnected(tradingAddress: string, sol: number): Promise<TransferReceipt>;
 
   /** Direct mode: ask the connected wallet to approve and sign one transaction. */
   approveWithConnected(request: ApprovalRequest): Promise<boolean>;

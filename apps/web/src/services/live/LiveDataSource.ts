@@ -287,8 +287,11 @@ export class LiveDataSource implements DataSource, ViewHost {
         if (m.type === "snapshot") emit.snapshot(model.applySnapshot(m.data as Parameters<WalletModel["applySnapshot"]>[0]));
         else if (m.type === "delta") emit.delta(model.applyDelta(m.data as Parameters<WalletModel["applyDelta"]>[0]));
       },
-      // Not signed in, not this user's wallet, or the server publishes no balances: no status (the UI shows "–").
-      onError: () => {},
+      // Not signed in or not this user's wallet: no status (the UI shows "–"); the socket resubscribes after
+      // sign-in. An RPC failure on the server ("internal") is retried shortly.
+      onError: (e) => {
+        if (e.code === "internal" || e.code === "unavailable") setTimeout(() => this.socket.resync(`wallet:${address}`), 5_000);
+      },
       current: () => (model.loaded ? model.status() : null),
       stop: () => {
         clearInterval(timer);

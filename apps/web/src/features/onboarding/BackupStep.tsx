@@ -8,6 +8,7 @@ import { useUi } from "../../state/ui";
 import { useWallet } from "../../state/wallet";
 import { pickPositions } from "./backupKey";
 import { KeyReveal } from "./KeyReveal";
+import { PassphraseGate } from "./PassphraseGate";
 import { InlineError, Spinner, StepActions, type StepFrame, StepHeader, useAction } from "./parts";
 import { useExportedKey } from "./useExportedKey";
 
@@ -35,14 +36,17 @@ interface BackupStepProps {
 }
 
 export function BackupStep(props: BackupStepProps) {
-  const { secret, error, retry } = useExportedKey(props.wallet.id);
+  const exported = useExportedKey(props.wallet.id);
+  const { secret, error, retry } = exported;
   const locked = useWallet((s) => s.service.locked);
   const requestUnlock = useUi((s) => s.requestUnlock);
   if (secret) return <BackupBody {...props} secret={secret} />;
   return (
     <>
       <StepHeader frame={props.frame} />
-      {error ? (
+      {exported.needsPassword && !locked ? (
+        <PassphraseGate exported={exported} label="Show the key" />
+      ) : error ? (
         <>
           <InlineError>{error}</InlineError>
           <Button
