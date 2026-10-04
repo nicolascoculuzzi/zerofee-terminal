@@ -1,4 +1,5 @@
 import {
+  type AutoscaleInfo,
   BaselineSeries,
   type BaselineSeriesPartialOptions,
   type ChartOptions,
@@ -16,17 +17,42 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { baseChartOptions, type ChartColors, chartColors, useChartThemeKey, withAlpha } from "../../lib/chartTheme";
 import { cn } from "../../lib/cn";
-import { fmtDate, fmtSignedSol, fmtSignedUsd, fmtUsd, signClass } from "../../lib/format";
+import { fmtDate, fmtSignedSol, fmtSignedUsd, MINUS, signClass } from "../../lib/format";
 import type { PnlPoint } from "../../protocol";
 import type { QuoteCurrency } from "../../state/settings";
+import { compactAt, tickStep } from "../token/chart/axisFormat";
 import { type PnlRange, RANGE_LABEL } from "./helpers";
 import { useQuote } from "./quote";
 import { PanelError } from "./table";
 
-/** Signed compact axis label: "+$1.24K", "−$412", "+1.24". */
-function axisLabel(v: number, quote: QuoteCurrency): string {
-  if (quote === "SOL") return fmtSignedSol(v);
-  return `${v > 0 ? "+" : ""}${fmtUsd(v)}`;
+/**
+ * Signed compact axis label ("+$1.24K", "−$412", "+1.24") with as many decimals as the tick step
+ * needs, so a small range never repeats one label down the axis.
+ */
+function axisLabel(v: number, quote: QuoteCurrency, step: number, minSig: number): string {
+  const body = compactAt(Math.abs(v), step, minSig);
+  if (Number(body.replace(/[KMBT]$/, "")) === 0) return quote === "USD" ? "$0" : "0";
+  return `${v > 0 ? "+" : MINUS}${quote === "USD" ? "$" : ""}${body}`;
+}
+
+/** Thinnest PnL range: $1 or 0.01 SOL, so a flat history is a flat line at a sane scale. */
+const MIN_SPAN: Record<QuoteCurrency, number> = { USD: 1, SOL: 0.01 };
+
+/** Always shows the zero line (the colours split there), and never collapses to a zero range. */
+function pnlAutoscale(quote: QuoteCurrency) {
+  return (base: () => AutoscaleInfo | null): AutoscaleInfo | null => {
+    const info = base();
+    const r = info?.priceRange;
+    if (!info || !r) return info;
+    let lo = Math.min(r.minValue, 0);
+    let hi = Math.max(r.maxValue, 0);
+    const need = MIN_SPAN[quote];
+    if (hi - lo < need) {
+      if (hi > 0) hi = lo + need;
+      else lo = hi - need;
+    }
+    return { ...info, priceRange: { minValue: lo, maxValue: hi } };
+  };
 }
 
 function signedText(v: number, quote: QuoteCurrency): string {
@@ -41,7 +67,8 @@ function chartOptions(c: ChartColors): DeepPartial<ChartOptions> {
     handleScroll: false,
     handleScale: false,
     rightPriceScale: { ...base.rightPriceScale, scaleMargins: { top: 0.18, bottom: 0.1 } },
-    timeScale: { ...base.timeScale, timeVisible: false, fixLeftEdge: true, fixRightEdge: true },
+    // Fitted once per data change; a resize keeps the whole range in view instead of clipping it.
+    timeScale: { ...base.timeScale, timeVisible: false, fixLeftEdge: true, fixRightEdge: true, lockVisibleTimeRangeOnResize: true },
     // The floating tooltip carries the date and value, so the axis labels stay quiet.
     crosshair: {
       ...base.crosshair,
@@ -58,6 +85,7 @@ function chartOptions(c: ChartColors): DeepPartial<ChartOptions> {
  * LineWidth type only lists integers.
  */
 function seriesOptions(c: ChartColors, quote: QuoteCurrency): BaselineSeriesPartialOptions {
+  let step = Number.NaN;
   const up = withAlpha(c.buy, 0.1);
   const down = withAlpha(c.sell, 0.1);
   return {
@@ -72,7 +100,17 @@ function seriesOptions(c: ChartColors, quote: QuoteCurrency): BaselineSeriesPart
     priceLineVisible: false,
     lastValueVisible: false,
     crosshairMarkerRadius: 3,
-    priceFormat: { type: "custom", formatter: (v: number) => axisLabel(v, quote), minMove: 0.0001 },
+    priceFormat: {
+      type: "custom",
+      minMove: quote === "USD" ? 0.01 : 0.0001,
+      formatter: (v: number) => axisLabel(v, quote, step, 3),
+      tickmarksFormatter: (values: number[]) => {
+        const s = tickStep(values);
+        if (Number.isFinite(s)) step = s;
+        return values.map((v) => axisLabel(v, quote, step, 1));
+      },
+    },
+    autoscaleInfoProvider: pnlAutoscale(quote),
   };
 }
 
