@@ -688,12 +688,12 @@ Variants by column width: **narrow** (< 424 px), **wide** (424–599 px, the ref
 - **Avatar** (4.22): 40 px square, 4 px radius.
   - Bonding ring: a 2 px stroke around the square, track `hairline-strong`, fill `text-2`, length equal to progress.
   - Launchpad badge: 16 px, bottom-right, offset −3 px, 2 px `bg` ring, the launchpad's logo (2.11) on `surface-3`: pump.fun, Mayhem (pump.fun's mark), BONK.fun, Bags, StonkFun, Raydium LaunchLab, Meteora DBC, Moonit, Boop, Heaven. "Other" keeps a 10 px "X" in `text-2`.
-- **Line 1 (18 px):** ticker at 13/600 `text-1` (max 10 characters, ellipsis), name at 12/400 `text-3` (truncates first), copy-CA icon button (`Copy` 12 px in a 20 × 20 hit area, `text-3`, hover `text-1`).
+- **Line 1 (18 px):** ticker at 13/600 `text-1` (max 10 characters, ellipsis), name at 12/400 `text-3` (truncates first), copy-CA icon button (`Copy` 12 px in a 20 × 20 hit area, `text-3`, hover `text-1`), then the flags (DEX, T22, LP), so line 3 always fits five chips.
 - **Line 2 (16 px):**
   - Age (3.7), reserving 4ch.
   - Socials: the X mark, `Globe` (the Discord mark for discord links), the Telegram mark, each 12 px in a 16 × 16 hit area, `text-3`, as links opening in a new tab. Hover shows the handle or URL. A tweet link shows the tweet preview popover.
   - Counters: `Users` 12 px + holders; `BadgeCheck` 12 px + pro traders; `Eye` 12 px + tracked wallets holding (only when above 0, value in `info`). Counter values are 11/500 `text-2`.
-- **Line 3 (18 px):** five risk chips T D S I B (4.5), 4 px apart, then flags (DEX, T22, LP).
+- **Line 3 (18 px):** five risk chips T D S I B (4.5), 4 px apart. Missing data stays quiet: when no chip is computed yet the line is empty, and a single uncomputed chip keeps its slot showing only its letter in `text-4` (no dash). Unknown counters and ages are omitted, never shown as "–".
 - **Metrics (72 px, right-aligned):**
   - Line 1: "MC" in micro `text-3`, value at 12/600 `text-1`.
   - Line 2: "V" in micro `text-3`, value at 12/400 `text-2`.

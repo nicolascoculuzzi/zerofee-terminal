@@ -3,6 +3,7 @@ import { SolGlyph } from "../../components/ui/bits";
 import { type LinkIcon, type SafeLink, type SocialKind, socialLink } from "../../components/ui/socials";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
+import { DASH } from "../../lib/format";
 import type { PulseColumnId } from "../../protocol";
 import { getServices } from "../../services";
 import { copyCa, useCopied } from "./actions";
@@ -138,30 +139,39 @@ function SocialButton({ kind, value, first }: { kind: CardSocial; value: string;
   );
 }
 
-export function Socials({ view }: { view: CardView }) {
+/** `gap`: a 4 px lead before the first mark (after the age); off when the row starts with the socials. */
+export function Socials({ view, gap = true }: { view: CardView; gap?: boolean }) {
   return (
     <>
-      {view.x && <SocialButton kind="x" value={view.x} first />}
-      {view.web && <SocialButton kind="web" value={view.web} first={!view.x} />}
-      {view.tg && <SocialButton kind="tg" value={view.tg} first={!view.x && !view.web} />}
+      {view.x && <SocialButton kind="x" value={view.x} first={gap} />}
+      {view.web && <SocialButton kind="web" value={view.web} first={gap && !view.x} />}
+      {view.tg && <SocialButton kind="tg" value={view.tg} first={gap && !view.x && !view.web} />}
     </>
   );
 }
 
 /**
  * Holders, pro traders and tracked wallets holding: icon 12 px in text-3, value 11/500. Widths are
- * reserved in ch so a new digit never pushes the next counter (DESIGN.md 6.7: no layout shift).
+ * reserved in ch so a new digit never pushes the next counter (DESIGN.md 6.7: no layout shift). A
+ * counter the feed hasn't computed is left out rather than shown as an icon and a dash (Axiom
+ * omits unknown metrics; Binance Meme Rush keeps its rows to what it knows:
+ * https://mobbin.com/screens/f9b4eff0-8083-4e54-913c-51177e462d1d).
  */
 export function Counters({ view, gap }: { view: CardView; gap: boolean }) {
   const base = cn("zf-num inline-flex shrink-0 items-center gap-0.5 text-label font-medium", ICON, "before:text-fg-3");
+  const holders = view.holders !== DASH;
   return (
     <>
-      <span data-tip="holders" className={cn(base, MASK.users, "min-w-[calc(14px+5ch)] text-fg-2", gap && "ml-1")}>
-        {view.holders}
-      </span>
-      <span data-tip="pro" className={cn(base, MASK.badge, "min-w-[calc(14px+3ch)] text-fg-2")}>
-        {view.pros}
-      </span>
+      {holders && (
+        <span data-tip="holders" className={cn(base, MASK.users, "min-w-[calc(14px+5ch)] text-fg-2", gap && "ml-1")}>
+          {view.holders}
+        </span>
+      )}
+      {view.pros !== DASH && (
+        <span data-tip="pro" className={cn(base, MASK.badge, "min-w-[calc(14px+3ch)] text-fg-2", gap && !holders && "ml-1")}>
+          {view.pros}
+        </span>
+      )}
       {view.tracked > 0 && (
         <span data-tip="eye" className={cn(base, MASK.eye, "text-info")}>
           {view.tracked}
@@ -177,7 +187,7 @@ const LP_TONE: Record<CardView["lpTone"], string> = {
   bad: "border-sell-edge bg-sell-tint text-sell",
 };
 
-/** Flags after the risk chips (DESIGN.md 3.11): DEX neutral, T22 sell-tint, LP by share burned. */
+/** Flags on line 1 after the copy button (DESIGN.md 3.11): DEX neutral, T22 sell-tint, LP by share burned. */
 export function Flags({ view }: { view: CardView }) {
   const chip = "inline-flex h-4 shrink-0 items-center rounded-xs border px-1 text-micro font-semibold";
   return (
@@ -219,10 +229,10 @@ export function MetricsCell({ view, stale }: { view: CardView; stale: boolean })
           "zf-num num-dense flex h-[18px] w-full items-center justify-end text-data font-semibold whitespace-nowrap in-data-[density=comfortable]:h-5",
           LABEL,
           "before:content-['MC']",
-          stale ? "text-fg-3" : "text-fg-1",
+          view.mc === DASH ? "text-fg-4" : stale ? "text-fg-3" : "text-fg-1",
         )}
       >
-        {view.sol && <SolGlyph className="mr-px" />}
+        {view.sol && view.mc !== DASH && <SolGlyph className="mr-px" />}
         {view.mc}
       </span>
       <span
@@ -231,10 +241,10 @@ export function MetricsCell({ view, stale }: { view: CardView; stale: boolean })
           "zf-num num-dense flex h-4 w-full items-center justify-end text-data whitespace-nowrap in-data-[density=comfortable]:h-[18px]",
           LABEL,
           "before:content-['V']",
-          stale ? "text-fg-3" : "text-fg-2",
+          view.v === DASH ? "text-fg-4" : stale ? "text-fg-3" : "text-fg-2",
         )}
       >
-        {view.sol && <SolGlyph className="mr-px" />}
+        {view.sol && view.v !== DASH && <SolGlyph className="mr-px" />}
         {view.v}
       </span>
       <div data-tip="tx" className="flex h-[18px] w-full items-center justify-end gap-1 in-data-[density=comfortable]:h-5">
@@ -256,7 +266,9 @@ export function MetricsCell({ view, stale }: { view: CardView; stale: boolean })
 
 /**
  * Wide+ second metrics column: fees paid in SOL and net buy (signed, in the global quote). As
- * tall as the first metrics column, so F and NB line up with MC and V.
+ * tall as the first metrics column, so F and NB line up with MC and V. A value the feed doesn't
+ * report is left out, label and all: the column keeps its width, so nothing else moves, and a
+ * live feed without fee data shows an empty column rather than a stack of "F –" / "NB –".
  */
 const NB_TONE: Record<CardView["nbTone"], string> = { buy: "text-buy", sell: "text-sell", zero: "text-fg-3", unknown: "text-fg-4" };
 
@@ -264,26 +276,24 @@ export function FeesCell({ view, stale }: { view: CardView; stale: boolean }) {
   return (
     <Cell className="flex h-[52px] min-w-0 flex-col items-end in-data-[density=comfortable]:h-[62px] in-data-[density=comfortable]:gap-0.5">
       <span
-        data-tip="fees"
+        data-tip={view.fees === DASH ? undefined : "fees"}
         className={cn(
           "zf-num num-dense flex h-[18px] w-full items-center justify-end text-data whitespace-nowrap in-data-[density=comfortable]:h-5",
-          LABEL,
-          "before:content-['F']",
+          view.fees !== DASH && cn(LABEL, "before:content-['F']"),
           stale ? "text-fg-3" : "text-fg-2",
         )}
       >
-        {view.fees}
+        {view.fees === DASH ? null : view.fees}
       </span>
       <span
-        data-tip="nb"
+        data-tip={view.nbTone === "unknown" ? undefined : "nb"}
         className={cn(
           "zf-num num-dense flex h-4 w-full items-center justify-end text-data in-data-[density=comfortable]:h-[18px]",
-          LABEL,
-          "before:content-['NB']",
+          view.nbTone !== "unknown" && cn(LABEL, "before:content-['NB']"),
           stale ? "text-fg-3" : NB_TONE[view.nbTone],
         )}
       >
-        {view.nb}
+        {view.nbTone === "unknown" ? null : view.nb}
       </span>
     </Cell>
   );

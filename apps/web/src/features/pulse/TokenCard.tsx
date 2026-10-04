@@ -3,12 +3,13 @@ import { Age } from "../../components/ui/Age";
 import { SolGlyph } from "../../components/ui/bits";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { cn } from "../../lib/cn";
+import { DASH } from "../../lib/format";
 import { navigateTo } from "../../lib/nav";
 import { useYoungerThan } from "../../lib/useNow";
 import type { PulseColumnId, TokenRisk } from "../../protocol";
 import { type PresetId, useSettings } from "../../state/settings";
 import { Cell, CopyCa, Counters, FeesCell, Flags, LABEL, MetricsCell, MoreButton, Socials } from "./CardParts";
-import { type CardVariant, type CardView, sameCardView } from "./cardView";
+import { AVATAR_TRACK, type CardVariant, type CardView, sameCardView } from "./cardView";
 import { HIGHLIGHT_MS } from "./liveList";
 import { MiniChart } from "./MiniChart";
 import { QuickBuyPill } from "./QuickBuyPill";
@@ -54,12 +55,14 @@ export interface TokenCardProps {
 
 /** Grid tracks (DESIGN.md 4.4): avatar | main | [chart 64] | metrics 72 | [F/NB 72] | pill, 8 px gaps. */
 function gridFor(variant: CardVariant, chart: boolean, fees: boolean): string {
-  if (variant === "narrow") return "grid-cols-[32px_minmax(0,1fr)_auto]";
+  if (variant === "narrow") return "grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_auto]";
   if (variant === "wide" || (!chart && !fees)) return "grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px_auto]";
   if (chart && fees) return "grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_64px_72px_72px_auto]";
   if (chart) return "grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_64px_72px_auto]";
   return "grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px_72px_auto]";
 }
+
+const AVATAR_TRACK_NARROW = "[--zf-card-avatar:44px] in-data-[density=comfortable]:[--zf-card-avatar:52px]";
 
 /**
  * Pulse token card (DESIGN.md 4.4): 68 px compact / 80 px comfortable including the 1 px
@@ -80,6 +83,9 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
   const stale = column === "new" && !live;
   const ticker = view.symbol.length > 10 ? `${view.symbol.slice(0, 9)}…` : view.symbol;
   const chart = wideplus && props.miniChart;
+  // Backfilled tokens can arrive without a creation time: leave the age out rather than show "–".
+  const aged = Number.isFinite(view.createdAt) && view.createdAt > 0;
+  const hasSocial = props.socials && (view.x !== "" || view.web !== "" || view.tg !== "");
   const fees = wideplus && props.feesNetBuy;
 
   return (
@@ -120,7 +126,13 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
       className={cn(
         "group/card absolute top-0 left-0 grid h-card w-full cursor-pointer items-center gap-x-2 border-b border-hairline px-2 transition-colors in-data-[density=comfortable]:px-2.5",
         gridFor(variant, chart, fees),
-        open ? "bg-surface-3" : cursor ? "bg-surface-2" : "hover:bg-surface-2",
+        narrow ? AVATAR_TRACK_NARROW : AVATAR_TRACK,
+        // --zf-avatar-bg: the launchpad badge's 2 px cut-out matches the card's background.
+        open
+          ? "bg-surface-3 [--zf-avatar-bg:var(--zf-surface-3)]"
+          : cursor
+            ? "bg-surface-2 [--zf-avatar-bg:var(--zf-surface-2)]"
+            : "[--zf-avatar-bg:var(--zf-surface-1)] hover:bg-surface-2 hover:[--zf-avatar-bg:var(--zf-surface-2)]",
         cursor &&
           "group-focus-visible/grid:outline-2 group-focus-visible/grid:-outline-offset-2 group-focus-visible/grid:outline-focus after:pointer-events-none after:absolute after:inset-y-0 after:left-0 after:w-0.5 after:bg-accent after:content-['']",
         fresh && "zf-enter",
@@ -132,7 +144,7 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
           symbol={view.symbol}
           imageUri={view.imageUri}
           launchpad={view.launchpad}
-          size={narrow ? "md" : "card"}
+          size="card"
           progress={view.ring >= 0 ? view.ring / 100 : null}
           migrated={view.migrated}
         />
@@ -143,34 +155,37 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
           <span className="shrink-0 text-body font-semibold text-fg-1">{ticker}</span>
           <span className="min-w-0 truncate text-data text-fg-3">{view.name}</span>
           <CopyCa mint={view.mint} />
+          {/* Flags sit on line 1, where the name truncates to make room; line 3 is the five
+              chips, which fill a wide column on their own. */}
+          <Flags view={view} />
           <MoreButton mint={view.mint} symbol={view.symbol} column={column} shown={cursor} />
           {narrow && (
             <span
               data-tip="mc"
               className={cn(
                 "zf-num num-dense ml-auto flex min-w-[7ch] shrink-0 items-center justify-end pl-1 text-data font-semibold",
-                stale ? "text-fg-3" : "text-fg-1",
+                view.mc === DASH ? "text-fg-4" : stale ? "text-fg-3" : "text-fg-1",
               )}
             >
-              {view.sol && <SolGlyph className="mr-px" />}
+              {view.sol && view.mc !== DASH && <SolGlyph className="mr-px" />}
               {view.mc}
             </span>
           )}
         </div>
         <div className="flex h-4 min-w-0 items-center gap-1 overflow-x-clip overflow-y-visible in-data-[density=comfortable]:h-[18px]">
-          <Age ts={view.createdAt} className="w-[4ch] shrink-0 text-label font-medium" />
-          {props.socials && <Socials view={view} />}
-          {props.counters && <Counters view={view} gap />}
+          {aged && <Age ts={view.createdAt} className="w-[4ch] shrink-0 text-label font-medium" />}
+          {props.socials && <Socials view={view} gap={aged} />}
+          {props.counters && <Counters view={view} gap={aged || hasSocial} />}
           {narrow && (
             <span
               data-tip="v"
               className={cn(
                 "zf-num num-dense ml-auto flex min-w-[8ch] shrink-0 items-center justify-end pl-1 text-data before:content-['V']",
                 LABEL,
-                stale ? "text-fg-3" : "text-fg-2",
+                view.v === DASH ? "text-fg-4" : stale ? "text-fg-3" : "text-fg-2",
               )}
             >
-              {view.sol && <SolGlyph className="mr-px" />}
+              {view.sol && view.v !== DASH && <SolGlyph className="mr-px" />}
               {view.v}
             </span>
           )}
@@ -180,10 +195,9 @@ export const TokenCard = memo(function TokenCard(props: TokenCardProps) {
           colored={props.colored}
           letters={narrow ? "never" : "always"}
           tips="delegate"
+          pending="quiet"
           className="h-[18px] overflow-x-clip in-data-[density=comfortable]:h-5"
-        >
-          <Flags view={view} />
-        </RiskChips>
+        />
       </Cell>
 
       {chart && <MiniChart mint={view.mint} />}

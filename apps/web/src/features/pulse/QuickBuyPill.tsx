@@ -58,12 +58,16 @@ export const QuickBuyPill = memo(function QuickBuyPill({
         void buy({ mint, sol, preset, source: "pulse" });
       }}
       className={cn(
-        "zf-num relative flex h-6 min-w-14 shrink-0 items-center justify-center gap-1 rounded-full border px-1.5 text-data font-semibold whitespace-nowrap transition-colors",
+        "zf-num relative flex h-6 min-w-[60px] shrink-0 items-center justify-center gap-1 rounded-full border px-1.5 text-data font-semibold whitespace-nowrap transition-colors",
         ICON,
         locked ? MASK.lock : MASK.zap,
-        pressed
-          ? "border-buy bg-buy text-ink before:text-ink"
-          : "border-hairline-strong bg-surface-3 text-fg-1 before:text-fg-3 hover:border-buy-edge hover:bg-buy-tint hover:text-buy hover:before:text-buy active:border-buy active:bg-buy active:text-ink active:before:text-ink",
+        locked
+          ? // Locked: a click opens unlock, not a buy, so it never takes the buy tint. The amount
+            // stays readable (it's what the click will buy once unlocked) behind a Lock in text-2.
+            "border-hairline-strong bg-surface-3 text-fg-2 before:text-fg-2 hover:bg-surface-3-hover hover:text-fg-1 hover:before:text-fg-1 active:bg-hairline-strong"
+          : pressed
+            ? "border-buy bg-buy text-ink before:text-ink"
+            : "border-hairline-strong bg-surface-3 text-fg-1 before:text-fg-3 hover:border-buy-edge hover:bg-buy-tint hover:text-buy hover:before:text-buy active:border-buy active:bg-buy active:text-ink active:before:text-ink",
         "disabled:border-transparent disabled:bg-surface-2 disabled:text-fg-4 disabled:before:text-fg-4",
         touch && "after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-['']",
       )}

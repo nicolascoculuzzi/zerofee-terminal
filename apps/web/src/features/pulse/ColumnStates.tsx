@@ -4,14 +4,44 @@ import { EmptyState } from "../../components/ui/bits";
 import { FINAL_STRETCH_PROGRESS } from "../../config";
 import { cn } from "../../lib/cn";
 import type { PulseColumnId } from "../../protocol";
+import { AVATAR_TRACK } from "./cardView";
 
 /**
- * Loading skeleton (DESIGN.md 4.18): rows at the exact card height under the real header,
- * 8 px bars at 2 px radius in surface-3, text bars 60 % wide, numeric bars 40 % and
- * right-aligned, avatars as squares. Static: no shimmer, no pulse. After Square's skeleton rows:
+ * Loading skeleton (DESIGN.md 4.18): rows at the exact card height under the real header, shaped
+ * like the card they stand in for: the framed avatar square, the three lines (ticker and name;
+ * age and counters; five chip-sized bars), the right-aligned MC / V / TX stack and the pill.
+ * 8 px bars at 2 px radius in surface-3; static, no shimmer, no pulse. Widths vary a little from
+ * row to row so the column doesn't read as a grid of identical blocks. After Square's skeleton rows:
  * https://mobbin.com/screens/09371ef3-f0d0-4fc9-8ab1-607ab3d0e4ab
  */
+const BAR = "h-2 rounded-xs bg-surface-3";
+const TICKER_W = ["w-10", "w-14", "w-12", "w-16"];
+const NAME_W = ["w-20", "w-14", "w-24", "w-16"];
+
 export function SkeletonCards({ count = 8, mobile }: { count?: number; mobile?: boolean }) {
+  if (mobile) {
+    return (
+      <div aria-hidden="true">
+        {Array.from({ length: count }, (_, i) => (
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: static placeholders with no identity
+            key={i}
+            className="grid h-16 grid-cols-[36px_minmax(0,1fr)_72px] items-center gap-x-2 border-b border-hairline px-3"
+          >
+            <span className="size-9 rounded-sm bg-surface-3" />
+            <span className="flex flex-col gap-2">
+              <span className={cn(BAR, TICKER_W[i % 4])} />
+              <span className={cn(BAR, "w-3/5")} />
+            </span>
+            <span className="flex flex-col items-end gap-2">
+              <span className={cn(BAR, "w-12")} />
+              <span className="h-6 w-[60px] rounded-full bg-surface-3" />
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div aria-hidden="true">
       {Array.from({ length: count }, (_, i) => (
@@ -19,19 +49,35 @@ export function SkeletonCards({ count = 8, mobile }: { count?: number; mobile?: 
           // biome-ignore lint/suspicious/noArrayIndexKey: static placeholders with no identity
           key={i}
           className={cn(
-            "grid items-center gap-x-2 border-b border-hairline",
-            mobile ? "h-16 grid-cols-[36px_minmax(0,1fr)_72px] px-3" : "h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px] px-2",
+            "grid h-card grid-cols-[var(--zf-card-avatar)_minmax(0,1fr)_72px_60px] items-center gap-x-2 border-b border-hairline px-2 in-data-[density=comfortable]:px-2.5",
+            AVATAR_TRACK,
           )}
         >
-          <span className={cn("rounded-sm bg-surface-3", mobile ? "size-9" : "size-card-avatar")} />
-          <span className="flex flex-col gap-2">
-            <span className="h-2 w-3/5 rounded-xs bg-surface-3" />
-            <span className="h-2 w-3/5 rounded-xs bg-surface-3" />
+          <span className="size-card-avatar rounded-md border-2 border-surface-3 p-px">
+            <span className="block size-full rounded-sm bg-surface-3" />
           </span>
-          <span className="flex flex-col items-end gap-2">
-            <span className="h-2 w-2/5 rounded-xs bg-surface-3" />
-            <span className="h-2 w-2/5 rounded-xs bg-surface-3" />
+          <span className="flex min-w-0 flex-col justify-center gap-2.5 overflow-hidden">
+            <span className="flex gap-1.5">
+              <span className={cn(BAR, TICKER_W[i % 4])} />
+              <span className={cn(BAR, "bg-surface-2", NAME_W[i % 4])} />
+            </span>
+            <span className="flex gap-1.5">
+              <span className={cn(BAR, "w-5")} />
+              <span className={cn(BAR, "w-8 bg-surface-2")} />
+              <span className={cn(BAR, "w-8 bg-surface-2")} />
+            </span>
+            <span className="flex gap-1">
+              {[0, 1, 2, 3, 4].map((c) => (
+                <span key={c} className={cn(BAR, "w-11 bg-surface-2")} />
+              ))}
+            </span>
           </span>
+          <span className="flex flex-col items-end gap-2.5">
+            <span className={cn(BAR, "w-14")} />
+            <span className={cn(BAR, "w-12 bg-surface-2")} />
+            <span className={cn(BAR, "w-10 bg-surface-2")} />
+          </span>
+          <span className="h-6 w-[60px] rounded-full bg-surface-3" />
         </div>
       ))}
     </div>
