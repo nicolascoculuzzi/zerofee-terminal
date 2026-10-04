@@ -13,6 +13,7 @@
  */
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import type { HostPacer, Priority } from "./pacer";
 
 export type Resolve = (host: string) => Promise<string[]>;
 
@@ -96,10 +97,21 @@ export class FetchFailure extends Error {
     readonly reason: string,
     readonly permanent: boolean,
     readonly status = 0,
+    /** From a Retry-After header on 429 / 503 answers. */
+    readonly retryAfterMs: number | null = null,
   ) {
     super(reason);
     this.name = "FetchFailure";
   }
+}
+
+/** Retry-After as delta-seconds or an HTTP date, in ms (null when absent or unreadable). */
+export function parseRetryAfter(v: string | null, now = Date.now()): number | null {
+  if (!v) return null;
+  const s = v.trim();
+  if (/^\d+$/.test(s)) return Number(s) * 1000;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? Math.max(0, t - now) : null;
 }
 
 export interface BoundedFetchOptions {
@@ -114,7 +126,14 @@ export interface BoundedFetchOptions {
   trusted?: boolean;
   /** Called with the response headers before the body is read; throw a FetchFailure to refuse it. */
   check?(res: Response): void;
+  /** Called with each redirect's target before it is followed; throw a FetchFailure to stop there. */
+  checkRedirect?(location: string, res: Response): void;
   maxRedirects?: number;
+  /** Per-host pacing: every hop waits for a slot on its host, and the host learns of 429s and failures. */
+  pacer?: Pick<HostPacer, "acquire" | "success" | "throttled" | "failed">;
+  priority?: Priority;
+  /** Called once the first request is actually sent (after any wait for a pacing slot). */
+  onStart?(): void;
 }
 
 export interface BoundedResponse {
@@ -124,50 +143,85 @@ export interface BoundedResponse {
   url: string;
 }
 
-/** GET with the SSRF guard on every hop, a timeout and a streamed size cap. */
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * GET with the SSRF guard on every hop, a timeout and a streamed size cap. With a pacer, each hop first
+ * waits for a slot on its host (the timeout starts once the first request is sent, not while queued).
+ */
 export async function boundedFetch(url: string, o: BoundedFetchOptions): Promise<BoundedResponse> {
   const fetchFn = o.fetchFn ?? fetch;
-  const timeout = AbortSignal.timeout(o.timeoutMs);
+  const timeoutCtl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = timeoutCtl.signal;
   const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout;
   let current = url;
-  for (let hop = 0; ; hop++) {
-    const checkDns = hop > 0 || !o.trusted;
-    if (checkDns ? !(await isSafeUrl(current, o.resolve)) : !isSafeUrlSyntax(current)) throw new FetchFailure("unsafe_url", true);
-    let res: Response;
-    try {
-      res = await fetchFn(current, { redirect: "manual", signal, headers: { accept: o.accept } });
-    } catch {
-      if (o.signal?.aborted) throw new FetchFailure("aborted", false);
-      throw new FetchFailure(timeout.aborted ? "timeout" : "network", false);
+  let release: (() => void) | null = null;
+  try {
+    for (let hop = 0; ; hop++) {
+      const checkDns = hop > 0 || !o.trusted;
+      if (checkDns ? !(await isSafeUrl(current, o.resolve)) : !isSafeUrlSyntax(current)) throw new FetchFailure("unsafe_url", true);
+      const host = hostOf(current);
+      if (o.pacer) release = await o.pacer.acquire(host, o.priority ?? 1, o.signal);
+      if (hop === 0) {
+        timer = setTimeout(() => timeoutCtl.abort(), o.timeoutMs);
+        o.onStart?.();
+      }
+      let res: Response;
+      try {
+        res = await fetchFn(current, { redirect: "manual", signal, headers: { accept: o.accept } });
+      } catch {
+        if (o.signal?.aborted) throw new FetchFailure("aborted", false);
+        o.pacer?.failed(host);
+        throw new FetchFailure(timeout.aborted ? "timeout" : "network", false);
+      }
+      if (res.status >= 300 && res.status < 400 && res.status !== 304) {
+        void res.body?.cancel().catch(() => {});
+        o.pacer?.success(host);
+        release?.();
+        release = null;
+        const loc = res.headers.get("location");
+        if (!loc) throw new FetchFailure("redirect_without_location", true, res.status);
+        if (hop >= (o.maxRedirects ?? 3)) throw new FetchFailure("too_many_redirects", true, res.status);
+        current = new URL(loc, current).toString();
+        o.checkRedirect?.(current, res);
+        continue;
+      }
+      if (!res.ok) {
+        void res.body?.cancel().catch(() => {});
+        const retryAfter = res.status === 429 || res.status === 503 ? parseRetryAfter(res.headers.get("retry-after")) : null;
+        if (res.status === 429 || res.status === 503) o.pacer?.throttled(host, retryAfter);
+        else if (res.status >= 500) o.pacer?.failed(host);
+        else o.pacer?.success(host);
+        // 404 / 410 / 403 on a content URL rarely heal in seconds, but brand-new IPFS content can 404 at
+        // first: everything but 4xx-that-is-not-404/408/429 counts as transient.
+        const transient = res.status === 404 || res.status === 408 || res.status === 429 || res.status >= 500;
+        throw new FetchFailure(`http_${res.status}`, !transient, res.status, retryAfter);
+      }
+      o.pacer?.success(host);
+      try {
+        o.check?.(res);
+      } catch (e) {
+        void res.body?.cancel().catch(() => {});
+        throw e;
+      }
+      const declared = Number(res.headers.get("content-length") ?? 0);
+      if (declared > o.maxBytes) {
+        void res.body?.cancel().catch(() => {});
+        throw new FetchFailure("too_large", true, res.status);
+      }
+      const bytes = await readCapped(res, o.maxBytes, timeout);
+      return { bytes, contentType: (res.headers.get("content-type") ?? "").toLowerCase(), url: current };
     }
-    if (res.status >= 300 && res.status < 400 && res.status !== 304) {
-      void res.body?.cancel().catch(() => {});
-      const loc = res.headers.get("location");
-      if (!loc) throw new FetchFailure("redirect_without_location", true, res.status);
-      if (hop >= (o.maxRedirects ?? 3)) throw new FetchFailure("too_many_redirects", true, res.status);
-      current = new URL(loc, current).toString();
-      continue;
-    }
-    if (!res.ok) {
-      void res.body?.cancel().catch(() => {});
-      // 404 / 410 / 403 on a content URL rarely heal in seconds, but brand-new IPFS content can 404 at
-      // first: everything but 4xx-that-is-not-404/408/429 counts as transient.
-      const transient = res.status === 404 || res.status === 408 || res.status === 429 || res.status >= 500;
-      throw new FetchFailure(`http_${res.status}`, !transient, res.status);
-    }
-    try {
-      o.check?.(res);
-    } catch (e) {
-      void res.body?.cancel().catch(() => {});
-      throw e;
-    }
-    const declared = Number(res.headers.get("content-length") ?? 0);
-    if (declared > o.maxBytes) {
-      void res.body?.cancel().catch(() => {});
-      throw new FetchFailure("too_large", true, res.status);
-    }
-    const bytes = await readCapped(res, o.maxBytes, timeout);
-    return { bytes, contentType: (res.headers.get("content-type") ?? "").toLowerCase(), url: current };
+  } finally {
+    if (timer) clearTimeout(timer);
+    release?.();
   }
 }
 
