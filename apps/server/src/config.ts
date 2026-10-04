@@ -6,6 +6,8 @@
 import { DEFAULT_RPC_URL, HELIUS_SENDER_ENDPOINTS, type HeliusSenderRegion, JITO_BLOCK_ENGINES, type JitoRegion } from "@zerofee/core";
 import { type EnrichConfig, loadEnrichConfig } from "./enrich/config";
 import { proTraderSet } from "./market/feeWallets";
+import { loadMediaConfig, type MediaConfig } from "./media/config";
+import { DEFAULT_IPFS_GATEWAYS } from "./media/urls";
 import { loadOrdersConfig, type OrdersConfig } from "./orders/config";
 
 export type IngestSourceKind = "rpc" | "yellowstone";
@@ -70,6 +72,8 @@ export interface ServerConfig {
   tokenIdleEvictMs: number;
   metadataGateways: string[];
   metadataTimeoutMs: number;
+  /** Image proxy (GET /api/img): media/config.ts. */
+  media: MediaConfig;
 
   dryRun: boolean;
   allowAnonymousTx: boolean;
@@ -337,8 +341,9 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       chainMs: int(env, "CHAIN_FLUSH_MS", 250, 10, 5_000),
     },
     tokenIdleEvictMs: int(env, "TOKEN_IDLE_EVICT_MIN", 120, 1, 24 * 60 * 30) * 60_000,
-    metadataGateways: list(env, "METADATA_GATEWAYS", ["https://ipfs.io", "https://dweb.link"]),
-    metadataTimeoutMs: int(env, "METADATA_TIMEOUT_MS", 3_000, 100, 60_000),
+    metadataGateways: list(env, "METADATA_GATEWAYS", DEFAULT_IPFS_GATEWAYS),
+    metadataTimeoutMs: int(env, "METADATA_TIMEOUT_MS", 6_000, 100, 60_000),
+    media: loadMediaConfig(env, str(env, "DB_PATH", "data/market.db")),
     // DRY_RUN is true unless explicitly set to false: POST /api/tx simulates instead of sending.
     dryRun: bool(env, "DRY_RUN", true),
     allowAnonymousTx: bool(env, "ALLOW_ANONYMOUS_TX", false),
