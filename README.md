@@ -68,6 +68,7 @@ SERVER_URL=http://127.0.0.1:8787 bun run --cwd apps/server signin-e2e
 ```
 
 - **Alerts.** Price and market-cap alerts run on the server, so they fire with the tab closed. They go out over Web Push (`bun run --cwd apps/server vapid-keys` prints the key pair), a Telegram bot (`TELEGRAM_BOT_TOKEN`; users link a chat with a one-time `/start` code) and Discord webhooks (stored encrypted with `CHANNEL_ENCRYPTION_KEY`). A channel without its setting stays off.
+- **Wallet tracker and copy trading.** Every decoded trade is matched in memory against all users' tracked wallets (up to 10,000 each) and copy-task leaders. Matches go to the signed-in `tracked` and `tracked:<mint>` topics (live feed rows and chart markers) and to wallet alerts (buy, sell, launch, minimum size, first buy only). Copy tasks (`/api/copy/tasks`: fixed or % sizing, per-buy, daily and lifetime caps, market-cap / liquidity / age filters, drift guard, copy sells, TP/SL, blacklists, pause) produce expiring signals on the `copy` topic; the browser builds and signs each copy trade itself and reports the result, and a per-leader cap limits total copy volume per slot. `bun run --cwd apps/server tracker-live` checks it against a running server with a throwaway key; `tracker-bench` measures the matcher.
 - **Kill switch.** With `ADMIN_TOKEN` set, `POST /api/admin/halt` stops every transaction submission until `POST /api/admin/resume`, and the halt is published to all clients. Every admin call, failed ones included, goes into an append-only audit log.
 
 ## Docs

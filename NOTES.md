@@ -2,6 +2,31 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: wallet tracker matcher and copy-trade detection (Bun 1.3.14, Apple M3 laptop)
+
+**Offline benchmark** (`bun run --cwd apps/server tracker-bench`, synthetic flat-string addresses, clean process). The full match path is index lookup, balance / first-buy detection, rows for owners with an open socket, the alert hook and the feed flush.
+
+| Index | Build | Heap per address | Lookups | Full match path |
+|---|---|---|---|---|
+| 100k addresses, 120k watchers (1,000 users x 100, plus 500 popular wallets x 40 users), 2% of trades tracked | 40-70 ms | ~480 B | 6-11M/s | 4.2-6.6M trades/s |
+| 100k addresses, 10 users x 10,000, 5% tracked | ~30 ms | ~365 B | ~11M/s | ~5.7M trades/s |
+
+Matching costs about 0.2 ms per thousand trades, three orders of magnitude inside the 2,000 trades/s target; the feed's real load is JSON frames to online owners, batched every 100 ms (`TRACKER_FLUSH_MS`).
+
+**Live check on public RPC** (`RpcLogsSource`, `wss://api.mainnet-beta.solana.com`, processed, about 150 trades/s decoded): `bun run --cwd apps/server tracker-live` signed in with a throwaway key, tracked the three busiest traders of 12 hot tapes (sampled for 25 s) and copied the busiest, a bot trading about 9 times a second.
+
+| Metric | Value |
+|---|---|
+| Tracked rows on the `tracked` topic in 180 s | 1,625 (1,618 from the bot, 7 from another wallet) |
+| Detection (server receive - event block time, 1 s clock) | p50 1,280 ms, p90 3,760 ms |
+| Server receive -> client delivery (100 ms flush) | p50 53 ms, p90 95 ms, max 151 ms |
+| Copy decisions | 197 buy signals (189 revoked because the bot sold before any fill, 7 expired, 1 pending), 589 skipped (588 drift guard, 1 curve complete) |
+
+What these numbers mean:
+
+- Matching is not the bottleneck; detection is. On public RPC the median trade reaches the server about 1.3 s after its (floored) block time, so a fast leader's tokens have often moved 15-45% past the leader's fill before a copy could be built. The 10% default drift guard skips those, which is what it is for. A Yellowstone feed should cut detection and make more copies viable.
+- Leaders who flip within seconds produce mostly revoked buys (their sell arrives while the copy is pending). Followers of such wallets would need `onlyFirstBuy`, a leader-size minimum, or the browser acting within the 15 s signal TTL.
+- Market state reported market caps of 0.1-1 SOL for some live pump tokens (impossible on a SOL-quoted curve); worth a look in the market layer, since copy MC filters read the same summary.
 ## 2026-10-03: armed orders against real pump.fun and PumpSwap code (mainnet fork)
 
 Setup: `bun run fork:start` + `bun run e2e` (`packages/core/e2e/armed.e2e.ts`). Local Agave 4.3.0 running mainnet's binaries on cloned state; four forks, two coin sets, mainnet slots 453,103,463–453,108,071. One vault-held trading wallet signed everything through `SignerService` with the shipped policy (68 transactions per run, none refused). Ten nonce slots and one operator table. Orders were fired by `evaluateTrigger` on fork state and landed through `SubmitRouter` + `RpcLane`. All 9 cases passed, alongside the 10 trade cases.

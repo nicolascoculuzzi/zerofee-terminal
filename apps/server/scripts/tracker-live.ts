@@ -12,7 +12,7 @@
  */
 import { getAddressFromPublicKey } from "@solana/kit";
 import { createSignInMessage } from "@zerofee/auth";
-import type { CopySignal, CopyTask, NonceResponse, TokenSummary, Trade, TrackedTradeRow } from "@zerofee/protocol";
+import type { CopySignal, CopyTask, NonceResponse, TokenSummary, TrackedTradeRow, Trade } from "@zerofee/protocol";
 
 const SERVER = (process.env.SERVER_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const ORIGIN = process.env.ORIGIN ?? new URL(SERVER).origin;
@@ -104,14 +104,26 @@ async function main(): Promise<void> {
   const traders = (await pickTraders()).slice(0, WALLETS);
   if (!traders.length) throw new Error("no trades seen on the sampled tapes");
   for (const [i, t] of traders.entries()) {
-    const r = await api("POST", "/api/tracked-wallets", { address: t.address, label: `🤖 live ${i + 1}`, emoji: "🤖", alerts: { buy: true, sell: true } });
+    const r = await api("POST", "/api/tracked-wallets", {
+      address: t.address,
+      label: `🤖 live ${i + 1}`,
+      emoji: "🤖",
+      alerts: { buy: true, sell: true },
+    });
     console.log(`tracking ${t.address} (${t.trades} trades in the sample): HTTP ${r.status}`);
   }
   const leader = traders[0]?.address as string;
   const task = await api<CopyTask>("POST", "/api/copy/tasks", {
     leader,
     label: "live check",
-    config: { sizing: { mode: "fixed", sol: 0.01 }, ageSec: { min: null }, maxBuysPerToken: 100, dailyBuyLimit: 10_000, dailySpendLimitSol: 1_000, totalSpendLimitSol: 1_000 },
+    config: {
+      sizing: { mode: "fixed", sol: 0.01 },
+      ageSec: { min: null },
+      maxBuysPerToken: 100,
+      dailyBuyLimit: 10_000,
+      dailySpendLimitSol: 1_000,
+      totalSpendLimitSol: 1_000,
+    },
   });
   console.log(`copy task on ${short(leader)}: HTTP ${task.status}`);
 
