@@ -128,7 +128,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       cfg: cfg.enrich,
       market: m,
       pulse,
-      focused: () => (gateway ? watchedMints(gateway.hub) : []),
+      // the hub exists once the gateway started (before that nobody can have a token page open)
+      focused: () => (gateway?.hub ? watchedMints(gateway.hub) : []),
       launches: reader,
       fundingStore: { get: (w) => reader.walletFunder(w), put: (row) => writer.walletFunder(row) },
       fetchFn: o.fetchFn,
