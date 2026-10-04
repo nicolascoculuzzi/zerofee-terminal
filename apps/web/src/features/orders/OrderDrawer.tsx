@@ -8,14 +8,14 @@ import { Drawer } from "../../components/ui/Modal";
 import { Num } from "../../components/ui/Num";
 import { TokenAvatar } from "../../components/ui/TokenAvatar";
 import { cn } from "../../lib/cn";
-import { fmtClock, fmtDate, fmtInt, fmtMs, fmtSol, fmtTokens, shortAddr } from "../../lib/format";
+import { fmtClock, fmtDate, fmtFee, fmtInt, fmtMs, fmtSol, fmtTokens, shortAddr } from "../../lib/format";
 import { LANDING_INFO } from "../../lib/landing";
-import type { Order } from "../../protocol";
+import type { Order, OrderEvent } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { isOpenOrder } from "../../state/orders";
 import { MarketCap } from "../portfolio/quote";
-import { DistanceCell, StatusCell, useLiveToken, useTriggerText } from "./OrderCells";
-import { type OrderEvent, sentAt, useOrderLog } from "./orderLog";
+import { useOrderQuotes } from "./liveQuotes";
+import { DistanceCell, StatusCell, TriggerLabel, useLiveToken } from "./OrderCells";
 import { canCancel, canRearm, KIND_NAME, nonceInfo, sizeText } from "./orderText";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -41,19 +41,27 @@ function when(ms: number): string {
   return today ? fmtClock(ms) : `${fmtDate(ms)} ${fmtClock(ms)}`;
 }
 
-const EVENT_TEXT: Record<OrderEvent["kind"], { label: string; dot: string }> = {
+const EVENT_TEXT: Record<string, { label: string; dot: string }> = {
   armed: { label: "Armed", dot: "bg-info" },
   rearmed: { label: "Re-armed with fresh signatures", dot: "bg-info" },
-  submitted: { label: "Trigger hit · sending", dot: "bg-warn" },
+  triggered: { label: "Trigger hit", dot: "bg-warn" },
+  attempt: { label: "Attempt sent", dot: "bg-warn" },
+  submitted: { label: "Sending", dot: "bg-warn" },
   filled: { label: "Filled", dot: "bg-fg-1" },
   failed: { label: "Attempt failed · nonce consumed", dot: "bg-sell" },
   stale: { label: "Needs re-arm", dot: "bg-warn" },
   cancelled: { label: "Cancelled · nonce advanced", dot: "bg-fg-4" },
 };
 
+function eventText(e: OrderEvent): { label: string; dot: string } {
+  return EVENT_TEXT[e.kind] ?? { label: e.kind, dot: "bg-fg-3" };
+}
+
 /** Live "price checks" step for an open order: the server checks the trigger on every trade. */
 function PriceChecks({ order }: { order: Order }) {
-  const lastTrade = useMarket((s) => (order.mint ? (s.tokens[order.mint]?.lastTradeAt ?? null) : null));
+  const feedTrade = useMarket((s) => (order.mint ? (s.tokens[order.mint]?.lastTradeAt ?? null) : null));
+  const quoteTrade = useOrderQuotes((s) => (order.mint ? (s.byMint[order.mint]?.lastTradeAt ?? null) : null));
+  const lastTrade = feedTrade ?? quoteTrade;
   const { mcUsd, supply, priceSol } = useLiveToken(order.mint);
   if (!order.mint) {
     return (
@@ -89,16 +97,14 @@ function PriceChecks({ order }: { order: Order }) {
  * https://mobbin.com/screens/5cfe0e55-f260-4f13-98e4-e24e732c99a0
  */
 function Timeline({ order }: { order: Order }) {
-  const events = useOrderLog((s) => s.events[order.id]) ?? [];
-  const sent = sentAt(events);
   const open = isOpenOrder(order);
-  const steps = [...events].sort((a, b) => a.at - b.at);
+  const steps = [...order.events].sort((a, b) => a.at - b.at);
   return (
     <ol aria-label="Order timeline" className="flex flex-col">
       {steps.map((e, i) => {
-        const t = EVENT_TEXT[e.kind];
+        const t = eventText(e);
         const last = i === steps.length - 1 && !open;
-        const landed = e.kind === "filled" && sent !== null ? e.at - sent : null;
+        const landed = e.kind === "filled" ? order.fillLatencyMs : null;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: events are append-only
           <li key={`${e.kind}-${e.at}-${i}`} className="grid grid-cols-[4.5rem_0.75rem_minmax(0,1fr)] gap-2">
@@ -113,7 +119,7 @@ function Timeline({ order }: { order: Order }) {
                 {landed !== null && <span className="zf-num text-fg-2"> in {fmtMs(landed)}</span>}
               </span>
               {e.reason && <span className="block text-label text-fg-2">{e.reason}</span>}
-              {e.slot !== null && <span className="zf-num block text-label text-fg-3">Seen at slot {fmtInt(e.slot)}</span>}
+              {e.slot !== null && <span className="zf-num block text-label text-fg-3">Slot {fmtInt(e.slot)}</span>}
             </span>
           </li>
         );
@@ -188,7 +194,6 @@ function DrawerBody({
   onCancel: (order: Order) => void;
   onRearm: (order: Order) => void;
 }) {
-  const trigger = useTriggerText(order);
   const live = useLiveToken(order.mint);
   const nonce = nonceInfo(order);
   const cancel = cancelStatus(order, nonce);
@@ -219,7 +224,9 @@ function DrawerBody({
               {KIND_NAME[order.kind]} ·{" "}
               <span className={order.side === "buy" ? "text-buy" : "text-sell"}>{order.side === "buy" ? "Buy" : "Sell"}</span>
             </Row>
-            <Row label="Trigger">{trigger}</Row>
+            <Row label="Trigger">
+              <TriggerLabel order={order} />
+            </Row>
             {open && order.mint && (
               <Row label="Now">
                 <MarketCap sol={liveMcSol} usd={live.mcUsd} /> <span className="text-fg-3">·</span> <DistanceCell order={order} />
@@ -257,21 +264,69 @@ function DrawerBody({
           </dl>
 
           <Section title="Min-out grid">
-            <p className="text-data text-fg-2">
-              {order.variants > 0
-                ? `${order.variants} pre-signed variants, each with its own minimum output and tip. When the trigger fires the server submits the variant just below the live quote; it can't change the size, minimum output, fees or destination.`
-                : "None. This order's token isn't known in advance, so this browser builds and signs the transaction when it fires and must stay open."}
-            </p>
+            {order.grid.length > 0 ? (
+              <>
+                <table className="w-full text-data">
+                  <thead>
+                    <tr className="h-7 border-b border-hairline text-label text-fg-3">
+                      <th scope="col" className="w-[8ch] text-left font-medium">
+                        Variant
+                      </th>
+                      <th scope="col" className="text-right font-medium">
+                        Min out
+                      </th>
+                      <th scope="col" className="w-[14ch] text-right font-medium">
+                        Tip SOL
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {order.grid.map((v, i) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: the grid is fixed once signed
+                      <tr key={i} className="h-6 border-b border-hairline last:border-b-0">
+                        <td className="zf-num text-fg-3">{i + 1}</td>
+                        <td className="text-right">
+                          {order.side === "buy" ? (
+                            <span className="zf-num text-fg-1">
+                              {fmtTokens(v.minOut)} <span className="zf-unit">{order.symbol}</span>
+                            </span>
+                          ) : (
+                            <Num value={v.minOut} kind="sol" unit="SOL" className="text-fg-1" />
+                          )}
+                        </td>
+                        <td className="zf-num text-right text-fg-2">{fmtFee(v.tipSol)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="max-w-[72ch] text-label text-fg-3">
+                  When the trigger fires the server submits the variant just below the live quote; it can't change the size, minimum
+                  output, fees or destination.
+                </p>
+              </>
+            ) : (
+              <p className="text-data text-fg-2">
+                None. This order's token isn't known in advance, so this browser builds and signs the transaction when it fires and must
+                stay open.
+              </p>
+            )}
           </Section>
 
           <Section title="Nonce account">
             <p className="text-data text-fg-2">
               <span className="text-fg-1">
                 {nonce.text === "None" ? "No durable nonce" : nonce.shared ? "Shared durable nonce (OCO)" : "Own durable nonce"}
+                {order.nonceIndex !== null && <span className="zf-num"> #{order.nonceIndex}</span>}
               </span>
               {" · "}
               {nonce.title}
             </p>
+            {order.nonceAccount && (
+              <span className="inline-flex items-center gap-1 font-mono text-data text-fg-2">
+                {shortAddr(order.nonceAccount)}
+                <CopyButton text={order.nonceAccount} label="Copy nonce account" />
+              </span>
+            )}
           </Section>
 
           <Section title="Pre-signed cancel">

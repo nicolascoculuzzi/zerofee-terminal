@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { Age } from "../../components/ui/Age";
 import { Button, IconButton } from "../../components/ui/Button";
 import { Hotkey } from "../../components/ui/controls";
+import { Num } from "../../components/ui/Num";
 import { MenuItem, MenuSeparator, Popover } from "../../components/ui/Popover";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
@@ -12,8 +13,8 @@ import type { Order } from "../../protocol";
 import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
 import { useQuote } from "../portfolio/quote";
-import { sentAt, useOrderLog } from "./orderLog";
-import { canCancel, canRearm, nonceInfo, STATUS_INFO, type StatusTone, triggerDistance, triggerText } from "./orderText";
+import { useOrderQuotes } from "./liveQuotes";
+import { canCancel, canRearm, nonceInfo, STATUS_INFO, type StatusTone, triggerDistance, triggerParts, triggerText } from "./orderText";
 
 const DOT: Record<StatusTone, string> = {
   info: "bg-info",
@@ -30,10 +31,8 @@ const DOT: Record<StatusTone, string> = {
  * duration after Vercel's deployments list: https://mobbin.com/screens/e9576405-bcef-419a-922a-8fb84b044a54
  */
 export function StatusCell({ order }: { order: Order }) {
-  const events = useOrderLog((s) => s.events[order.id]);
   const info = STATUS_INFO[order.status];
-  const sent = order.status === "filled" ? sentAt(events) : null;
-  const landedMs = sent !== null && order.filledAt !== null && order.filledAt >= sent ? order.filledAt - sent : null;
+  const landedMs = order.status === "filled" ? order.fillLatencyMs : null;
   const body = (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       {info.tone === "filled" ? (
@@ -52,18 +51,38 @@ export function StatusCell({ order }: { order: Order }) {
   return body;
 }
 
-/** Live market cap, price and supply of an order's token (primitive selections, so rows re-render only on change). */
+/**
+ * Live market cap, price and supply of an order's token: from the Pulse feed, else from the
+ * order-token subscriptions (liveQuotes). Primitive selections, so rows re-render only on change.
+ */
 export function useLiveToken(mint: string | null): { mcUsd: number | null; priceSol: number | null; supply: number | null } {
   const mcUsd = useMarket((s) => (mint ? (s.tokens[mint]?.marketCapUsd ?? null) : null));
   const priceSol = useMarket((s) => (mint ? (s.tokens[mint]?.priceSol ?? null) : null));
   const supply = useMarket((s) => (mint ? (s.tokens[mint]?.supply ?? null) : null));
-  return { mcUsd, priceSol, supply };
+  const qMc = useOrderQuotes((s) => (mint ? (s.byMint[mint]?.mcUsd ?? null) : null));
+  const qPrice = useOrderQuotes((s) => (mint ? (s.byMint[mint]?.priceSol ?? null) : null));
+  const qSupply = useOrderQuotes((s) => (mint ? (s.byMint[mint]?.supply ?? null) : null));
+  return { mcUsd: mcUsd ?? qMc, priceSol: priceSol ?? qPrice, supply: supply ?? qSupply };
 }
 
+/** Plain-text trigger (titles, aria, dialogs). */
 export function useTriggerText(order: Order): string {
   const { quote, solUsd } = useQuote();
   const { supply } = useLiveToken(order.mint);
   return triggerText(order, { quote, solUsd, supply });
+}
+
+/** The trigger as shown in cells: words, with a price in subscript-zero notation when the MC can't be derived. */
+export function TriggerLabel({ order }: { order: Order }) {
+  const { quote, solUsd } = useQuote();
+  const { supply } = useLiveToken(order.mint);
+  const p = triggerParts(order, { quote, solUsd, supply });
+  if (p.kind === "text") return <>{p.text}</>;
+  return (
+    <>
+      {p.words} <Num value={p.priceSol} kind="price" unit="SOL" />
+    </>
+  );
 }
 
 /** Distance (DESIGN.md 4.20): signed % from the live MC to the trigger, in text-2, because a distance is not PnL. */
@@ -83,7 +102,7 @@ export function NonceCell({ order }: { order: Order }) {
   const n = nonceInfo(order);
   return (
     <Tooltip content={n.title}>
-      <span className={cn("inline-flex items-center gap-1", n.text === "None" ? "text-fg-3" : "text-fg-2")}>
+      <span className={cn("zf-num inline-flex items-center gap-1", n.text === "None" ? "text-fg-3" : "text-fg-2")}>
         {n.text}
         {n.shared && <Link2 className="icon-xs" aria-label="OCO-shared nonce" />}
       </span>

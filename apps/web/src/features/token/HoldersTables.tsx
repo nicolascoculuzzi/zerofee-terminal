@@ -11,7 +11,6 @@ import { DASH, fmtCount, fmtPct, fmtRiskPct, fmtSignedSol, fmtSol, fmtTokens, sh
 import { bandsText, type RiskKey, riskTone, TONE_TEXT } from "../../lib/metrics";
 import type { Holder, TokenSummary, TopTrader, WalletTag } from "../../protocol";
 import { useSettings } from "../../state/settings";
-import { useToken } from "../../state/token";
 import { type TrackedWallet, useTrackedMap, useTrackers } from "../../state/trackers";
 import { Money, quoteUnit, useQuote } from "./money";
 import { type Col, ch, DataTable, flex, NewRowsBar, nextSort, type SortState, useLiveOrder, usePauseOnHover } from "./table";
@@ -133,26 +132,30 @@ interface HolderView {
   totalPnlSol: number;
 }
 
-/** Exact where the feed allows: with no sells, realized is 0 and the cost basis is everything bought. */
+/**
+ * Average-cost PnL from the holder's lifetime buys and sells. Tokens that arrived by transfer
+ * (no buy) have no cost basis, so a holder who never bought shows "–".
+ */
 function holderView(h: Holder, rank: number, priceSol: number): HolderView {
   const system = h.tags.includes("curve") || h.tags.includes("pool");
   const valueSol = h.balance * priceSol;
-  const clean = !system && h.soldSol === 0 && h.boughtSol > 0 && !h.tags.includes("insider");
+  const avg = !system && h.boughtTokens > 0 ? h.boughtSol / h.boughtTokens : null;
+  const costHeld = avg !== null ? avg * Math.min(h.balance, Math.max(0, h.boughtTokens - h.soldTokens)) : null;
   return {
     h,
     system,
     rank,
     valueSol,
-    avgPriceSol: clean && h.balance > 0 ? h.boughtSol / h.balance : null,
-    realizedSol: clean ? 0 : null,
-    unrealizedSol: clean ? valueSol - h.boughtSol : null,
+    avgPriceSol: avg,
+    realizedSol: avg !== null ? h.soldSol - avg * Math.min(h.soldTokens, h.boughtTokens) : null,
+    unrealizedSol: costHeld !== null ? valueSol - costHeld : null,
     totalPnlSol: h.soldSol + valueSol - h.boughtSol,
   };
 }
 
 function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked: TrackedWallet | undefined): ReactNode {
   const { h } = v;
-  const why = `Needs this wallet's cost basis from the feed. Total PnL ${fmtSignedSol(v.totalPnlSol)} SOL.`;
+  const why = `No buys on record (tokens arrived by transfer), so there's no cost basis. Net flow ${fmtSignedSol(v.totalPnlSol)} SOL.`;
   switch (key) {
     case "rank":
       return <span className="zf-num text-fg-3">{v.system ? DASH : v.rank}</span>;
@@ -163,7 +166,7 @@ function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked:
         <span className="flex items-center gap-2">
           <span className="zf-num">{fmtPct(h.pct)}</span>
           <span aria-hidden="true" className="h-1 w-10 bg-surface-3">
-            <span className="block h-full bg-fg-3/50" style={{ width: `${Math.min(100, h.pct)}%` }} />
+            <span className="block h-full bg-hairline-strong" style={{ width: `${Math.min(100, h.pct)}%` }} />
           </span>
         </span>
       );
@@ -367,34 +370,27 @@ const SORT_TRADERS: Partial<Record<TraderKey, (v: TraderView) => number>> = {
   unrealized: (v) => v.unrealizedSol ?? Number.NEGATIVE_INFINITY,
 };
 
-export function TopTradersTable({ traders, holders }: { traders: TopTrader[]; holders: Holder[] }) {
+export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
   const tracked = useTrackedMap();
-  const trades = useToken((s) => s.trades);
   const [sort, setSort] = useState<SortState<TraderKey> | null>(null);
   const pause = usePauseOnHover();
 
   const views = useMemo(() => {
-    const firstBuy = new Map(holders.map((h) => [h.address, h.firstBuyAt]));
-    const last = new Map<string, number>();
-    for (const tr of trades) if (!last.has(tr.maker)) last.set(tr.maker, tr.ts);
-    const list: TraderView[] = traders.map((t) => {
-      const exited = t.holdingPct <= 0;
-      return {
-        t,
-        // Exact when one side is known to be zero; otherwise the feed would need cost basis.
-        realizedSol: exited ? t.pnlSol : t.soldSol === 0 ? 0 : null,
-        unrealizedSol: exited ? 0 : t.soldSol === 0 ? t.pnlSol : null,
-        firstBuyAt: exited ? null : (firstBuy.get(t.address) ?? null),
-        lastTx: last.get(t.address) ?? null,
-      };
-    });
+    const list: TraderView[] = traders.map((t) => ({
+      t,
+      realizedSol: t.realizedPnlSol,
+      unrealizedSol: t.holdingPct > 0 ? t.unrealizedPnlSol : 0,
+      // "Held for" counts from the first buy while the wallet still holds.
+      firstBuyAt: t.holdingPct > 0 ? t.firstBuyAt : null,
+      lastTx: t.lastTradeAt,
+    }));
     const value = sort ? SORT_TRADERS[sort.key] : undefined;
     if (sort && value) {
       const dir = sort.dir === "asc" ? 1 : -1;
       list.sort((a, b) => (value(a) - value(b)) * dir);
     }
     return list;
-  }, [traders, holders, trades, sort]);
+  }, [traders, sort]);
 
   const { rows, queued } = useLiveOrder(views, (v) => v.t.address, { frozen: pause.frozen, resortMs: 2000 });
 

@@ -12,7 +12,7 @@ import { registerHotkey } from "../../lib/hotkeys";
 import { panic } from "../../lib/tradeActions";
 import { BREAKPOINT, useMediaQuery } from "../../lib/useMediaQuery";
 import type { Order, Position } from "../../protocol";
-import { useOrders } from "../../state/orders";
+import { isOpenOrder, useOrders } from "../../state/orders";
 import { useSettings } from "../../state/settings";
 import { useUi } from "../../state/ui";
 import { useActiveStatus } from "../../state/wallet";
@@ -20,7 +20,7 @@ import { PanelTabs, panelId, tabId } from "../portfolio/Tabs";
 import { SkeletonRows, TABLE, Th } from "../portfolio/table";
 import { OrderDrawer } from "./OrderDrawer";
 import { OrdersMobileList, OrdersTable } from "./OrdersTable";
-import { startOrderLog } from "./orderLog";
+import { useOrderQuoteFeed } from "./liveQuotes";
 import { canCancel, canRearm, groupByToken, NONCE_RENT_SOL, ORDER_TABS, type OrderTab, TAB_TEST, tabCounts, typeLabels } from "./orderText";
 import { useOrderActions } from "./useOrderActions";
 
@@ -58,11 +58,9 @@ function NonceMeter({ used, total }: { used: number; total: number }) {
 
 /**
  * Panic in the header (DESIGN.md 4.20, 1.7): danger styling, a 1,000 ms hold, and the label
- * that names the outcome. The hold is the confirmation. The button remounts after each use,
- * because HoldButton stays filled once it has fired.
+ * that names the outcome. The hold is the confirmation; the button re-arms once Panic settles.
  */
 function PanicHold({ openCount, className }: { openCount: number; className?: string }) {
-  const [uses, setUses] = useState(0);
   const binding = useSettings((s) => s.hotkeys.panic?.[0]);
   return (
     <Tooltip
@@ -78,13 +76,7 @@ function PanicHold({ openCount, className }: { openCount: number; className?: st
         </span>
       }
     >
-      <HoldButton
-        key={uses}
-        className={className}
-        onConfirm={() => {
-          void panic().finally(() => setUses((n) => n + 1));
-        }}
-      >
+      <HoldButton className={className} onConfirm={panic}>
         Hold to cancel all and lock
       </HoldButton>
     </Tooltip>
@@ -109,11 +101,9 @@ export default function OrdersPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  useEffect(() => {
-    startOrderLog();
-  }, []);
-
   const all = useMemo(() => Object.values(byId), [byId]);
+  const openMints = useMemo(() => all.filter((o) => isOpenOrder(o) && o.mint).map((o) => o.mint as string), [all]);
+  useOrderQuoteFeed(openMints);
   const labels = useMemo(() => typeLabels(all), [all]);
   const counts = useMemo(() => tabCounts(all), [all]);
   const groups = useMemo(() => groupByToken(all.filter(TAB_TEST[tab])), [all, tab]);

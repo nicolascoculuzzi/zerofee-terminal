@@ -4,14 +4,17 @@ import { Link } from "react-router";
 import { Age } from "../../components/ui/Age";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
+import { Num } from "../../components/ui/Num";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { DASH, fmtClock, fmtPct } from "../../lib/format";
+import { DASH, fmtClock, fmtMs, fmtPct } from "../../lib/format";
 import { rearmOrder } from "../../lib/tradeActions";
 import type { Order, TokenSummary } from "../../protocol";
 import { isOpenOrder, useOrders } from "../../state/orders";
+import { triggerParts, triggerText } from "../orders/orderText";
 import { useCancelDialog } from "./CancelOrderDialog";
-import { distanceToTrigger, KIND_TEXT, STATUS_TEXT, type StatusTone, sizeText, triggerText } from "./orderText";
+import { useQuote } from "./money";
+import { distanceToTrigger, KIND_TEXT, STATUS_TEXT, type StatusTone, sizeText } from "./orderText";
 import { type Col, ch, DataTable, flex } from "./table";
 
 /*
@@ -48,6 +51,7 @@ function Status({ order }: { order: Order }) {
       <span className="flex items-center gap-1.5 text-fg-1" title={order.filledAt ? fmtClock(order.filledAt) : undefined}>
         <Check className="icon-xs" />
         Filled
+        {order.fillLatencyMs !== null && <span className="zf-num text-fg-2">{fmtMs(order.fillLatencyMs)}</span>}
       </span>
     );
   }
@@ -64,6 +68,7 @@ function Status({ order }: { order: Order }) {
 export function TokenOrders({ token }: { token: TokenSummary }) {
   const byId = useOrders((s) => s.byId);
   const ask = useCancelDialog((s) => s.ask);
+  const { quote, solUsd } = useQuote();
   const orders = useMemo(() => {
     const list = Object.values(byId).filter((o) => o.mint === token.mint);
     return list.sort((a, b) => {
@@ -84,14 +89,27 @@ export function TokenOrders({ token }: { token: TokenSummary }) {
   }
 
   const current = { mcUsd: token.marketCapUsd, priceSol: token.priceSol };
+  const ctx = { quote, solUsd, supply: token.supply };
   const content = (o: Order, key: Key): ReactNode => {
     switch (key) {
       case "status":
         return <Status order={o} />;
       case "type":
         return <span className="text-fg-2">{KIND_TEXT[o.kind]}</span>;
-      case "trigger":
-        return <span className="truncate text-fg-1">{triggerText(o)}</span>;
+      case "trigger": {
+        const t = triggerParts(o, ctx);
+        return (
+          <span className="truncate text-fg-1" title={triggerText(o, ctx)}>
+            {t.kind === "text" ? (
+              t.text
+            ) : (
+              <>
+                {t.words} <Num value={t.priceSol} kind="price" unit="SOL" />
+              </>
+            )}
+          </span>
+        );
+      }
       case "distance": {
         const d = isOpenOrder(o) ? distanceToTrigger(o, current) : null;
         return d === null ? (

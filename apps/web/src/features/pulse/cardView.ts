@@ -1,4 +1,4 @@
-import { fmtCount, fmtRiskPct, fmtSol, fmtUsd } from "../../lib/format";
+import { fmtCount, fmtRiskPct, fmtSignedSol, fmtSol, fmtUsd, MINUS } from "../../lib/format";
 import { type RiskThresholds, token2022Danger } from "../../lib/metrics";
 import type { Launchpad, TokenSummary } from "../../protocol";
 import type { QuoteCurrency } from "../../state/settings";
@@ -51,6 +51,9 @@ export interface CardView {
   /** Buy share of txns in whole percent; -1 with no txns. */
   buyPct: number;
   fees: string;
+  /** Net buy since creation, signed, in the global quote ("+$3.20K", "−1.25"). */
+  nb: string;
+  nbTone: "buy" | "sell" | "zero";
   /** Values are in SOL (the global quote), so MC and V get the SOL glyph. */
   sol: boolean;
 }
@@ -68,6 +71,15 @@ function lpFlag(t: TokenSummary): { lp: string; lpTone: CardView["lpTone"] } {
   if (t.migratedAt === null || pumpPool || t.lpBurnedPct === null) return { lp: "", lpTone: "neutral" };
   const pct = t.lpBurnedPct;
   return { lp: `LP ${fmtRiskPct(pct)}`, lpTone: pct >= 100 ? "neutral" : pct <= 0 ? "bad" : "warn" };
+}
+
+/** Signed compact net buy (DESIGN.md 4.4 "NB +$3.2K"): USD, or SOL when `solUsd` is given. */
+export function netBuy(usd: number, solUsd: number | null): { nb: string; nbTone: CardView["nbTone"] } {
+  const v = solUsd ? usd / solUsd : usd;
+  const text = solUsd ? fmtSignedSol(v) : fmtUsd(Math.abs(v));
+  if (text === "0" || text === "$0" || !Number.isFinite(v) || Math.abs(usd) < 0.005) return { nb: solUsd ? "0" : "$0", nbTone: "zero" };
+  if (solUsd) return { nb: text, nbTone: v > 0 ? "buy" : "sell" };
+  return { nb: `${v > 0 ? "+" : MINUS}${text}`, nbTone: v > 0 ? "buy" : "sell" };
 }
 
 export function cardView(t: TokenSummary, ctx: CardContext): CardView {
@@ -99,6 +111,7 @@ export function cardView(t: TokenSummary, ctx: CardContext): CardView {
     tx: fmtCount(t.txns),
     buyPct: t.txns > 0 ? Math.round((t.buys / t.txns) * 100) : -1,
     fees: fmtSol(t.feesPaidSol),
+    ...netBuy(t.netBuyUsd, sol ? ctx.solUsd : null),
     sol,
   };
 }

@@ -2,7 +2,6 @@ import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 import { SolGlyph } from "../../components/ui/bits";
 import { copyText } from "../../lib/clipboard";
 import { cn } from "../../lib/cn";
-import { DASH } from "../../lib/format";
 import type { PulseColumnId } from "../../protocol";
 import { getServices } from "../../services";
 import { copyCa, useCopied } from "./actions";
@@ -243,9 +242,11 @@ export function MetricsCell({ view, stale }: { view: CardView; stale: boolean })
 }
 
 /**
- * Wide+ second metrics column: fees paid in SOL and net buy (the feed doesn't carry net buy
- * yet, so it reads "–"). As tall as the first metrics column, so F and NB line up with MC and V.
+ * Wide+ second metrics column: fees paid in SOL and net buy (signed, in the global quote). As
+ * tall as the first metrics column, so F and NB line up with MC and V.
  */
+const NB_TONE: Record<CardView["nbTone"], string> = { buy: "text-buy", sell: "text-sell", zero: "text-fg-3" };
+
 export function FeesCell({ view, stale }: { view: CardView; stale: boolean }) {
   return (
     <Cell className="flex h-[52px] min-w-0 flex-col items-end in-data-[density=comfortable]:h-[62px] in-data-[density=comfortable]:gap-0.5">
@@ -263,12 +264,13 @@ export function FeesCell({ view, stale }: { view: CardView; stale: boolean }) {
       <span
         data-tip="nb"
         className={cn(
-          "zf-num num-dense flex h-4 w-full items-center justify-end text-data text-fg-4 in-data-[density=comfortable]:h-[18px]",
+          "zf-num num-dense flex h-4 w-full items-center justify-end text-data in-data-[density=comfortable]:h-[18px]",
           LABEL,
           "before:content-['NB']",
+          stale ? "text-fg-3" : NB_TONE[view.nbTone],
         )}
       >
-        {DASH}
+        {view.nb}
       </span>
     </Cell>
   );

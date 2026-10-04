@@ -209,6 +209,8 @@ export interface TokenSummary {
   token2022: Token2022Flags | null;
   /** Total fees traders paid on this token: venue fees + priority fees + tips, in SOL. */
   feesPaidSol: number;
+  /** Net buy since creation: SOL bought minus SOL sold, in USD (Pulse "NB", signed). */
+  netBuyUsd: number;
   lastTradeAt: number;
   /** Price change over the last 5 minutes, %. */
   change5mPct: number;
@@ -240,6 +242,9 @@ export interface Holder {
   pct: number;
   boughtSol: number;
   soldSol: number;
+  /** Token amounts bought and sold over the holder's lifetime (UI amounts). */
+  boughtTokens: number;
+  soldTokens: number;
   buys: number;
   sells: number;
   firstBuyAt: number | null;
@@ -258,6 +263,12 @@ export interface TopTrader {
   holdingPct: number;
   /** Realized + unrealized PnL in SOL at the current price. */
   pnlSol: number;
+  /** Sells against the average buy cost, SOL. */
+  realizedPnlSol: number;
+  /** Remaining balance at the current price against its average cost, SOL. */
+  unrealizedPnlSol: number;
+  firstBuyAt: number | null;
+  lastTradeAt: number | null;
   tags: WalletTag[];
 }
 
@@ -455,6 +466,27 @@ export interface OrderTrigger {
 
 export type OrderSize = { kind: "sol"; sol: number } | { kind: "pct"; pct: number };
 
+/** One pre-signed variant on an order's min-out grid. */
+export interface OrderVariant {
+  /** Minimum output: tokens for buys, SOL for sells. */
+  minOut: number;
+  /** Jito tip this variant pays, SOL. */
+  tipSol: number;
+}
+
+/**
+ * One step in an order's life, oldest first: `armed`, `rearmed`, `triggered` (the server saw the
+ * trigger cross), `attempt` (a variant handed to a lane), `filled`, `failed`, `stale`, `cancelled`.
+ */
+export interface OrderEvent {
+  at: number;
+  kind: string;
+  /** Slot the step happened at, when known. */
+  slot: number | null;
+  /** Detail for the timeline ("Variant 3 of 6 via Jito", "pump.fun upgrade changed accounts"). */
+  reason: string | null;
+}
+
 export interface Order {
   id: string;
   mint: string | null;
@@ -473,15 +505,25 @@ export interface Order {
   reservedSol: number;
   /** Durable-nonce slots used; a TP and its SL share one (OCO). */
   nonceSlots: number;
+  /** The durable-nonce account the pre-signed transactions use; null when nothing is pre-signed. */
+  nonceAccount: string | null;
+  /** That account's slot number in the wallet's nonce pool ("#4"); OCO legs share it. */
+  nonceIndex: number | null;
   ocoGroupId: string | null;
   landing: LandingPreset;
   /** Pre-signed min-out grid variants held by the server. */
   variants: number;
+  /** The variants themselves (min out and tip); empty when the order is signed live. */
+  grid: OrderVariant[];
+  /** Timeline, oldest first. */
+  events: OrderEvent[];
   /** Price (SOL) when the order was armed, for "distance to trigger". */
   armedPriceSol: number | null;
   createdAt: number;
   updatedAt: number;
   filledAt: number | null;
+  /** Trigger seen to fill landed, ms (filled orders only). */
+  fillLatencyMs: number | null;
   signature: string | null;
   fill: { solAmount: number; tokenAmount: number; priceSol: number } | null;
 }

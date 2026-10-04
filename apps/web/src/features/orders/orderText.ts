@@ -1,4 +1,4 @@
-import { DASH, fmtCompact, fmtPriceText, fmtSolShort, fmtUsd } from "../../lib/format";
+import { DASH, fmtCompact, fmtSolShort, fmtUsd, plainDecimal } from "../../lib/format";
 import { LANDING_INFO } from "../../lib/landing";
 import type { LandingPreset, Order, OrderKind, OrderStatus } from "../../protocol";
 import { isOpenOrder } from "../../state/orders";
@@ -88,27 +88,36 @@ function mcText(mcSol: number, ctx: TriggerContext): string {
 }
 
 /**
- * The trigger in words (DESIGN.md 4.20, 2.2: "MC above 120K", never comparison symbols). Price triggers are
- * shown as the market cap they imply when the supply is known, so every row reads in MC.
+ * A trigger in words (DESIGN.md 4.20, 2.2: "MC above 120K", never comparison symbols). Price
+ * triggers read as the market cap they imply when the supply is known, so every row reads in MC;
+ * otherwise the price itself, which the UI renders with the subscript-zero <Num>.
  */
-export function triggerText(order: Order, ctx: TriggerContext): string {
+export type TriggerParts = { kind: "text"; text: string } | { kind: "price"; words: string; priceSol: number };
+
+export function triggerParts(order: Order, ctx: TriggerContext): TriggerParts {
   const t = order.trigger;
   const word = t.direction === "above" ? "above" : t.direction === "below" ? "below" : "at";
   switch (t.metric) {
     case "mc":
-      if (t.value === null) return "Market cap";
-      return `MC ${word} ${mcText(ctx.solUsd > 0 ? t.value / ctx.solUsd : 0, ctx)}`;
+      if (t.value === null) return { kind: "text", text: "Market cap" };
+      return { kind: "text", text: `MC ${word} ${mcText(ctx.solUsd > 0 ? t.value / ctx.solUsd : 0, ctx)}` };
     case "price":
-      if (t.value === null) return "Price";
-      if (ctx.supply !== null && ctx.supply > 0) return `MC ${word} ${mcText(t.value * ctx.supply, ctx)}`;
-      return `Price ${word} ${fmtPriceText(t.value)} SOL`;
+      if (t.value === null) return { kind: "text", text: "Price" };
+      if (ctx.supply !== null && ctx.supply > 0) return { kind: "text", text: `MC ${word} ${mcText(t.value * ctx.supply, ctx)}` };
+      return { kind: "price", words: `Price ${word}`, priceSol: t.value };
     case "migration":
-      return "On migration";
+      return { kind: "text", text: "On migration" };
     case "leader_buy":
-      return "When the leader buys";
+      return { kind: "text", text: "When the leader buys" };
     case "dev_launch":
-      return "When the dev launches";
+      return { kind: "text", text: "When the dev launches" };
   }
+}
+
+/** Plain-text trigger for titles, aria labels and confirm dialogs (prices as the full decimal). */
+export function triggerText(order: Order, ctx: TriggerContext): string {
+  const p = triggerParts(order, ctx);
+  return p.kind === "text" ? p.text : `${p.words} ${plainDecimal(p.priceSol)} SOL`;
 }
 
 export interface Distance {
@@ -134,29 +143,32 @@ export function sizeText(order: Order): string {
   return order.size.kind === "sol" ? `${verb} ${fmtSolShort(order.size.sol)} SOL` : `${verb} ${fmtSolShort(order.size.pct)}%`;
 }
 
-/** Nonce column: whether the order holds a durable-nonce slot, shares one (OCO), or has none. */
+/**
+ * Nonce column (DESIGN.md 4.20): the slot number of the durable-nonce account ("#4"), with a link
+ * icon when an OCO pair shares it, or "None" for orders signed live.
+ */
 export function nonceInfo(order: Order): { text: string; shared: boolean; title: string } {
-  if (order.ocoGroupId) {
+  const slot = order.nonceIndex !== null ? `#${order.nonceIndex}` : null;
+  if (order.ocoGroupId && (slot || order.nonceSlots === 0)) {
     return {
-      text: "Shared",
+      text: slot ?? "Shared",
       shared: true,
       title: "One durable nonce shared with its OCO sibling: once either leg lands, the other can't.",
     };
   }
-  if (order.nonceSlots > 0) {
-    return {
-      text: `${order.nonceSlots} slot${order.nonceSlots === 1 ? "" : "s"}`,
-      shared: false,
-      title: "Holds its own durable-nonce slot.",
-    };
-  }
+  if (slot) return { text: slot, shared: false, title: "Holds its own durable-nonce slot." };
+  if (order.nonceSlots > 0) return { text: DASH, shared: false, title: "Holds a durable-nonce slot." };
   return { text: "None", shared: false, title: "Nothing is pre-signed: this browser signs it live when it fires." };
 }
 
-/** Variants column: pre-signed min-out grid size, or "Live" for orders signed when they fire. */
+/** Variants column: "6 · 3 tips" (min-out grid size and tip levels), or "Live" for orders signed when they fire. */
 export function variantsText(order: Order): { text: string; title: string } {
   if (order.variants > 0) {
-    return { text: String(order.variants), title: `${order.variants} pre-signed variants on a min-out grid` };
+    const tips = new Set(order.grid.map((v) => v.tipSol)).size;
+    return {
+      text: tips > 1 ? `${order.variants} · ${tips} tips` : String(order.variants),
+      title: `${order.variants} pre-signed variants on a min-out grid${tips > 1 ? ` with ${tips} tip levels` : ""}`,
+    };
   }
   return { text: "Live", title: "Signed in this browser when it fires" };
 }

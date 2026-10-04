@@ -114,7 +114,7 @@ export function BottomTabs({ detail, withInfo = false }: { detail: TokenDetail; 
         {tab === "positions" && <TokenPositions mint={detail.summary.mint} />}
         {tab === "orders" && <TokenOrders token={detail.summary} />}
         {tab === "holders" && <HoldersTable holders={detail.holders} token={detail.summary} />}
-        {tab === "traders" && <TopTradersTable traders={detail.topTraders} holders={detail.holders} />}
+        {tab === "traders" && <TopTradersTable traders={detail.topTraders} />}
         {tab === "dev" && <DevTokens detail={detail} />}
         {tab === "info" && (
           <div className="h-full overflow-auto">

@@ -1,10 +1,10 @@
-import { fmtCompact, fmtPriceText, fmtSolShort } from "../../lib/format";
+import { fmtSolShort } from "../../lib/format";
 import type { Order, OrderKind, OrderStatus } from "../../protocol";
 
 /*
- * Order wording for the token page (DESIGN.md 4.20): triggers in words ("MC above 120K", never
- * the comparison glyphs our fonts lack), sizes as verbs ("Sell 25%", "Buy 0.5 SOL"), statuses as a dot
- * plus a label.
+ * Order wording for the token page (DESIGN.md 4.20): sizes as verbs ("Sell 25%", "Buy 0.5 SOL"),
+ * statuses as a dot plus a label. Triggers come from features/orders (`triggerParts`), so both
+ * pages word them the same way.
  */
 
 export const KIND_TEXT: Record<OrderKind, string> = {
@@ -39,17 +39,6 @@ export const STATUS_TEXT: Record<OrderStatus, { label: string; tone: StatusTone 
   failed: { label: "Consumed · re-arm", tone: "sell" },
   cancelled: { label: "Cancelled", tone: "off" },
 };
-
-/** "MC above $120K", "Price below 0.000004123 SOL", "On migration". */
-export function triggerText(order: Order): string {
-  const t = order.trigger;
-  const dir = t.direction === "below" ? "below" : t.direction === "above" ? "above" : "at";
-  if (t.metric === "mc") return t.value === null ? "Market cap" : `MC ${dir} $${fmtCompact(t.value)}`;
-  if (t.metric === "price") return t.value === null ? "Price" : `Price ${dir} ${fmtPriceText(t.value)} SOL`;
-  if (t.metric === "migration") return "On migration";
-  if (t.metric === "leader_buy") return "When the leader buys";
-  return "When the dev launches";
-}
 
 /** "Buy 0.5 SOL", "Sell 25%". */
 export function sizeText(order: Order): string {

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { MetricTip } from "../../components/ui/bits";
 import { Hotkey } from "../../components/ui/controls";
 import { Num } from "../../components/ui/Num";
+import { cn } from "../../lib/cn";
 import { DASH, fmtAge, fmtClock, fmtCount, fmtInt, fmtProgress, fmtRiskPct, fmtSol, fmtSolShort, fmtUsd } from "../../lib/format";
 import { LAUNCHPAD_BY_ID, type RiskKey, token2022Danger } from "../../lib/metrics";
 import { useNow } from "../../lib/useNow";
@@ -11,6 +12,7 @@ import { useMarket } from "../../state/market";
 import { useSettings } from "../../state/settings";
 import { useWallet } from "../../state/wallet";
 import { socialLabel } from "./CardParts";
+import { netBuy } from "./cardView";
 import { RiskTip, riskChip } from "./RiskChips";
 import { seenToken } from "./store";
 import type { TipRequest } from "./TipLayer";
@@ -116,16 +118,20 @@ function TipContent({ tip, mint, column }: { tip: string; mint: string | null; c
       return <MetricTip metric="lpBurned" value={t.lpBurnedPct === null ? DASH : fmtRiskPct(t.lpBurnedPct)} />;
     case "fees":
       return <MetricTip metric="fees" value={`${fmtSol(t.feesPaidSol)} SOL`} updated={updated} />;
-    case "nb":
+    case "nb": {
+      const nb = netBuy(t.netBuyUsd, quote === "SOL" ? solUsd : null);
       return (
         <span className="block">
           <span className="flex items-baseline justify-between gap-3">
             <span className="text-data font-semibold text-fg-1">Net buy</span>
-            <span className="text-data font-semibold text-fg-4">{DASH}</span>
+            <span className={cn("zf-num text-data font-semibold", nb.nbTone === "buy" ? "text-buy" : nb.nbTone === "sell" ? "text-sell" : "text-fg-3")}>
+              {nb.nb}
+            </span>
           </span>
-          {line("Buy volume minus sell volume over the same window as V. The feed doesn't provide it yet.")}
+          {line("SOL bought minus SOL sold since the token was created.")}
         </span>
       );
+    }
     case "chart":
       return (
         <span className="block">

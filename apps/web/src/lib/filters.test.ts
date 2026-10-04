@@ -47,6 +47,7 @@ function token(patch: Partial<TokenSummary> = {}): TokenSummary {
     lpBurnedPct: null,
     token2022: null,
     feesPaidSol: 0.41,
+    netBuyUsd: 0,
     lastTradeAt: NOW - 3_000,
     change5mPct: 18.2,
     ...patch,

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { Order } from "../../protocol";
-import { firstEvents, nextEvent, sentAt } from "./orderLog";
 import {
   affectedOrders,
   cancelTargets,
@@ -10,6 +9,7 @@ import {
   TAB_TEST,
   tabCounts,
   triggerDistance,
+  triggerParts,
   triggerText,
   typeLabels,
   variantsText,
@@ -31,13 +31,18 @@ function order(o: Partial<Order> & { id: string }): Order {
     needsBrowserReason: null,
     reservedSol: 0.0016,
     nonceSlots: 1,
+    nonceAccount: "NonceAcct1111111111111111111111111111111111",
+    nonceIndex: 4,
     ocoGroupId: null,
     landing: "secure",
     variants: 6,
+    grid: [0.0001, 0.0002, 0.0004, 0.0001, 0.0002, 0.0004].map((tipSol, i) => ({ minOut: i < 3 ? 0.95 : 0.9, tipSol })),
+    events: [{ at: T0, kind: "armed", slot: 312_000_000, reason: null }],
     armedPriceSol: 0.0000001,
     createdAt: T0,
     updatedAt: T0,
     filledAt: null,
+    fillLatencyMs: null,
     signature: null,
     fill: null,
     ...o,
@@ -59,6 +64,8 @@ describe("trigger text (DESIGN.md 4.20: words, never comparison glyphs)", () => 
   test("price triggers read as the market cap they imply when the supply is known", () => {
     const tp = order({ id: "tp", kind: "take_profit", trigger: { metric: "price", direction: "above", value: 0.0000004 } });
     expect(triggerText(tp, { ...usd, supply: 1_000_000_000 })).toBe("MC above $48.0K");
+    // Without a supply the cell renders the price through <Num> (subscript zeros); text keeps the full decimal.
+    expect(triggerParts(tp, usd)).toEqual({ kind: "price", words: "Price above", priceSol: 0.0000004 });
     expect(triggerText(tp, usd)).toBe("Price above 0.0000004 SOL");
   });
 
@@ -113,11 +120,15 @@ describe("type, size, nonce and variant columns", () => {
     expect(sizeText(order({ id: "b", side: "buy", size: { kind: "sol", sol: 0.5 } }))).toBe("Buy 0.5 SOL");
   });
 
-  test("nonce: own slot, OCO-shared, or none", () => {
-    expect(nonceInfo(order({ id: "a" })).text).toBe("1 slot");
-    expect(nonceInfo(order({ id: "b", ocoGroupId: "g", nonceSlots: 0 }))).toMatchObject({ text: "Shared", shared: true });
-    expect(nonceInfo(order({ id: "c", nonceSlots: 0 })).text).toBe("None");
-    expect(variantsText(order({ id: "d", variants: 0 })).text).toBe("Live");
+  test("nonce: the slot number, shared by an OCO pair, or none", () => {
+    expect(nonceInfo(order({ id: "a" })).text).toBe("#4");
+    expect(nonceInfo(order({ id: "b", ocoGroupId: "g", nonceSlots: 0 }))).toMatchObject({ text: "#4", shared: true });
+    expect(nonceInfo(order({ id: "c", nonceSlots: 0, nonceIndex: null, nonceAccount: null })).text).toBe("None");
+  });
+
+  test("variants: grid size and tip levels, or Live", () => {
+    expect(variantsText(order({ id: "a" })).text).toBe("6 · 3 tips");
+    expect(variantsText(order({ id: "d", variants: 0, grid: [] })).text).toBe("Live");
   });
 });
 
@@ -150,24 +161,5 @@ describe("tabs, grouping and cancels", () => {
     const done = order({ id: "done", status: "filled" });
     expect(cancelTargets([tp, sl, done]).map((o) => o.id)).toEqual(["tp"]);
     expect(affectedOrders([tp], [tp, sl, done]).map((o) => o.id)).toEqual(["tp", "sl"]);
-  });
-});
-
-describe("order timeline log", () => {
-  test("first sighting proves armed, then the current state", () => {
-    expect(firstEvents(order({ id: "a" })).map((e) => e.kind)).toEqual(["armed"]);
-    expect(firstEvents(order({ id: "b", updatedAt: T0 + 60_000 })).map((e) => e.kind)).toEqual(["armed", "rearmed"]);
-    const stale = firstEvents(order({ id: "c", status: "stale", statusReason: "ALT closed", updatedAt: T0 + 1 }));
-    expect(stale[1]).toMatchObject({ kind: "stale", reason: "ALT closed", slot: null });
-  });
-
-  test("back to armed from stale is a re-arm; the send time gives the time to land", () => {
-    expect(nextEvent("stale", order({ id: "a", updatedAt: T0 + 9 }), 312_456_789)).toMatchObject({ kind: "rearmed", slot: 312_456_789 });
-    const events = [
-      { at: T0, kind: "armed" as const, reason: null, slot: null },
-      { at: T0 + 1_000, kind: "submitted" as const, reason: null, slot: 1 },
-    ];
-    expect(sentAt(events)).toBe(T0 + 1_000);
-    expect(sentAt(undefined)).toBeNull();
   });
 });

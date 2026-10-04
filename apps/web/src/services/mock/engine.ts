@@ -17,6 +17,8 @@ import type {
   LandingPreset,
   Launchpad,
   Order,
+  OrderEvent,
+  OrderVariant,
   PnlPoint,
   Position,
   PulseColumnId,
@@ -82,6 +84,10 @@ const TRADE_RING = 1000;
 const BASE_SOL_USD = 119.5;
 const SLOT_MS = 400;
 const NONCE_SLOTS = 10;
+/** Rent-exempt minimum of an 80-byte durable-nonce account: 1,447,680 lamports. */
+const NONCE_RENT_SOL = 0.00144768;
+/** Lane names for order timelines. */
+const LANE_NAME: Record<LandingPreset, string> = { reduced: "Helius Sender", secure: "Jito bundle-only", fast: "every lane" };
 const BASE_FEE_SOL = 0.000005;
 const SEED_WINDOW_MS = 32 * 60_000;
 
@@ -106,9 +112,12 @@ interface Holding {
   bal: number;
   boughtSol: number;
   soldSol: number;
+  boughtTok: number;
+  soldTok: number;
   buys: number;
   sells: number;
   firstBuyAt: number | null;
+  lastTradeAt: number | null;
   firstSlot: number | null;
   tags: number;
   fundedBy: string | null;
@@ -161,6 +170,8 @@ interface SimToken {
   buys: number;
   sells: number;
   feesSol: number;
+  /** SOL bought minus SOL sold since creation. */
+  netBuySol: number;
   holders: Map<string, Holding>;
   holderAddrs: string[];
   holderIdx: Map<string, number>;
@@ -218,7 +229,11 @@ interface ArmedOrder {
   slippagePct: number;
   priorityFeeSol: number;
   tipSol: number;
+  /** When the server saw the trigger cross (fill latency starts here). */
+  triggeredAt: number | null;
 }
+
+const isLive = (status: Order["status"]): boolean => status === "armed" || status === "stale" || status === "submitted";
 
 export interface UserSwapParams {
   wallet: string;
@@ -377,6 +392,8 @@ export class SimEngine {
   private readonly posts: SocialPost[] = [];
   private readonly orders = new Map<string, ArmedOrder>();
   private orderSeq = 0;
+  /** Open durable-nonce accounts per trading wallet, by slot number (1-based). Closed by reclaimRent. */
+  private readonly noncePools = new Map<string, Map<number, string>>();
   readonly defaultTracked: DefaultTrackedWallet[] = [];
 
   private readonly subs = new Map<string, Set<AnyHandler>>();
@@ -708,9 +725,12 @@ export class SimEngine {
         bal: 0,
         boughtSol: 0,
         soldSol: 0,
+        boughtTok: 0,
+        soldTok: 0,
         buys: 0,
         sells: 0,
         firstBuyAt: null,
+        lastTradeAt: null,
         firstSlot: null,
         tags: 0,
         fundedBy: t.insiders.has(wallet) ? t.creator : null,
@@ -757,7 +777,9 @@ export class SimEngine {
     }
     h.bal += q.tokens;
     h.boughtSol += q.sol;
+    h.boughtTok += q.tokens;
     h.buys++;
+    h.lastTradeAt = ts;
     this.trackHolder(t, wallet, h);
     this.recordTrade(t, "buy", wallet, q, ts, slot, h.tags);
     if (t.curve.complete && t.completeAt === null && t.migratedAt === null) {
@@ -783,7 +805,9 @@ export class SimEngine {
     const slot = this.slotAt(ts);
     h.bal -= amount;
     h.soldSol += q.sol;
+    h.soldTok += amount;
     h.sells++;
+    h.lastTradeAt = ts;
     this.trackHolder(t, wallet, h);
     this.recordTrade(t, "sell", wallet, q, ts, slot, h.tags);
     return q;
@@ -850,6 +874,7 @@ export class SimEngine {
     if (t.trades.length > TRADE_RING + 200) t.trades.splice(0, t.trades.length - TRADE_RING);
     this.updateMinuteCandle(t, trade);
     t.volumeSol += q.sol;
+    t.netBuySol += side === "buy" ? q.sol : -q.sol;
     t.txns++;
     if (side === "buy") t.buys++;
     else t.sells++;
@@ -980,6 +1005,7 @@ export class SimEngine {
       migrateAt: null,
       migratedAt: null,
       volumeSol: 0,
+      netBuySol: 0,
       txns: 0,
       buys: 0,
       sells: 0,
@@ -1504,7 +1530,7 @@ export class SimEngine {
     this.emit(topic, {
       solBalance: u.sol,
       reservedSol: this.reservedFor(u.address),
-      nonceSlots: { used: this.nonceUsed(u.address), total: NONCE_SLOTS },
+      nonceSlots: { used: this.nonceUsed(u.address), total: this.noncePool(u.address).size },
       positions,
       activity,
     });
@@ -1619,6 +1645,7 @@ export class SimEngine {
       lpBurnedPct: t.lpBurnedPct,
       token2022: t.token2022,
       feesPaidSol: t.feesSol,
+      netBuyUsd: t.netBuySol * this.solUsd,
       lastTradeAt: t.lastTradeAt,
       change5mPct: change5m,
     };
@@ -1659,6 +1686,8 @@ export class SimEngine {
       pct: (h.bal / t.supply) * 100,
       boughtSol: h.boughtSol,
       soldSol: h.soldSol,
+      boughtTokens: h.boughtTok,
+      soldTokens: h.soldTok,
       buys: h.buys,
       sells: h.sells,
       firstBuyAt: h.firstBuyAt,
@@ -1672,6 +1701,8 @@ export class SimEngine {
         pct: (t.pool.tok / t.supply) * 100,
         boughtSol: 0,
         soldSol: 0,
+        boughtTokens: 0,
+        soldTokens: 0,
         buys: 0,
         sells: 0,
         firstBuyAt: null,
@@ -1686,6 +1717,8 @@ export class SimEngine {
         pct: (curveBal / t.supply) * 100,
         boughtSol: 0,
         soldSol: 0,
+        boughtTokens: 0,
+        soldTokens: 0,
         buys: 0,
         sells: 0,
         firstBuyAt: null,
@@ -1694,16 +1727,26 @@ export class SimEngine {
       });
     }
     const traders: TopTrader[] = [...t.holders.entries()]
-      .map(([address, h]) => ({
-        address,
-        boughtSol: h.boughtSol,
-        soldSol: h.soldSol,
-        buys: h.buys,
-        sells: h.sells,
-        holdingPct: (h.bal / t.supply) * 100,
-        pnlSol: h.soldSol + h.bal * price - h.boughtSol,
-        tags: this.tagList(h.tags, address),
-      }))
+      .map(([address, h]) => {
+        // Average cost per token bought; tokens that arrived without a buy carry no cost.
+        const avgCost = h.boughtTok > 0 ? h.boughtSol / h.boughtTok : 0;
+        const realized = h.soldSol - avgCost * Math.min(h.soldTok, h.boughtTok);
+        const unrealized = h.bal * price - avgCost * Math.min(h.bal, Math.max(0, h.boughtTok - h.soldTok));
+        return {
+          address,
+          boughtSol: h.boughtSol,
+          soldSol: h.soldSol,
+          buys: h.buys,
+          sells: h.sells,
+          holdingPct: (h.bal / t.supply) * 100,
+          pnlSol: realized + unrealized,
+          realizedPnlSol: realized,
+          unrealizedPnlSol: unrealized,
+          firstBuyAt: h.firstBuyAt,
+          lastTradeAt: h.lastTradeAt,
+          tags: this.tagList(h.tags, address),
+        };
+      })
       .sort((a, b) => b.pnlSol - a.pnlSol)
       .slice(0, 40);
     const stats = this.devStats.get(t.creator);
@@ -1917,7 +1960,7 @@ export class SimEngine {
       address,
       solBalance: u.sol,
       reservedSol: this.reservedFor(address),
-      nonceSlots: { used: this.nonceUsed(address), total: NONCE_SLOTS },
+      nonceSlots: { used: this.nonceUsed(address), total: this.noncePool(address).size },
       positions: [...positions, ...u.history].sort((a, b) => b.lastTradeAt - a.lastTradeAt),
       activity: u.activity.slice(0, 200),
     };
@@ -1930,7 +1973,8 @@ export class SimEngine {
       const h = t.holders.get(address);
       if (!h) continue;
       const price = this.priceOf(t);
-      const boughtTok = h.boughtSol > 0 ? h.bal + (h.soldSol > 0 ? h.soldSol / price : 0) : h.bal;
+      const boughtTok = h.boughtTok;
+      const avgCost = boughtTok > 0 ? h.boughtSol / boughtTok : 0;
       positions.push({
         mint: t.mint,
         symbol: t.symbol,
@@ -1940,17 +1984,17 @@ export class SimEngine {
         boughtSol: h.boughtSol,
         soldSol: h.soldSol,
         boughtTokens: boughtTok,
-        soldTokens: Math.max(0, boughtTok - h.bal),
+        soldTokens: h.soldTok,
         holdingTokens: h.bal,
-        avgEntryPriceSol: boughtTok > 0 ? h.boughtSol / boughtTok : 0,
-        avgExitPriceSol: null,
-        costBasisSol: h.boughtSol * (boughtTok > 0 ? h.bal / boughtTok : 0),
-        realizedPnlSol: h.soldSol - h.boughtSol * (boughtTok > 0 ? 1 - h.bal / boughtTok : 0),
-        unrealizedPnlSol: h.bal * price - h.boughtSol * (boughtTok > 0 ? h.bal / boughtTok : 0),
+        avgEntryPriceSol: avgCost,
+        avgExitPriceSol: h.soldTok > 0 ? h.soldSol / h.soldTok : null,
+        costBasisSol: avgCost * h.bal,
+        realizedPnlSol: h.soldSol - avgCost * h.soldTok,
+        unrealizedPnlSol: h.bal * price - avgCost * h.bal,
         valueSol: h.bal * price,
         feesSol: 0,
         openedAt: h.firstBuyAt ?? t.createdAt,
-        lastTradeAt: t.lastTradeAt,
+        lastTradeAt: h.lastTradeAt ?? t.lastTradeAt,
         closed: h.bal <= 1e-6,
       });
       for (const tr of t.trades) {
@@ -2024,7 +2068,9 @@ export class SimEngine {
       }
       h.bal += q.tokens;
       h.boughtSol += q.sol;
+      h.boughtTok += q.tokens;
       h.buys++;
+      h.lastTradeAt = now;
       this.trackHolder(t, p.wallet, h);
       u.sol -= q.sol + extra;
       if (!pos) {
@@ -2083,7 +2129,9 @@ export class SimEngine {
     const h = this.holding(t, p.wallet);
     h.bal = Math.max(0, h.bal - amount);
     h.soldSol += q.sol;
+    h.soldTok += amount;
     h.sells++;
+    h.lastTradeAt = now;
     this.trackHolder(t, p.wallet, h);
     const avgCost = pos.costBasis / holding;
     const costRemoved = avgCost * amount;
@@ -2145,10 +2193,7 @@ export class SimEngine {
   private nonceUsed(wallet: string): number {
     let used = 0;
     for (const o of this.orders.values()) {
-      if (o.wallet !== wallet) continue;
-      if (o.order.status === "armed" || o.order.status === "stale" || o.order.status === "submitted") {
-        used += o.order.nonceSlots;
-      }
+      if (o.wallet === wallet && isLive(o.order.status)) used += o.order.nonceSlots;
     }
     return used;
   }
@@ -2156,16 +2201,110 @@ export class SimEngine {
   private reservedFor(wallet: string): number {
     let sum = 0;
     for (const o of this.orders.values()) {
-      if (o.wallet !== wallet) continue;
-      if (o.order.status === "armed" || o.order.status === "stale" || o.order.status === "submitted") {
-        sum += o.order.reservedSol;
-      }
+      if (o.wallet === wallet && isLive(o.order.status)) sum += o.order.reservedSol;
     }
     return sum;
   }
 
+  /** The wallet's open nonce accounts; a new wallet starts with a full pool. */
+  private noncePool(wallet: string): Map<number, string> {
+    let pool = this.noncePools.get(wallet);
+    if (!pool) {
+      pool = new Map();
+      for (let i = 1; i <= NONCE_SLOTS; i++) pool.set(i, fakeAddress(this.rng));
+      this.noncePools.set(wallet, pool);
+    }
+    return pool;
+  }
+
+  /**
+   * A free nonce slot for a new or re-armed order: the lowest open account no live order holds,
+   * else a newly opened account (its rent comes out of the wallet). Null when all are in use.
+   */
+  private takeNonce(wallet: string, except?: ArmedOrder): { index: number; account: string } | null {
+    const held = new Set<number>();
+    for (const o of this.orders.values()) {
+      if (o === except || o.wallet !== wallet || !isLive(o.order.status) || o.order.nonceIndex === null) continue;
+      held.add(o.order.nonceIndex);
+    }
+    const pool = this.noncePool(wallet);
+    const open = [...pool.keys()].sort((a, b) => a - b).find((i) => !held.has(i));
+    if (open !== undefined) return { index: open, account: pool.get(open) ?? "" };
+    for (let i = 1; i <= NONCE_SLOTS; i++) {
+      if (pool.has(i) || held.has(i)) continue;
+      const account = fakeAddress(this.rng);
+      pool.set(i, account);
+      const u = this.users.get(wallet);
+      if (u) {
+        u.sol = Math.max(0, u.sol - NONCE_RENT_SOL);
+        u.dirty = true;
+      }
+      return { index: i, account };
+    }
+    return null;
+  }
+
   freeNonceSlots(wallet: string): number {
     return NONCE_SLOTS - this.nonceUsed(wallet);
+  }
+
+  /** Closes every nonce account no live order holds and refunds its rent to the wallet. */
+  reclaimNonceRent(wallet: string): { closed: number; sol: number } {
+    const pool = this.noncePool(wallet);
+    const held = new Set<number>();
+    for (const o of this.orders.values()) {
+      if (o.wallet === wallet && isLive(o.order.status) && o.order.nonceIndex !== null) held.add(o.order.nonceIndex);
+    }
+    let closed = 0;
+    for (const index of [...pool.keys()]) {
+      if (held.has(index)) continue;
+      pool.delete(index);
+      closed++;
+    }
+    const sol = closed * NONCE_RENT_SOL;
+    const u = this.users.get(wallet);
+    if (u && closed > 0) {
+      u.sol += sol;
+      u.dirty = true;
+    }
+    return { closed, sol };
+  }
+
+  /** SOL per token at which an order's trigger fires (the live price for migration and live triggers). */
+  private triggerPriceSol(trigger: Order["trigger"], t: SimToken): number {
+    if (trigger.value !== null && trigger.metric === "price") return trigger.value;
+    if (trigger.value !== null && trigger.metric === "mc" && t.supply > 0 && this.solUsd > 0) return trigger.value / (t.supply * this.solUsd);
+    return this.priceOf(t);
+  }
+
+  /**
+   * The pre-signed min-out grid: two minimum outputs (half and all of the slippage) times three
+   * tip levels. Buys guarantee tokens, sells guarantee SOL, both at the trigger price.
+   */
+  private buildGrid(o: { wallet: string; mint: string | null; side: "buy" | "sell"; size: Order["size"]; trigger: Order["trigger"] }, slippagePct: number, tipSol: number): OrderVariant[] {
+    const t = o.mint ? this.tokens.get(o.mint) : undefined;
+    if (!t) return [];
+    const price = this.triggerPriceSol(o.trigger, t);
+    if (!(price > 0)) return [];
+    let expected: number;
+    if (o.side === "buy") {
+      expected = o.size.kind === "sol" ? o.size.sol / price : 0;
+    } else {
+      const holding = this.users.get(o.wallet)?.positions.get(t.mint)?.holding ?? 0;
+      const tokens = o.size.kind === "pct" ? (holding * o.size.pct) / 100 : o.size.sol / price;
+      expected = tokens * price;
+    }
+    const tips = [tipSol, tipSol * 2, tipSol * 4];
+    const grid: OrderVariant[] = [];
+    for (const slip of [slippagePct / 2, slippagePct]) {
+      for (const tip of tips) grid.push({ minOut: expected * (1 - slip / 100), tipSol: tip });
+    }
+    return grid;
+  }
+
+  private event(kind: string, reason: string | null, slot?: number | null): OrderEvent {
+    const at = Date.now();
+    return { at, kind, slot: slot === undefined ? this.slotAt(at) : slot, reason };
   }
 
   addOrder(p: NewOrderParams): ArmedOrder | null {
@@ -2175,6 +2314,20 @@ export class SimEngine {
     const tabClosed = p.kind !== "copy_buy" && p.kind !== "dev_snipe";
     const reserved =
       p.side === "buy" && p.size.kind === "sol" ? p.size.sol + p.priorityFeeSol + p.tipSol + 0.002 : p.priorityFeeSol + p.tipSol + 0.001;
+    // Its own durable nonce, or the one its OCO sibling already holds.
+    let nonce: { index: number; account: string } | null = null;
+    if (slots > 0) {
+      nonce = this.takeNonce(p.wallet);
+      if (!nonce) return null;
+    } else if (p.ocoGroupId) {
+      for (const o of this.orders.values()) {
+        if (o.order.ocoGroupId === p.ocoGroupId && o.order.nonceIndex !== null && o.order.nonceAccount !== null) {
+          nonce = { index: o.order.nonceIndex, account: o.order.nonceAccount };
+          break;
+        }
+      }
+    }
+    const grid = tabClosed ? this.buildGrid(p, p.slippagePct, p.tipSol) : [];
     const order: Order = {
       id: `ord-${++this.orderSeq}`,
       mint: p.mint,
@@ -2191,13 +2344,25 @@ export class SimEngine {
         : "The mint isn't known in advance, so this browser must build and sign the buy when the leader trades.",
       reservedSol: reserved,
       nonceSlots: slots,
+      nonceAccount: nonce?.account ?? null,
+      nonceIndex: nonce?.index ?? null,
       ocoGroupId: p.ocoGroupId ?? null,
       landing: p.landing,
-      variants: tabClosed ? 6 : 0,
+      variants: grid.length,
+      grid,
+      events: [
+        this.event(
+          "armed",
+          nonce
+            ? `${grid.length} variants pre-signed on nonce #${nonce.index}${slots === 0 ? " (shared with its OCO sibling)" : ""}`
+            : "Nothing pre-signed: this browser signs it when it fires",
+        ),
+      ],
       armedPriceSol: p.mint ? this.quotePrice(p.mint) : null,
       createdAt: now,
       updatedAt: now,
       filledAt: null,
+      fillLatencyMs: null,
       signature: null,
       fill: null,
     };
@@ -2207,6 +2372,7 @@ export class SimEngine {
       slippagePct: p.slippagePct,
       priorityFeeSol: p.priorityFeeSol,
       tipSol: p.tipSol,
+      triggeredAt: null,
     };
     this.orders.set(order.id, armed);
     this.emitOrder(armed);
@@ -2224,8 +2390,10 @@ export class SimEngine {
     this.emit("orders", { upsert: [{ ...o.order }], remove: [] });
   }
 
-  private setStatus(o: ArmedOrder, status: Order["status"], reason: string | null): void {
-    o.order = { ...o.order, status, statusReason: reason, updatedAt: Date.now() };
+  /** Changes the status and appends a timeline step (by default named after the status, with its reason). */
+  private setStatus(o: ArmedOrder, status: Order["status"], reason: string | null, step?: OrderEvent): void {
+    const events = [...o.order.events, step ?? this.event(status, reason)];
+    o.order = { ...o.order, status, statusReason: reason, updatedAt: Date.now(), events };
     this.emitOrder(o);
     const u = this.users.get(o.wallet);
     if (u) u.dirty = true;
@@ -2238,14 +2406,13 @@ export class SimEngine {
 
   cancelOrder(id: string): boolean {
     const o = this.orders.get(id);
-    if (!o) return false;
-    if (o.order.status !== "armed" && o.order.status !== "stale" && o.order.status !== "submitted") return false;
+    if (!o || !isLive(o.order.status)) return false;
     this.setStatus(o, "cancelled", "Cancelled: the stored nonce-advance transaction was fired.");
     // OCO legs share one durable nonce: advancing it kills the sibling too.
     if (o.order.ocoGroupId) {
       for (const sib of this.orders.values()) {
         if (sib === o || sib.order.ocoGroupId !== o.order.ocoGroupId) continue;
-        if (sib.order.status === "armed" || sib.order.status === "stale" || sib.order.status === "submitted") {
+        if (isLive(sib.order.status)) {
           this.setStatus(sib, "cancelled", "Cancelled with its OCO sibling: the shared durable nonce was advanced.");
         }
       }
@@ -2257,12 +2424,36 @@ export class SimEngine {
     const o = this.orders.get(id);
     if (!o) return null;
     if (o.order.status !== "stale" && o.order.status !== "failed") return { ...o.order };
+    // Re-signing advances the same nonce account unless another order took its slot meanwhile.
+    let nonceIndex = o.order.nonceIndex;
+    let nonceAccount = o.order.nonceAccount;
+    if (o.order.nonceSlots > 0) {
+      const taken = [...this.orders.values()].some(
+        (x) => x !== o && x.wallet === o.wallet && isLive(x.order.status) && x.order.nonceIndex === nonceIndex,
+      );
+      const pool = this.noncePool(o.wallet);
+      if (nonceIndex === null || taken || !pool.has(nonceIndex)) {
+        const next = this.takeNonce(o.wallet, o);
+        nonceIndex = next?.index ?? null;
+        nonceAccount = next?.account ?? null;
+      }
+    }
+    const grid = o.order.runsWithTabClosed ? this.buildGrid({ ...o.order, wallet: o.wallet }, o.slippagePct, o.tipSol) : [];
+    o.triggeredAt = null;
     o.order = {
       ...o.order,
       status: "armed",
       statusReason: null,
       updatedAt: Date.now(),
       armedPriceSol: o.order.mint ? this.quotePrice(o.order.mint) : null,
+      nonceIndex,
+      nonceAccount,
+      grid,
+      variants: grid.length,
+      events: [
+        ...o.order.events,
+        this.event("rearmed", nonceIndex !== null ? `${grid.length} variants re-signed on nonce #${nonceIndex}` : "Re-armed"),
+      ],
     };
     this.emitOrder(o);
     return { ...o.order };
@@ -2271,7 +2462,7 @@ export class SimEngine {
   cancelAll(): number {
     let n = 0;
     for (const o of this.orders.values()) {
-      if (o.order.status === "armed" || o.order.status === "stale" || o.order.status === "submitted") {
+      if (isLive(o.order.status)) {
         this.setStatus(o, "cancelled", "Panic: all pre-signed cancels fired.");
         n++;
       }
@@ -2291,12 +2482,23 @@ export class SimEngine {
       const v = trig.metric === "mc" ? mc : trig.metric === "price" ? price : null;
       if (v === null) continue;
       const hit = trig.direction === "above" ? v >= trig.value : v <= trig.value;
-      if (hit) this.fireOrder(o);
+      if (hit) this.fireOrder(o, trig.metric === "mc" ? `Market cap ${trig.direction} the trigger` : `Price ${trig.direction} the trigger`);
     }
   }
 
-  private fireOrder(o: ArmedOrder): void {
-    this.setStatus(o, "submitted", "Trigger hit; submitting the variant just below the live quote via Jito bundle-only.");
+  private fireOrder(o: ArmedOrder, why: string): void {
+    const now = Date.now();
+    o.triggeredAt = now;
+    const n = o.order.grid.length;
+    // The variant just below the live quote: a middle one in the simulation.
+    const pick = n > 0 ? 1 + Math.floor(this.rng.next() * n) : 0;
+    o.order = { ...o.order, events: [...o.order.events, this.event("triggered", why)] };
+    this.setStatus(
+      o,
+      "submitted",
+      `Trigger hit; submitting the variant just below the live quote via ${LANE_NAME[o.order.landing]}.`,
+      this.event("attempt", n > 0 ? `Variant ${pick} of ${n} via ${LANE_NAME[o.order.landing]}` : `Signed live, sent via ${LANE_NAME[o.order.landing]}`),
+    );
     setTimeout(
       () => {
         if (o.order.status !== "submitted") return;
@@ -2304,7 +2506,7 @@ export class SimEngine {
         if (!mint) return;
         const expected = this.quotePrice(mint) ?? 0;
         if (this.rng.chance(0.05)) {
-          this.setStatus(o, "failed", "Price moved past the min-out grid; the pre-signed cancel was fired.");
+          this.setStatus(o, "failed", "Price moved past the min-out grid; the attempt consumed the nonce.");
           return;
         }
         const sig = fakeSignature(this.rng);
@@ -2324,14 +2526,17 @@ export class SimEngine {
           this.setStatus(o, "failed", res.error);
           return;
         }
+        const filledAt = Date.now();
         o.order = {
           ...o.order,
           status: "filled",
           statusReason: null,
-          updatedAt: Date.now(),
-          filledAt: Date.now(),
+          updatedAt: filledAt,
+          filledAt,
+          fillLatencyMs: o.triggeredAt !== null ? filledAt - o.triggeredAt : null,
           signature: sig,
           fill: { solAmount: res.fill.solAmount, tokenAmount: res.fill.tokenAmount, priceSol: res.fill.priceSol },
+          events: [...o.order.events, this.event("filled", null, res.slot)],
         };
         this.emitOrder(o);
         if (o.order.ocoGroupId) {
@@ -2350,7 +2555,7 @@ export class SimEngine {
   private onMigrated(t: SimToken): void {
     for (const o of this.orders.values()) {
       if (o.order.mint !== t.mint || o.order.status !== "armed") continue;
-      if (o.order.kind === "migration_buy" || o.order.kind === "migration_sell") this.fireOrder(o);
+      if (o.order.kind === "migration_buy" || o.order.kind === "migration_sell") this.fireOrder(o, "Migrated to the pool");
       else if (
         o.order.kind === "limit_buy" ||
         o.order.kind === "limit_sell" ||

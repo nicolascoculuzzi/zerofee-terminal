@@ -12,7 +12,7 @@ import { isOpenOrder } from "../../state/orders";
 import { MarketCap } from "../portfolio/quote";
 import { CursorBar, colW, rowClass, TABLE, TD, Th } from "../portfolio/table";
 import { useRowCursor } from "../portfolio/useRowCursor";
-import { DistanceCell, NonceCell, OrderActions, StatusCell, useTriggerText } from "./OrderCells";
+import { DistanceCell, NonceCell, OrderActions, StatusCell, TriggerLabel, useTriggerText } from "./OrderCells";
 import { LANE_LABEL, laneTitle, type OrderGroup, sizeText, variantsText } from "./orderText";
 
 export interface OrdersTableProps {
@@ -139,7 +139,7 @@ const OrderRow = memo(function OrderRow({
       </td>
       <td className={cn(TD, "truncate", muted ? "text-fg-3" : "text-fg-1")}>{label}</td>
       <td className={cn(TD, "truncate", muted ? "text-fg-3" : open ? "text-fg-1" : "text-fg-2")} title={trigger}>
-        {trigger}
+        <TriggerLabel order={order} />
       </td>
       <td className={cn(TD, "text-right")}>
         <DistanceCell order={order} />
@@ -327,7 +327,6 @@ export function OrdersMobileList({
 }
 
 function MobileRow({ order, label, onOpen }: { order: Order; label: string; onOpen: (order: Order) => void }) {
-  const trigger = useTriggerText(order);
   return (
     <button
       type="button"
@@ -340,7 +339,9 @@ function MobileRow({ order, label, onOpen }: { order: Order; label: string; onOp
         <span className="ml-auto text-fg-1">{sizeText(order)}</span>
       </span>
       <span className="flex w-full items-center gap-2 text-label">
-        <span className="min-w-0 truncate text-fg-2">{trigger}</span>
+        <span className="min-w-0 truncate text-fg-2">
+          <TriggerLabel order={order} />
+        </span>
         <DistanceCell order={order} />
         <Age ts={order.createdAt} className="ml-auto text-fg-3" />
       </span>
