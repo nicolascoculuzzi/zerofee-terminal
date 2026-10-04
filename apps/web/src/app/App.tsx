@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { BrowserRouter } from "react-router";
+import { preloadTradeActions } from "../lib/tradeActionsLazy";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import { whenIdle } from "../lib/whenIdle";
 import { startFeed } from "../state/feed";
 import { useSettings } from "../state/settings";
 import { AppRoutes } from "./routes";
@@ -32,6 +34,8 @@ export function App() {
   }, [resolvedTheme, resolvedDensity, cvd]);
 
   useEffect(() => startFeed(), []);
+  // Trade actions load once the first screen is up, long before a click needs them.
+  useEffect(() => whenIdle(() => void preloadTradeActions().catch(() => undefined), 3_000), []);
 
   return (
     <BrowserRouter>

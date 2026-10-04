@@ -1,7 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import { cn } from "../../lib/cn";
 import { fmtSolShort } from "../../lib/format";
-import { buy } from "../../lib/tradeActions";
+import { buy } from "../../lib/tradeActionsLazy";
 import { useMarket } from "../../state/market";
 import type { PresetId } from "../../state/settings";
 import { useWallet } from "../../state/wallet";
