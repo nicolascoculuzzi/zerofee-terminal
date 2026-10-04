@@ -6,7 +6,7 @@
  *
  *   VITE_DATA_SOURCE=live bun run --cwd apps/web build
  *   bun apps/web/scripts/perf-load.ts [--url http://127.0.0.1:4173/pulse] [--runs 5] [--throttle none|fast4g|slow4g]
- *                                     [--cpu 4] [--cold|--warm] [--wait-ms 15000] [--json out.json]
+ *                                     [--cpu 4] [--cold|--warm] [--wait-ms 15000] [--json out.json] [--soak 20000]
  *
  * Without --url it starts scripts/preview-live.ts in-process on a free port (GATEWAY / DIST env apply) and
  * loads /pulse. --cold (default): every run gets a fresh browser context, so the HTTP cache is empty. --warm:
@@ -40,6 +40,8 @@ interface Options {
   warm: boolean;
   waitMs: number;
   json: string | null;
+  /** Keep the page open this long after the first rows and sample rendering under the live feed (0 = off). */
+  soakMs: number;
 }
 
 /** Throughput in bytes/s (DevTools units). slow4g is Lighthouse's mobile preset; fast4g a good LTE link. */
@@ -66,6 +68,7 @@ function parseOptions(): Options {
       warm: { type: "boolean" },
       "wait-ms": { type: "string" },
       json: { type: "string" },
+      soak: { type: "string" },
     },
     strict: true,
   });
@@ -79,7 +82,9 @@ function parseOptions(): Options {
   if (!["none", "fast4g", "slow4g"].includes(throttle)) throw new SetupError(`--throttle must be none, fast4g or slow4g, got ${throttle}`);
   if (values.cold && values.warm) throw new SetupError("--cold and --warm are exclusive");
   if (values.warm && runs < 2) throw new SetupError("--warm needs --runs >= 2 (run 1 only primes the cache)");
-  return { url: values.url ?? null, runs, throttle, cpu, warm: values.warm ?? false, waitMs, json: values.json ?? null };
+  const soakMs = Number(values.soak ?? 0);
+  if (!(soakMs >= 0)) throw new SetupError(`--soak must be >= 0 ms, got ${values.soak}`);
+  return { url: values.url ?? null, runs, throttle, cpu, warm: values.warm ?? false, waitMs, json: values.json ?? null, soakMs };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -420,6 +425,16 @@ export interface RunResult {
   websocket: { framesReceived: number; bytesReceived: number };
   runtime: { scriptMs: number | null; taskMs: number | null; layoutMs: number | null; jsHeapUsedBytes: number | null };
   pageErrors: number;
+  /** --soak: rendering while the live feed runs (the app's lib/perf.ts samples). */
+  soak: {
+    fps: number | null;
+    frameP99: number | null;
+    frameMax: number | null;
+    receiveToPaintP50: number | null;
+    receiveToPaintP90: number | null;
+    longTasks: number;
+    longTaskMaxMs: number;
+  } | null;
 }
 
 /** Installed before any page script: LCP / long-task observers and the [data-pulse-row] DOM fallback. */
@@ -685,6 +700,30 @@ async function measure(
         : null;
       const seconds = (v: number | undefined): number | null => (typeof v === "number" ? v * 1000 : null);
 
+      let soak: RunResult["soak"] = null;
+      if (opts.soakMs > 0) {
+        const lt0 = c.longTasks?.length ?? 0;
+        await Bun.sleep(opts.soakMs);
+        type Stat = { p50: number | null; p90: number | null; p99: number | null; max: number | null };
+        const r = await evaluate<{ fps: number | null; frame: Stat | null; receiveToPaint: Stat; lt: number[] }>(
+          cdp,
+          sessionId,
+          "(() => { const r = window.zfPerf ? window.zfPerf() : null; return r && { ...r, lt: window.__zfPerf?.longTasks ?? [] }; })()",
+        );
+        if (r) {
+          const during = r.lt.slice(lt0);
+          soak = {
+            fps: r.fps,
+            frameP99: r.frame?.p99 ?? null,
+            frameMax: r.frame?.max ?? null,
+            receiveToPaintP50: r.receiveToPaint.p50,
+            receiveToPaintP90: r.receiveToPaint.p90,
+            longTasks: during.length,
+            longTaskMaxMs: during.length ? Math.max(...during) : 0,
+          };
+        }
+      }
+
       return {
         run,
         mode,
@@ -722,6 +761,7 @@ async function measure(
           jsHeapUsedBytes: metric("JSHeapUsedSize") ?? null,
         },
         pageErrors,
+        soak,
       };
     } finally {
       off();
@@ -781,6 +821,18 @@ const ROWS: { section: string; rows: Row[] }[] = [
       { label: "failed", unit: "n", get: (r) => r.transfer.failedRequests },
       { label: "ws frames received", unit: "n", get: (r) => r.websocket.framesReceived },
       { label: "ws KB received", unit: "KB", get: (r) => r.websocket.bytesReceived },
+    ],
+  },
+  {
+    section: "rendering under the live feed (--soak)",
+    rows: [
+      { label: "fps (median frame)", unit: "n", get: (r) => r.soak?.fps ?? null },
+      { label: "frame p99", unit: "ms", get: (r) => r.soak?.frameP99 ?? null },
+      { label: "frame max", unit: "ms", get: (r) => r.soak?.frameMax ?? null },
+      { label: "receive->paint p50", unit: "ms", get: (r) => r.soak?.receiveToPaintP50 ?? null },
+      { label: "receive->paint p90", unit: "ms", get: (r) => r.soak?.receiveToPaintP90 ?? null },
+      { label: "long tasks", unit: "n", get: (r) => r.soak?.longTasks ?? null },
+      { label: "longest task", unit: "ms", get: (r) => r.soak?.longTaskMaxMs ?? null },
     ],
   },
 ];
