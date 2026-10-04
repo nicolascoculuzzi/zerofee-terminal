@@ -10,8 +10,9 @@
 # linux-arm64, and the server imports it at start-up, so this image cannot run on ARM hosts
 # (Hetzner CAX).
 #
-# Runtime contract: uid 10001, read-only root filesystem. It needs a writable /data (SQLite) and
-# /tmp. /backups (nightly SQLite snapshots) and /flags (kill-switch flags, read-only) are optional.
+# Runtime contract: uid 10001, read-only root filesystem. It needs a writable /data (SQLite, and
+# PGlite when DATABASE_URL is unset) and /tmp. /backups (nightly SQLite snapshots) and /flags
+# (kill-switch flags, read-only) are optional.
 
 # oven/bun 1.3.14 on Debian slim, pinned by its multi-arch index digest. Bump the tag and the digest
 # together, and keep them in step with bun-version in .github/workflows/ci.yml.
@@ -37,12 +38,14 @@ ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.title="zerofee-server" \
       org.opencontainers.image.description="zerofee-terminal gateway, ingest and market-data server" \
       org.opencontainers.image.revision="${GIT_SHA}"
+# PGLITE_DIR only matters without DATABASE_URL (production sets it): keep even that case on /data.
 ENV NODE_ENV=production \
     HOME=/tmp \
     BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 \
     SERVER_HOST=0.0.0.0 \
     SERVER_PORT=8787 \
     DB_PATH=/data/market.db \
+    PGLITE_DIR=/data/pglite \
     ZEROFEE_GIT_SHA=${GIT_SHA}
 # A dedicated high uid, so it never matches a host user (the host's deploy user is 1000, like the
 # image's own `bun` user).

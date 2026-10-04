@@ -41,6 +41,7 @@ if [[ "$(env_get INGEST_SOURCE rpc)" == yellowstone ]]; then
     [[ -n "$(env_get "$key")" ]] || die "INGEST_SOURCE=yellowstone needs $key"
   done
 fi
+[[ -n "$(env_get ADMIN_TOKEN)" ]] || warn "ADMIN_TOKEN is empty: kill-switch.sh can only halt at the edge (no persistent server halt)"
 [[ "$(stat -c %a "$ENV_FILE")" == 600 ]] || warn "$ENV_FILE should be chmod 600"
 docker info >/dev/null 2>&1 || die "Docker is not reachable (is ${USER:-this user} in the docker group?)"
 avail_gb="$(df -P -BG /var/lib/docker | awk 'NR == 2 { gsub("G", "", $4); print $4 }')"

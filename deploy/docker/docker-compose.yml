@@ -1,7 +1,7 @@
 # zerofee-terminal production stack on one host (docs/ops/DEPLOY.md):
 #
-#   server       Bun gateway + ingest + SQLite market data (host: 127.0.0.1:8787 only)
-#   postgres     user state (identities, orders, armed txs) for the phases that need it
+#   server       Bun gateway + ingest + SQLite market data + accounts (host: 127.0.0.1:8787 only)
+#   postgres     user state: identities, sessions, settings, alerts, admin audit log, orders
 #   caddy        automatic TLS, the static web build, /api + /ws reverse proxy, security headers
 #   uptime-kuma  alerting: feed stall, public checks, DNS canary (UI: 127.0.0.1:3001 over SSH)
 #
@@ -44,7 +44,12 @@ services:
       DB_PATH: /data/market.db
       KILL_SWITCH_DIR: /flags
       METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env.production}
+      # SIWS binds this origin; the session cookie is Secure; mutations must come from it (CSRF).
+      PUBLIC_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN in .env.production}
       DATABASE_URL: postgres://zerofee:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@postgres:5432/zerofee
+    depends_on:
+      postgres:
+        condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:size=256m

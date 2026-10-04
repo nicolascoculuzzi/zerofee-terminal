@@ -98,7 +98,10 @@
 			try_files /HALT_TX
 		}
 	}
-	@internal path /metrics /metrics/* /debug /debug/*
+	# Operator surfaces stay on the host: /metrics, /debug and the admin API (kill switch, audited user
+	# lookups) are reached through 127.0.0.1:8787 (deploy/scripts, SSH tunnel), never the internet.
+	# The server guards them too (bearer tokens); this removes them from the public attack surface.
+	@internal path /metrics /metrics/* /debug /debug/* /api/admin /api/admin/*
 
 	# route keeps the literal order below; the first matching handle wins.
 	route {
@@ -114,7 +117,6 @@
 			header Cache-Control "no-store"
 			respond `{"error":"trading is halted by the operator","code":"unavailable"}` 503
 		}
-		# Internal endpoints never leave the host (the server also guards /metrics itself).
 		handle @internal {
 			respond 404
 		}

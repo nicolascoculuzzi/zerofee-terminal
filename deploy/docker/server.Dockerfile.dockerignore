@@ -32,13 +32,13 @@ docs
 logs
 data
 
-# Tests, fixtures, dev scripts and IDLs: not needed at runtime.
+# Tests, fixtures and dev scripts: not needed at runtime. (Keep packages/core/idl: core imports
+# idl/SOURCE.json at runtime, and the smoke test catches any other missing runtime file.)
 **/test
 **/tests
 **/e2e
 **/*.test.ts
 **/scripts
-packages/core/idl
 
 # Secrets and local state: never in an image.
 .env

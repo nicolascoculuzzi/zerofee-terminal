@@ -2,7 +2,7 @@
 # Smoke tests: deploy.sh runs them after every deploy, and they are safe to run any time. They fail on:
 #   - GET /api/health through Caddy (TLS, DNS, proxy, server)
 #   - missing security headers, or a CSP weaker than script-src 'self' / frame-ancestors 'none'
-#   - /metrics reachable from the internet, or unreachable on the host
+#   - /metrics, /debug or /api/admin reachable from the internet, or /metrics unreachable on the host
 #   - a front-end that differs from its release's SHA256SUMS
 # Feed freshness is only a warning: a stalled feed is usually the provider, not the release.
 set -euo pipefail
@@ -40,8 +40,10 @@ else
 fi
 if grep -qi '^server:' <<<"$headers"; then fail "Server header present"; else pass "no Server header"; fi
 
-code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$base/metrics" || true)"
-if [[ "$code" == 404 ]]; then pass "/metrics closed at the edge"; else fail "$base/metrics answered $code"; fi
+for p in /metrics /debug /api/admin/status; do
+  code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$base$p" || true)"
+  if [[ "$code" == 404 ]]; then pass "$p closed at the edge"; else fail "$base$p answered $code (expected 404)"; fi
+done
 
 m=""
 if m="$(metrics)"; then pass "/metrics on $SERVER_URL"; else fail "/metrics on $SERVER_URL"; fi

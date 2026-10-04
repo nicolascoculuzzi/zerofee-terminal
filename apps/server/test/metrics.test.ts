@@ -12,7 +12,7 @@ import { type App, createApp } from "../src/app";
 import { loadConfig } from "../src/config";
 import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
 import { setLogLevel } from "../src/log";
-import { BLOCKHASH_STALE_MS, formatLabels, isLoopback, KILL_SWITCH_FLAGS, METRICS_CONTENT_TYPE } from "../src/metrics";
+import { BLOCKHASH_STALE_MS, formatLabels, isLoopback, KILL_SWITCH_FLAGS, METRICS_CONTENT_TYPE, Metrics } from "../src/metrics";
 import { openDb } from "../src/storage/db";
 import { RpcClient } from "../src/util/rpc";
 import { addr, FakeCurve, mockFetch, synthTx } from "./helpers";
@@ -283,8 +283,37 @@ describe("alarms", () => {
     rmSync(join(flagDir, KILL_SWITCH_FLAGS.tx));
     rmSync(join(flagDir, KILL_SWITCH_FLAGS.site));
     expect(value(open, 'zerofee_halted{scope="tx"}', now)).toBe(0);
-    // Without KILL_SWITCH_DIR the halt state is unknown, so it is not reported at all.
+    // Without KILL_SWITCH_DIR or an admin halt provider the halt state is unknown: not reported.
     expect(parseExposition(locked.metrics.render()).has('zerofee_halted{scope="tx"}')).toBe(false);
+  });
+
+  test('the admin kill switch (POST /api/admin/halt) is OR-ed into zerofee_halted{scope="tx"}', () => {
+    let adminHalted = false;
+    const stats = { requests: 0, simulated: 0, sent: 0, rejected: 0 };
+    const m = new Metrics(
+      { metricsToken: null, feedStallMs: 30_000, killSwitchDir: null },
+      {
+        version: "test",
+        startedAt: Date.now(),
+        dryRun: true,
+        market: locked.market,
+        pulse: locked.pulse,
+        chain: locked.chain,
+        writer: locked.writer,
+        tx: { stats },
+        rpc: { stats: { calls: 0, errors: 0, rateLimited: 0, dataAllowance: 0, coolingDownUntil: 0, lastError: null } },
+        solUsd: null,
+        sources: () => [],
+        gateway: () => null,
+        halted: () => adminHalted,
+      },
+    );
+    const now = Date.now();
+    expect(parseExposition(m.render(now)).get('zerofee_halted{scope="tx"}')).toBe(0);
+    adminHalted = true;
+    const halted = parseExposition(m.render(now));
+    expect(halted.get('zerofee_halted{scope="tx"}')).toBe(1);
+    expect(halted.has('zerofee_halted{scope="site"}')).toBe(false); // no flags dir: site state unknown
   });
 });
 

@@ -51,6 +51,33 @@ metrics() {
   curl -fsS -m 5 -H "Authorization: Bearer $token" "$SERVER_URL/metrics"
 }
 
+# admin_api METHOD PATH [JSON]: the server's operator API (/api/admin/*) through the host port, with
+# the first token of ADMIN_TOKEN. Every call lands in the server's audit log. Returns 2 when
+# ADMIN_TOKEN is not configured.
+admin_api() {
+  local spec first token
+  spec="$(env_get ADMIN_TOKEN)"
+  [[ -n "$spec" ]] || return 2
+  first="${spec%%,*}"
+  token="${first#*:}"
+  if [[ -n "${3:-}" ]]; then
+    curl -fsS -m 10 -X "$1" -H "Authorization: Bearer $token" -H 'content-type: application/json' --data-raw "$3" "$SERVER_URL$2"
+  else
+    curl -fsS -m 10 -X "$1" -H "Authorization: Bearer $token" "$SERVER_URL$2"
+  fi
+}
+
+# json_reason TEXT: {"reason":TEXT} for the admin API ({} when empty; at most 200 characters).
+json_reason() {
+  if [[ -z "${1:-}" ]]; then
+    printf '{}'
+  elif command -v jq >/dev/null 2>&1; then
+    jq -nc --arg r "${1:0:200}" '{reason: $r}'
+  else
+    printf '{"reason":"%s"}' "$(printf '%s' "${1:0:200}" | tr -d '"\\\000-\037')"
+  fi
+}
+
 # metric NAME_WITH_LABELS: one sample's value from `metrics` output on stdin (empty if absent).
 metric() {
   awk -v k="$1" '$1 == k { print $2; exit }'
