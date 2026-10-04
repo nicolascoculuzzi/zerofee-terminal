@@ -21,11 +21,12 @@ import {
   RAYDIUM_LAUNCHLAB_IX,
   RAYDIUM_LAUNCHLAB_PROGRAM_ID,
   type StateRpc,
+  SYSVAR_CLOCK_ID,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   WSOL_MINT,
 } from "../src";
-import { fixture } from "./fixtures";
+import { CURVE_MINT, fixture } from "./fixtures";
 import { rfixture } from "./raydium-fixtures";
 
 const USER = address("HpqMfMw5r9DT3qWMHup63YndJF6hsjGAcy9qkFGtdpq4");
@@ -52,8 +53,12 @@ function tokenAccount(mint: Address, owner: Address, amount: bigint, withheld?: 
   return data;
 }
 
-function mockRpc(extra: Record<string, { owner: Address; data: Uint8Array; lamports?: bigint }> = {}): StateRpc {
+function mockRpc(
+  extra: Record<string, { owner: Address; data: Uint8Array; lamports?: bigint }> = {},
+  hidden: ReadonlySet<string> = new Set(),
+): StateRpc {
   const lookup = (a: string) => {
+    if (hidden.has(a)) return null;
     if (extra[a]) return { owner: extra[a].owner, lamports: extra[a].lamports ?? 2_039_280n, data: extra[a].data };
     for (const src of [rfixture, fixture]) {
       try {
@@ -118,6 +123,15 @@ describe("loadTokenState resolves Raydium venues", () => {
     await expect(
       loadTokenState(mockRpc(), { mint: BONK_MINT, user: USER, poolAddress: address("F5MuM3C8PanScX296quAoNcLYGjtt8pN7JkBM3qsiK6Z") }),
     ).rejects.toThrow("does not trade");
+  });
+
+  test("only the Raydium venues need the Clock sysvar", async () => {
+    const noClock = mockRpc({}, new Set([SYSVAR_CLOCK_ID]));
+    const pump = await loadTokenState(noClock, { mint: CURVE_MINT, user: USER });
+    expect(pump.venue).toBe("pump");
+    expect(pump.clock).toBeNull();
+    await expect(loadTokenState(noClock, { mint: BONK_MINT, user: USER })).rejects.toThrow("Clock sysvar missing");
+    await expect(loadTokenState(noClock, { mint: GRADUATED_MINT, user: USER })).rejects.toThrow("Clock sysvar missing");
   });
 });
 

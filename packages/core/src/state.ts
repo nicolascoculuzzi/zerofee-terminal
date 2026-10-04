@@ -122,7 +122,11 @@ interface CommonState {
   quoteMint: Address;
   quoteTokenProgram: TokenProgram;
   quoteDecimals: number;
-  clock: ClockInfo;
+  /**
+   * Clock sysvar at load time; null when the RPC did not return it. Only the Raydium venues need it
+   * (Token-2022 fee epoch, CPMM open_time) and they refuse to load without it.
+   */
+  clock: ClockInfo | null;
 }
 
 export interface PumpCurveState extends CommonState {
@@ -145,6 +149,7 @@ export interface PumpSwapState extends CommonState {
 
 export interface LaunchLabState extends CommonState {
   venue: "launchlab";
+  clock: ClockInfo;
   poolAddress: Address;
   pool: LaunchLabPool;
   globalConfig: LaunchLabGlobalConfig;
@@ -155,6 +160,7 @@ export interface LaunchLabState extends CommonState {
 
 export interface CpmmState extends CommonState {
   venue: "cpmm";
+  clock: ClockInfo;
   poolAddress: Address;
   pool: CpmmPool;
   ammConfig: CpmmAmmConfig;
@@ -220,7 +226,6 @@ export async function loadTokenState(
       SYSVAR_CLOCK_ID,
     ]);
   if (!mintAcc) throw new Error(`mint ${mint} not found`);
-  if (!clockAcc) throw new Error("Clock sysvar missing");
   const mintInfo = decodeMint(mintAcc.data, mintAcc.owner);
   const is2022 = mintInfo.tokenProgram === TOKEN_2022_PROGRAM_ID;
   const userBaseAta = is2022 ? ataToken2022 : ataToken;
@@ -233,7 +238,7 @@ export async function loadTokenState(
     userBaseAta,
     userBaseBalance: ataAcc ? decodeTokenAccount(ataAcc.data).amount : 0n,
     userBaseWithheld: ataAcc && is2022 ? decodeToken2022AccountWithheld(ataAcc.data) : 0n,
-    clock: decodeClock(clockAcc.data),
+    clock: clockAcc ? decodeClock(clockAcc.data) : null,
   };
 
   // Explicit pool: dispatch on its owner program.
@@ -310,8 +315,14 @@ export async function loadTokenState(
 
 type Common = Omit<CommonState, "quoteMint" | "quoteTokenProgram" | "quoteDecimals">;
 
+function requireClock(common: Common): ClockInfo {
+  if (!common.clock) throw new Error("Clock sysvar missing (Raydium quotes need the epoch and unix time)");
+  return common.clock;
+}
+
 /** LaunchLab pool -> LaunchLab state while funding, or the CPMM pool it graduated into. */
 async function loadLaunchLab(rpc: StateRpc, common: Common, poolAddress: Address, data: Uint8Array): Promise<LaunchLabState | CpmmState> {
+  const clock = requireClock(common);
   const pool = decodeLaunchLabPool(data);
   if (pool.baseMint !== common.mint) throw new Error(`LaunchLab pool ${poolAddress} base mint ${pool.baseMint} != ${common.mint}`);
   const [globalAcc, platformAcc] = await fetchRawAccounts(rpc, [pool.globalConfig, pool.platformConfig]);
@@ -334,6 +345,7 @@ async function loadLaunchLab(rpc: StateRpc, common: Common, poolAddress: Address
   return {
     venue: "launchlab",
     ...common,
+    clock,
     quoteMint: pool.quoteMint,
     quoteTokenProgram: quoteMintInfo.tokenProgram,
     quoteDecimals: quoteMintInfo.decimals,
@@ -346,6 +358,7 @@ async function loadLaunchLab(rpc: StateRpc, common: Common, poolAddress: Address
 }
 
 async function loadCpmm(rpc: StateRpc, common: Common, poolAddress: Address, pool: CpmmPool, launchLabPool?: Address): Promise<CpmmState> {
+  const clock = requireClock(common);
   let quoteMint: Address;
   if (pool.token0Mint === common.mint) quoteMint = pool.token1Mint;
   else if (pool.token1Mint === common.mint) quoteMint = pool.token0Mint;
@@ -365,6 +378,7 @@ async function loadCpmm(rpc: StateRpc, common: Common, poolAddress: Address, poo
   return {
     venue: "cpmm",
     ...common,
+    clock,
     quoteMint,
     quoteTokenProgram: quoteMintInfo.tokenProgram,
     quoteDecimals: quoteMintInfo.decimals,
