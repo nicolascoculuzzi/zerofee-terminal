@@ -17,18 +17,21 @@ import type { MeResponse, NonceResponse, TradingWallet as ServerTradingWallet, S
 import { isSignerError, type WalletInfo } from "@zerofee/signer";
 import { IS_LIVE } from "../../runtime";
 import { useSettings } from "../../state/settings";
-import type {
-  ApprovalRequest,
-  ConnectedWallet,
-  ProviderInfo,
-  SiwsSession,
-  TradingWallet,
-  TransferReceipt,
-  UnlockMethod,
-  WalletBalances,
-  WalletProvider,
-  WalletService,
-  WalletServiceState,
+import {
+  type ApprovalRequest,
+  type ConnectedWallet,
+  isKnownWallet,
+  KNOWN_WALLET_NAME,
+  type ProviderInfo,
+  type SiwsSession,
+  type TradingWallet,
+  type TransferReceipt,
+  type UnlockMethod,
+  type WalletBalances,
+  type WalletProvider,
+  type WalletService,
+  type WalletServiceState,
+  walletProviderName,
 } from "../walletService";
 import { ApiError, api } from "./api";
 import { firstSignature, toBase58, toBase64 } from "./bytes";
@@ -38,7 +41,6 @@ import type { SignerHost } from "./signerHost";
 import { buildSolTransfer, simulationError, submitSigned, TransferError } from "./transfers";
 import { ConnectedSession, connectWallet, type DetectedWallet, detectWallets, onWalletsChanged, PROVIDERS } from "./walletStandard";
 
-const PROVIDER_NAME: Record<WalletProvider, string> = { phantom: "Phantom", solflare: "Solflare", backpack: "Backpack" };
 const LOCAL_KEY = "zerofee.live.wallets";
 const TOUCH_EVERY_MS = 10_000;
 
@@ -200,14 +202,21 @@ export class LiveWalletService implements WalletService {
   // connected wallet + SIWS
   // -------------------------------------------------------------------------------------------
 
-  /** Supported wallets, installed ones first, each with the name and logo its extension registered. */
+  /**
+   * Wallets to offer: every installed Wallet Standard wallet that can sign in (with the name and logo its
+   * extension registered), then the known wallets that aren't installed, which the UI links to.
+   */
   providers(): ProviderInfo[] {
-    const found = new Map(detectWallets().map((w) => [w.provider, w]));
-    const all = PROVIDERS.map((provider) => {
+    const detected = detectWallets();
+    const found = new Map(detected.map((w) => [w.provider, w]));
+    const known = PROVIDERS.map((provider) => {
       const w = found.get(provider);
-      return { provider, name: w?.name ?? PROVIDER_NAME[provider], icon: w?.icon ?? null, installed: !!w };
+      return { provider, name: w?.name ?? KNOWN_WALLET_NAME[provider], icon: w?.icon ?? null, installed: !!w } as ProviderInfo;
     });
-    return [...all.filter((p) => p.installed), ...all.filter((p) => !p.installed)];
+    const others: ProviderInfo[] = detected
+      .filter((w) => !isKnownWallet(w.provider))
+      .map((w) => ({ provider: w.provider, name: w.name, icon: w.icon, installed: true }));
+    return [...known.filter((p) => p.installed), ...others, ...known.filter((p) => !p.installed)];
   }
 
   private connectedOf(conn: ConnectedSession, address: string): ConnectedWallet {
@@ -237,7 +246,7 @@ export class LiveWalletService implements WalletService {
 
   async connect(provider: WalletProvider): Promise<ConnectedWallet> {
     const detected = detectWallets().find((w) => w.provider === provider);
-    if (!detected) throw new Error(`${PROVIDER_NAME[provider]} isn't installed in this browser`);
+    if (!detected) throw new Error(`${walletProviderName(provider)} isn't installed in this browser`);
     try {
       const conn = await connectWallet(detected);
       if (!conn) throw new Error(`${detected.name} returned no account`);
