@@ -554,5 +554,9 @@ describe("work pool and event loop", () => {
     const s = mon.stats();
     expect(s.samples).toBeGreaterThan(2);
     expect(s.max ?? 0).toBeGreaterThan(40);
+    expect(s.stallsOver50ms).toBeGreaterThanOrEqual(1);
+    expect(s.worstAt).not.toBeNull();
+    mon.reset();
+    expect(mon.stats()).toMatchObject({ samples: 0, max: null, stallsOver50ms: 0, worstAt: null });
   });
 });

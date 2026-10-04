@@ -2,8 +2,9 @@
 /**
  * Production-like static server for the live web build, mirroring the Caddy edge (deploy/docker/Caddyfile):
  * precompressed assets (brotli q11 / gzip, chosen by Accept-Encoding), immutable caching for /assets/*,
- * no-cache + ETag revalidation for index.html and the SPA fallback, and same-origin /api/* + /ws proxied to
- * the gateway. Use it to measure what a real visitor downloads, instead of `vite preview`.
+ * no-cache + ETag revalidation for index.html and the SPA fallback, the edge's security headers including its
+ * enforced Content-Security-Policy (read from the Caddyfile, on top of the build's meta tag, as in production),
+ * and same-origin /api/* + /ws proxied to the gateway. Use it to measure what a real visitor downloads, instead of `vite preview`.
  *
  *   VITE_DATA_SOURCE=live bun run --cwd apps/web build
  *   bun apps/web/scripts/preview-live.ts [--port 4173] [--host 127.0.0.1] [--gateway http://127.0.0.1:8787] [--dist apps/web/dist]
@@ -17,6 +18,7 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { brotliCompress, gzip as gzipCallback, constants as zlib } from "node:zlib";
+import { caddyAppCsp } from "../csp";
 
 export interface PreviewOptions {
   /** 0 picks a free port. Default 4173. */
@@ -95,7 +97,32 @@ const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".svg", ".json", "
 /** Hop-by-hop headers (RFC 9110 7.6.1) never cross a proxy. */
 const HOP_BY_HOP = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization"];
 
-/** Response headers the edge sends on every app response (the CSP itself is the meta tag in index.html). */
+const CADDYFILE = fileURLToPath(new URL("../../../deploy/docker/Caddyfile", import.meta.url));
+
+/**
+ * The edge's enforced Content-Security-Policy for this origin: {$APP_DOMAIN} becomes the preview's host,
+ * {$CSP_CONNECT_EXTRA} the environment's value or docker-compose.yml's default. On plain http (loopback) the
+ * WebSocket origin is ws: and upgrade-insecure-requests is dropped, since nothing here serves https.
+ */
+export function edgeCsp(origin: string, connectExtra = process.env.CSP_CONNECT_EXTRA ?? DEFAULT_CSP_CONNECT_EXTRA): string {
+  const u = new URL(origin);
+  let policy = caddyAppCsp(readFileSync(CADDYFILE, "utf8"))
+    .replaceAll("{$APP_DOMAIN}", u.host)
+    .replaceAll("{$CSP_CONNECT_EXTRA}", connectExtra);
+  if (u.protocol === "http:") {
+    policy = policy
+      .replaceAll(`wss://${u.host}`, `ws://${u.host}`)
+      .split(";")
+      .filter((d) => d.trim() !== "upgrade-insecure-requests")
+      .join(";");
+  }
+  return policy.replace(/\s+/g, " ").trim();
+}
+
+/** deploy/docker/docker-compose.yml's default for CSP_CONNECT_EXTRA. */
+const DEFAULT_CSP_CONNECT_EXTRA = "https://sender.helius-rpc.com https://api.mainnet-beta.solana.com https://api.jup.ag";
+
+/** Response headers the edge sends on every app response (plus the CSP, added per origin in startPreview). */
 const SECURITY_HEADERS: Record<string, string> = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
@@ -107,6 +134,9 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 /** Bun's WebSocket client accepts request headers (cookie, origin); the DOM typings only know protocols. */
 const BunWebSocket = WebSocket as unknown as new (url: string, init: { headers: Record<string, string> }) => WebSocket;
+
+/** The gateway's WS_COMPRESSION (default on). */
+const WS_COMPRESS = !/^(0|false|no|off)$/i.test(process.env.WS_COMPRESSION?.trim() ?? "");
 
 /** Operator surfaces the edge never exposes (Caddyfile @internal). */
 const INTERNAL = /^\/(?:metrics|debug|api\/admin)(?:\/|$)/;
@@ -297,6 +327,12 @@ export async function startPreview(opts: PreviewOptions = {}): Promise<PreviewHa
   if (!index) throw new Error(`no index.html in ${dist}; run: VITE_DATA_SOURCE=live bun run --cwd apps/web build`);
 
   const sockets = new Set<Bun.ServerWebSocket<WsData>>();
+  let csp = "";
+  /** The edge's CSP on everything it serves itself (the gateway's own responses pass through as they are). */
+  const withCsp = (res: Response): Response => {
+    res.headers.set("content-security-policy", csp);
+    return res;
+  };
 
   const server = Bun.serve({
     port: opts.port ?? 4173,
@@ -309,7 +345,7 @@ export async function startPreview(opts: PreviewOptions = {}): Promise<PreviewHa
       } catch {
         return textResponse(400, "bad path");
       }
-      if (INTERNAL.test(path)) return textResponse(404, "404 Not Found");
+      if (INTERNAL.test(path)) return withCsp(textResponse(404, "404 Not Found"));
 
       if (path === "/ws") {
         const headers: Record<string, string> = {};
@@ -328,16 +364,16 @@ export async function startPreview(opts: PreviewOptions = {}): Promise<PreviewHa
 
       if (req.method !== "GET" && req.method !== "HEAD") return textResponse(405, "405 Method Not Allowed");
       const entry = files.get(path) ?? (path.endsWith("/") ? files.get(`${path}index.html`) : undefined);
-      if (entry) return serveFile(req, entry);
+      if (entry) return withCsp(serveFile(req, entry));
       // A missing hashed asset is a 404, never index.html (a stale tab must not parse HTML as JS).
-      if (path.startsWith("/assets/")) return textResponse(404, "404 Not Found");
-      return serveFile(req, index, REVALIDATE);
+      if (path.startsWith("/assets/")) return withCsp(textResponse(404, "404 Not Found"));
+      return withCsp(serveFile(req, index, REVALIDATE));
     },
     websocket: {
       data: {} as WsData,
       maxPayloadLength: 16 * 1024 * 1024,
       // The edge passes the extension negotiation through end to end: mirror the gateway's WS_COMPRESSION here.
-      perMessageDeflate: process.env.WS_COMPRESSION === "true",
+      perMessageDeflate: WS_COMPRESS,
       open(ws) {
         sockets.add(ws);
         let upstream: WebSocket;
@@ -355,9 +391,10 @@ export async function startPreview(opts: PreviewOptions = {}): Promise<PreviewHa
         };
         upstream.onmessage = (ev: MessageEvent) => {
           const d: unknown = ev.data;
-          if (typeof d === "string") ws.send(d);
-          else if (d instanceof ArrayBuffer) ws.send(new Uint8Array(d));
-          else if (ArrayBuffer.isView(d)) ws.send(new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
+          // ws.send() compresses only when asked (unlike the gateway's publish())
+          if (typeof d === "string") ws.send(d, WS_COMPRESS);
+          else if (d instanceof ArrayBuffer) ws.send(new Uint8Array(d), WS_COMPRESS);
+          else if (ArrayBuffer.isView(d)) ws.send(new Uint8Array(d.buffer, d.byteOffset, d.byteLength), WS_COMPRESS);
         };
         upstream.onclose = (ev: CloseEvent) => {
           if (ws.readyState === 1) ws.close(serverCloseCode(ev.code), closeReason(ev.reason));
@@ -388,6 +425,7 @@ export async function startPreview(opts: PreviewOptions = {}): Promise<PreviewHa
   });
 
   const url = `http://${host.includes(":") ? `[${host}]` : host}:${server.port}`;
+  csp = edgeCsp(url);
   if (!opts.quiet) {
     const kb = (n: number): string => `${(n / 1024).toFixed(1)} KB`;
     console.log(

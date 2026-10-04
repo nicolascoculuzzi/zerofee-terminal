@@ -30,9 +30,11 @@
 # Content-Security-Policy, built for the Vite + React production build:
 #   - script-src 'self' only: no inline scripts, no eval. 'wasm-unsafe-eval' lets the signer worker
 #     compile Argon2id (hash-wasm); it does not allow JavaScript eval.
-#   - style-src 'self': the build emits CSS files and React sets styles through the CSSOM, which CSP
-#     allows. If a dependency injects <style> tags, import its CSS file instead or add its sha256
-#     hash. Never add 'unsafe-inline' to script-src.
+#   - style-src 'self' + one hash: the build emits CSS files and React sets styles through the CSSOM,
+#     which CSP allows. The hash is the one <style> element a dependency injects: TradingView
+#     Lightweight Charts' attribution logo rule (kept on for the Apache-2.0 NOTICE). apps/web/csp.ts
+#     computes it from the installed library and puts it in the build's meta CSP; apps/web/src/csp.test.ts
+#     fails when this line no longer carries it (e.g. after a library upgrade). Never add 'unsafe-inline'.
 #   - connect-src: our API and WebSocket, plus CSP_CONNECT_EXTRA (by default Helius Sender's browser
 #     endpoint and the public RPC used for the independent reserve check).
 #   - img-src 'self' data: blob:: token images come from our own image proxy (GET /api/img, which
@@ -45,7 +47,7 @@
 (app_headers) {
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://{$APP_DOMAIN} {$CSP_CONNECT_EXTRA}; worker-src 'self'; manifest-src 'self'; media-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'sha256-3pRED1tOXas1FXFoPb9TGCjmYe9XQsmO9OV23khV2nY='; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://{$APP_DOMAIN} {$CSP_CONNECT_EXTRA}; worker-src 'self'; manifest-src 'self'; media-src 'self'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
 		Content-Security-Policy-Report-Only "require-trusted-types-for 'script'"
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"

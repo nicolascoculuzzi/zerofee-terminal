@@ -50,6 +50,8 @@ import {
 import { WalletModel } from "./walletModel";
 
 const HEALTH_POLL_MS = 10_000;
+/** A (re)connect refreshes health unless a poll is in flight or answered this recently (page load: one fetch). */
+const HEALTH_FRESH_MS = 5_000;
 const TOKEN_CACHE_MAX = 5_000;
 /** Every pump.fun / PumpSwap coin uses 6 decimals; the summary overrides this once known. */
 const PUMP_DECIMALS = 6;
@@ -80,6 +82,8 @@ export class LiveDataSource implements DataSource, ViewHost {
   private nonceIndexFn: ((account: string) => number | null) | null = null;
   private nonceTotals = new Map<string, number>();
   private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private healthInFlight: Promise<void> | null = null;
+  private healthAt = 0;
   private offChain: (() => void) | null = null;
 
   constructor(o: LiveDataSourceOptions) {
@@ -87,7 +91,9 @@ export class LiveDataSource implements DataSource, ViewHost {
     this.socket.onState((s) => {
       const state = this.getConnectionState();
       for (const l of this.connListeners) l(state);
-      if (s === "live") void this.pollHealth();
+      // after a reconnect the server may have restarted (version, DRY_RUN); on page load the constructor's poll
+      // is in flight or just answered, so this one is skipped
+      if (s === "live") void this.pollHealth(HEALTH_FRESH_MS);
     });
     this.offChain = this.socket.subscribe("chain", { onMessage: (m) => this.applyChain(m) });
     const every = o.healthPollMs ?? HEALTH_POLL_MS;
@@ -386,9 +392,21 @@ export class LiveDataSource implements DataSource, ViewHost {
     for (const l of this.chainListeners) l(c);
   }
 
-  private async pollHealth(): Promise<void> {
+  /** GET /api/health, single-flight; with `freshMs`, skipped when the last answer is younger than that. */
+  private pollHealth(freshMs = 0): Promise<void> {
+    if (this.healthInFlight) return this.healthInFlight;
+    if (freshMs > 0 && Date.now() - this.healthAt < freshMs) return Promise.resolve();
+    const p = this.fetchHealth().finally(() => {
+      this.healthInFlight = null;
+    });
+    this.healthInFlight = p;
+    return p;
+  }
+
+  private async fetchHealth(): Promise<void> {
     try {
       const h = await api<HealthResponse>("/api/health");
+      this.healthAt = Date.now();
       this.healthState = h;
       const b = useBackend.getState();
       if (b.dryRun !== h.dryRun || b.version !== h.version) b.set({ dryRun: h.dryRun, version: h.version });
