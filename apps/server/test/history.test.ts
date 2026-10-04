@@ -380,3 +380,61 @@ describe("storage", () => {
     expect(at?.slot).toBe(life.txs[10]?.slot);
   });
 });
+
+describe("holder shares never exceed the circulating supply", () => {
+  /** A whale flips the coin; the live feed saw every buy but none of the sells. */
+  function flips() {
+    const mint = addr("flip-mint");
+    const dev = addr("flip-dev");
+    const whale = addr("flip-whale");
+    const curve = new FakeCurve(mint, dev);
+    const t0 = Math.floor(Date.now() / 1000) - 900;
+    const all: IngestTx[] = [synthTx(9_000, [curve.create(t0)], { signature: "flip-create".padEnd(88, "c") })];
+    const seenLive: IngestTx[] = [all[0] as IngestTx];
+    for (let i = 0; i < 6; i++) {
+      const buy = synthTx(9_001 + i * 2, [curve.buy(whale, 30_000_000_000n, t0 + 10 + i * 20)], {
+        signature: `flip-b${i}`.padEnd(88, "b"),
+      });
+      const bought = (buy.events[0] as { tokenAmount: bigint }).tokenAmount;
+      const sell = synthTx(9_002 + i * 2, [curve.sell(whale, bought, t0 + 20 + i * 20)], { signature: `flip-s${i}`.padEnd(88, "s") });
+      all.push(buy, sell);
+      seenLive.push(buy); // the sells were lost by the feed
+    }
+    const last = synthTx(9_100, [curve.buy(addr("flip-small"), 500_000_000n, t0 + 200)], { signature: "flip-last".padEnd(88, "l") });
+    all.push(last);
+    seenLive.push(last);
+    return { mint, curve, all, seenLive };
+  }
+
+  test("a book that missed sells is bounded (top 10 <= circulating share <= 100%) and flagged", () => {
+    const f = flips();
+    const w = world();
+    for (const tx of f.seenLive) w.market.applyTx(tx);
+    const rec = w.market.tokens.get(f.mint);
+    if (!rec?.holders) throw new Error("no holder book");
+    // the raw book: the whale "holds" six bags it sold
+    const raw = rec.holders.topHolders(10).reduce((sum, [, b]) => sum + b, 0n);
+    expect(raw > rec.supply).toBe(true); // what the old metric divided by supply: 100%+ (DONALDMAXX showed 109%)
+    expect(rec.holders.metrics(rec.supply).top10Pct).toBeLessThanOrEqual(100);
+    const s = w.market.summary(f.mint);
+    const circulatingPct = Number((((rec.initialRealTokenReserves ?? 0n) - (rec.curve?.rToken ?? 0n)) * 1_000_000n) / rec.supply) / 10_000;
+    expect(s?.top10Pct).toBeLessThanOrEqual(circulatingPct + 1e-9);
+    expect(s?.top10Pct).toBeLessThanOrEqual(100);
+    expect(w.market.holdersOvercounted(f.mint)).toBe(true);
+  });
+
+  test("a gap-fill finds the missed sells and the rebuilt book is exact again", async () => {
+    const f = flips();
+    const w = world();
+    for (const tx of f.seenLive) w.market.applyTx(tx);
+    const svc = service(w, new FakeHistoryReader(chainOf(f.curve.bondingCurve, f.all)), {}, [f.mint]);
+    svc.start();
+    svc.scan(); // viewed + overcounted: queues the repair
+    await waitFor(() => !svc.busy(f.mint) && w.reader.tradesOfMint(f.mint).length === 13, 5_000);
+    const ref = world();
+    for (const tx of f.all) ref.market.applyTx(tx);
+    expect(w.market.holdersOvercounted(f.mint)).toBe(false);
+    expect(w.market.summary(f.mint)?.top10Pct).toBeCloseTo(ref.market.summary(f.mint)?.top10Pct ?? -1, 9);
+    expect(w.market.summary(f.mint)?.holders).toBe(ref.market.summary(f.mint)?.holders ?? -1);
+  });
+});

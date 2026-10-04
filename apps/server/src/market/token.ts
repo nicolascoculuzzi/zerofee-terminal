@@ -262,6 +262,22 @@ export function bondingProgress(rec: TokenRecord): number {
   return Math.min(10_000, Number((sold * BPS_DENOMINATOR) / initial));
 }
 
+/**
+ * Most tokens holders can own together: everything outside the curve (tokens sold, plus a mayhem coin's second
+ * 1e15 minted to the Mayhem vault) while on the curve, everything outside the price pool after migration. null
+ * when the reserves are unknown (the total supply bounds then).
+ */
+export function circulatingBound(rec: TokenRecord): bigint | null {
+  if (rec.poolState && (rec.migrated || !rec.curve)) return rec.supply > rec.poolState.base ? rec.supply - rec.poolState.base : 0n;
+  if (rec.curve && rec.initialRealTokenReserves !== null && rec.initialRealTokenReserves > 0n) {
+    const sold = rec.initialRealTokenReserves - rec.curve.rToken;
+    const outsideCurve =
+      rec.curveTokenTotalSupply !== null && rec.supply > rec.curveTokenTotalSupply ? rec.supply - rec.curveTokenTotalSupply : 0n;
+    return (sold > 0n ? sold : 0n) + outsideCurve;
+  }
+  return null;
+}
+
 export interface MarketView {
   solUsd: number | null;
   now: number;
@@ -285,7 +301,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
         : 0;
   const liquidity = rate !== null ? liqQuote * rate : null;
   const w = rec.windows.totals(view.now);
-  const m = rec.holders?.metrics(rec.supply) ?? null;
+  const m = rec.holders?.metrics(rec.supply, circulatingBound(rec)) ?? null;
   return {
     mint: rec.mint,
     name: rec.name,

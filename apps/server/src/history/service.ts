@@ -39,6 +39,7 @@ import type { TokenRecord } from "../market/token";
 import { deserializeRecord } from "../storage/codec";
 import type { StorageReader } from "../storage/reader";
 import type { StorageWriter, TokenHistoryRow } from "../storage/writer";
+import { RpcError } from "../util/rpc";
 import { type CoinAccounts, walkAccounts } from "./coin";
 import type { HistoryReader, SignatureInfo } from "./reader";
 
@@ -115,7 +116,17 @@ export class HistoryService {
   private scanTimer: ReturnType<typeof setInterval> | null = null;
   private readonly gapTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly startedAt: number;
-  readonly stats = { completed: 0, partial: 0, failed: 0, tradesAdded: 0, gaps: 0, gapFills: 0, evicted: 0 };
+  readonly stats = {
+    completed: 0,
+    partial: 0,
+    failed: 0,
+    tradesAdded: 0,
+    gaps: 0,
+    gapFills: 0,
+    evicted: 0,
+    rateLimitedSteps: 0,
+    overcounts: 0,
+  };
 
   constructor(private readonly d: HistoryDeps) {
     this.startedAt = this.now();
@@ -268,13 +279,25 @@ export class HistoryService {
       this.lastRefresh.set(mint, now);
       this.consider(mint, p, "refresh", true);
     };
+    // a holder book above the circulating supply missed sells: gap-fill, then rebuild it from the full history
+    const repair = (mint: string, p: HistoryPriority) => {
+      const rec = this.d.market.tokens.get(mint);
+      if (!rec || this.jobs.has(mint) || !this.d.market.holdersOvercounted(mint)) return;
+      if (now - (this.lastRefresh.get(mint) ?? 0) < 5 * 60_000) return;
+      this.stats.overcounts++;
+      this.lastRefresh.set(mint, now);
+      this.lastAttempt.delete(mint);
+      this.consider(mint, p, "gap", true);
+    };
     for (const mint of this.d.watched()) {
       this.consider(mint, 0, "view");
       refresh(mint, this.d.cfg.viewRefreshMs, 0);
+      repair(mint, 0);
     }
     for (const mint of this.d.listed()) {
       this.consider(mint, 1, "listed");
       refresh(mint, this.d.cfg.listedRefreshMs, 1);
+      repair(mint, 1);
     }
     if (!this.d.cfg.background) return;
     const cutoff = this.now() - 30 * 60_000;
@@ -356,6 +379,13 @@ export class HistoryService {
       try {
         await this.step(job);
       } catch (e) {
+        // rate limited even after the reader's retries: the budget is short, not the job broken
+        if (e instanceof RpcError && e.code === 429) {
+          this.stats.rateLimitedSteps++;
+          job.notBefore = this.now() + 15_000;
+          this.running = null;
+          continue;
+        }
         job.errors++;
         log.warn(`backfill ${job.mint}: ${e instanceof Error ? e.message : e} (error ${job.errors})`);
         if (job.errors >= 5) {
@@ -541,7 +571,7 @@ export class HistoryService {
     // complete: every account walked to its first transaction, or a gap-fill of a once-complete walk
     const complete = !failed && !job.capped && walked && job.walks.every((w) => w.reachedStart || (w.until !== undefined && prevComplete));
     const fromCreation = complete && rec.createdAt !== null;
-    if (fromCreation && (job.stats.added > 0 || !rec.holders)) {
+    if (fromCreation && (job.stats.added > 0 || !rec.holders || this.d.market.holdersOvercounted(job.mint))) {
       const rows = this.d.store.tradesOfMint(job.mint, 200_000);
       if (rows.length < 200_000) this.d.market.rebuildHolders(job.mint, rows);
     }

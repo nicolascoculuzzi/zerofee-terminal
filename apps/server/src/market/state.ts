@@ -84,6 +84,7 @@ import { knownQuoteDecimals, normalizeQuoteMint, quoteSolRate, ui } from "./quot
 import {
   buildTradeContext,
   type CurveReserves,
+  circulatingBound,
   knownQuoteTokenProgram,
   type LaunchLabRecord,
   newTokenRecord,
@@ -1261,6 +1262,12 @@ export class MarketState {
     this.touch(rec);
     this.persist(rec, true);
     return true;
+  }
+
+  /** The coin's holder book holds more than its circulating supply (it missed sells or transfers out). */
+  holdersOvercounted(mint: string): boolean {
+    const rec = this.tokens.get(mint);
+    return rec?.holders?.metrics(rec.supply, circulatingBound(rec)).overcounted ?? false;
   }
 
   /** Whether a transaction was applied (live or by a backfill) recently. */

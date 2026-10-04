@@ -37,6 +37,11 @@ export interface HolderMetrics {
   bundlersPct: number;
   /** null until the insider analysis ran for this token (or when insiders are disabled). */
   insidersPct: number | null;
+  /**
+   * The book holds more than can be outside the curve / pool (`circulating`): it missed sells or transfers out.
+   * The shares above were scaled down to that bound; a gap-fill and a rebuild from the full history repair it.
+   */
+  overcounted: boolean;
 }
 
 /** One owner's balance in a chain snapshot, as of `slot` (the read's context slot). */
@@ -117,7 +122,7 @@ export class HolderBook {
   private readonly crowded = new Map<number, Map<string, bigint>>();
   private devHeld = false;
   private positive = 0;
-  private cached: { version: number; supply: bigint; metrics: HolderMetrics } | null = null;
+  private cached: { version: number; supply: bigint; circulating: bigint | null; metrics: HolderMetrics } | null = null;
   private version = 0;
 
   constructor(
@@ -295,10 +300,22 @@ export class HolderBook {
     return s;
   }
 
-  /** Metrics as % of `supply` (base units). Cached until the next change. */
-  metrics(supply: bigint): HolderMetrics {
-    if (this.cached && this.cached.version === this.version && this.cached.supply === supply) return this.cached.metrics;
-    const pct = (x: bigint) => (supply > 0n ? Number((x * 1_000_000n) / supply) / 10_000 : 0);
+  /**
+   * Metrics as % of `supply` (base units). `circulating` bounds what holders can own in total (tokens outside the
+   * curve / pool, see market/token.ts circulatingBound): a book above it (sells or transfers out it never saw)
+   * has its shares scaled down to the bound, so no share exceeds what is in circulation (never above 100%).
+   * Cached until the next change.
+   */
+  metrics(supply: bigint, circulating: bigint | null = null): HolderMetrics {
+    if (this.cached && this.cached.version === this.version && this.cached.supply === supply && this.cached.circulating === circulating)
+      return this.cached.metrics;
+    let held = 0n;
+    for (const [w, b] of this.balances) if (!this.excluded.has(w)) held += b;
+    const bound = circulating !== null && circulating < supply ? (circulating > 0n ? circulating : 0n) : supply;
+    // 0.5% slack: rounding of fees and transfer fees between our amounts and the chain's
+    const overcounted = held > 0n && held > bound + bound / 200n;
+    const scale = (x: bigint) => (overcounted ? (x * bound) / held : x);
+    const pct = (x: bigint) => (supply > 0n ? Math.min(100, Number((scale(x) * 1_000_000n) / supply) / 10_000) : 0);
     const top = this.topHolders(10);
     const devBalance = this.sumOf(this.devWallets);
     let insidersPct: number | null = null;
@@ -315,8 +332,9 @@ export class HolderBook {
       snipersPct: pct(this.sumOf(this.snipers)),
       bundlersPct: pct(this.sumOf(this.bundlers)),
       insidersPct,
+      overcounted,
     };
-    this.cached = { version: this.version, supply, metrics };
+    this.cached = { version: this.version, supply, circulating, metrics };
     return metrics;
   }
 

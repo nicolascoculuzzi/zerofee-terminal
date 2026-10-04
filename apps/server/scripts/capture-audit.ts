@@ -156,12 +156,17 @@ async function runInProcess(): Promise<{ app: App; t0: number; t1: number; stop:
     w.slotAfter = after;
   }
   const t1 = Date.now() - SETTLE_S * 1000;
+  // let in-flight re-reads land, then stop the feed and the history service: the verification reads alone
+  // share the RPC budget from here (the public RPC answers 429 at ~2 getTransaction calls per second per IP)
+  await Bun.sleep(Math.min(SETTLE_S, 30) * 1000);
+  await app.source?.stop();
+  await (app as unknown as { history?: { stop(): Promise<void> } }).history?.stop();
+  clearInterval(poll);
   return {
     app,
     t0: startedAt + warm,
     t1,
     stop: async () => {
-      clearInterval(poll);
       await app.stop();
     },
   };
@@ -388,7 +393,7 @@ async function main(): Promise<void> {
   const reader = new RpcHistoryReader({
     rpc: new RpcClient({ url: RPC_URL, maxConcurrent: 2, timeoutMs: 20_000 }),
     perSec: RPS,
-    maxRetries: 6,
+    maxRetries: 12,
   });
   log(`window ${new Date(t0).toISOString()} .. ${new Date(t1).toISOString()} (${((t1 - t0) / 60_000).toFixed(1)} min)`);
   const picks = await pickCoins(db, t0, t1);
@@ -486,21 +491,26 @@ async function main(): Promise<void> {
  */
 async function backfillCheck(app: App, reader: RpcHistoryReader, picks: CoinPick[]): Promise<unknown> {
   const history = (
-    app as unknown as { history?: { request(mint: string, priority: number): void; state(mint: string): { state: string } | null } }
+    app as unknown as {
+      history?: {
+        start(): void;
+        request(mint: string, priority: 0 | 1 | 2): void;
+        state(mint: string): { state: string } | null;
+        busy(mint: string): boolean;
+      };
+    }
   ).history;
   if (!history) {
     log("backfill: this server has no history service");
     return null;
   }
   const out: unknown[] = [];
-  for (const c of picks.slice(0, 3)) {
+  history.start();
+  for (const c of picks.filter((p) => p.venue === "pump").slice(0, 3)) {
     history.request(c.mint, 0);
     const t0 = Date.now();
-    while (Date.now() - t0 < 20 * 60_000) {
-      const s = history.state(c.mint);
-      if (s && s.state !== "backfilling" && s.state !== "unknown") break;
-      await Bun.sleep(2_000);
-    }
+    await Bun.sleep(1_000);
+    while (Date.now() - t0 < 20 * 60_000 && history.busy(c.mint)) await Bun.sleep(2_000);
     app.writer.flush();
     const db = (app.reader as unknown as { db: Database }).db;
     const stored = db.query("SELECT COUNT(*) AS n FROM trades WHERE mint = ?").get(c.mint) as { n: number };
