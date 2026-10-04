@@ -256,7 +256,7 @@ function MobileTradeFilters({ count, paused }: { count: number; paused: boolean 
  * Live trades pane: every fill by a tracked wallet, newest first, in dense rows with the
  * quick-buy pill. Hover or focus pauses it; new rows flash in their side colour.
  */
-export function LiveTrades({ query, onAddWallet }: { query: string; onAddWallet: () => void }) {
+export function LiveTrades({ query, onAddWallet }: { query: string; onAddWallet?: () => void }) {
   const live = useTrackers((s) => s.live);
   const walletCount = useTrackers((s) => s.wallets.length);
   const tracked = useTrackedMap();
@@ -285,19 +285,27 @@ export function LiveTrades({ query, onAddWallet }: { query: string; onAddWallet:
   const empty =
     walletCount === 0 ? (
       <EmptyState
+        className="text-balance"
         icon={<Wallet />}
         title="No wallets tracked"
         body="Add a wallet or import a list. Its trades appear here within about a second of landing."
         action={
-          <Button size="sm" variant="secondary" onClick={onAddWallet}>
-            Add wallet
-          </Button>
+          onAddWallet && (
+            <Button size="sm" variant="secondary" onClick={onAddWallet}>
+              Add wallet
+            </Button>
+          )
         }
       />
     ) : live.length === 0 ? (
-      <EmptyState title="No trades yet" body="Trades by your tracked wallets appear within about a second of landing." />
+      <EmptyState
+        className="text-balance"
+        title="No trades yet"
+        body="Trades by your tracked wallets appear within about a second of landing."
+      />
     ) : (
       <EmptyState
+        className="text-balance"
         icon={<ListFilter />}
         title={q ? `No trades match “${query.trim()}”` : "No trades match these filters"}
         body="Loosen a filter or clear the search."

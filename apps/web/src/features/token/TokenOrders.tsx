@@ -79,15 +79,6 @@ export function TokenOrders({ token }: { token: TokenSummary }) {
     });
   }, [byId, token.mint]);
 
-  if (orders.length === 0) {
-    return (
-      <EmptyState
-        title="No orders on this token"
-        body="Arm a limit, take-profit or stop-loss from the trade panel. Armed orders run with this tab closed."
-      />
-    );
-  }
-
   const current = { mcUsd: token.marketCapUsd, priceSol: token.priceSol };
   const ctx = { quote, solUsd, supply: token.supply };
   const content = (o: Order, key: Key): ReactNode => {
@@ -143,11 +134,26 @@ export function TokenOrders({ token }: { token: TokenSummary }) {
   return (
     <div className="h-full overflow-auto">
       <DataTable label={`Orders for ${token.symbol}`} minWidth={720} cols={COLS} rows={orders} rowKey={(o) => o.id} cell={content} />
-      <div className="flex h-row items-center px-2 text-label text-fg-3">
-        <Link to="/orders" className="hover:text-fg-1">
-          All armed orders
-        </Link>
-      </div>
+      {orders.length === 0 ? (
+        <EmptyState
+          title="No orders on this token"
+          body="Arm a limit, take-profit or stop-loss from the trade panel. Armed orders run with this tab closed."
+          action={
+            <Link
+              to="/orders"
+              className="inline-flex h-6 items-center rounded-sm border border-hairline-strong px-2 text-data font-medium text-fg-2 transition-colors hover:bg-surface-3 hover:text-fg-1"
+            >
+              All armed orders
+            </Link>
+          }
+        />
+      ) : (
+        <div className="flex h-row items-center px-2 text-label text-fg-3">
+          <Link to="/orders" className="rounded-xs transition-colors hover:text-fg-1">
+            All armed orders
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

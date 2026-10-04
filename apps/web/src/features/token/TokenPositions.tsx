@@ -33,7 +33,7 @@ function cols(quote: "USD" | "SOL"): Col<Key>[] {
     { key: "holding", label: "Holding", width: ch(15), align: "right" },
     { key: "entry", label: "Avg entry MC", width: ch(9), align: "right" },
     { key: "pnl", label: `PnL ${u}`, width: ch(16), align: "right" },
-    { key: "actions", label: "", width: ch(22), align: "right" },
+    { key: "actions", label: "", width: ch(25), align: "right" },
   ];
 }
 
@@ -91,7 +91,7 @@ function positionCell(p: Position, key: Key): ReactNode {
     case "bought":
       return <Money sol={p.boughtSol} kind="exact" />;
     case "sold":
-      return p.soldSol > 0 ? <Money sol={p.soldSol} kind="exact" /> : <span className="text-fg-4">{DASH}</span>;
+      return p.soldSol > 0 ? <Money sol={p.soldSol} kind="exact" /> : <span className="zf-num text-fg-4">0</span>;
     case "holding":
       return (
         <span className="flex items-baseline gap-1">
@@ -111,15 +111,17 @@ function positionCell(p: Position, key: Key): ReactNode {
     case "actions":
       return (
         <span className="flex items-center gap-1">
+          <span className="mr-0.5 text-label text-fg-3">Sell</span>
           {[25, 50, 100].map((pct) => (
             <Button
               key={pct}
               variant="sell-tint"
               size="xs"
+              className="zf-num min-w-10 justify-center"
               aria-label={`Sell ${pct}% of ${p.symbol}`}
               onClick={() => void sell({ mint: p.mint, pct, source: "token" })}
             >
-              Sell {pct}%
+              {pct}%
             </Button>
           ))}
           <ShareButton p={p} />
@@ -136,9 +138,6 @@ export function TokenPositions({ mint }: { mint: string }) {
     const list = (status?.positions ?? []).filter((p) => !p.closed && p.holdingTokens > 0);
     return list.sort((a, b) => (a.mint === mint ? -1 : b.mint === mint ? 1 : b.lastTradeAt - a.lastTradeAt));
   }, [status, mint]);
-  if (open.length === 0) {
-    return <EmptyState title="No open positions" body="Buy from the trade panel or Pulse, or press / to search." />;
-  }
   return (
     <div className="h-full overflow-auto">
       <DataTable
@@ -150,6 +149,8 @@ export function TokenPositions({ mint }: { mint: string }) {
         cell={(p, key) => positionCell(p, key)}
         rowClassName={(p) => p.mint === mint && "bg-surface-3"}
       />
+      {/* Empty: one calm line under the real headers (DESIGN.md 4.18). */}
+      {open.length === 0 && <EmptyState title="No open positions" body="Buy from the trade panel or Pulse, or press / to search." />}
     </div>
   );
 }

@@ -17,7 +17,7 @@ import { tokenImageSrc } from "./tokenImage";
  */
 export type AvatarSize = "2xs" | "xs" | "sm" | "md" | "row" | "lg" | "xl" | "card";
 
-/** 16, 20, 28, 32, 36 (phone list rows), 40, 48 px, or the Pulse card size (40 compact / 48 comfortable). */
+/** 16, 20, 28, 32, 36 (phone list rows), 40, 48 px, or the Pulse card size (set by the card). */
 const BOX: Record<AvatarSize, string> = {
   "2xs": "size-4",
   xs: "size-5",
@@ -26,10 +26,11 @@ const BOX: Record<AvatarSize, string> = {
   row: "size-9",
   lg: "size-10",
   xl: "size-12",
+  // The Pulse card overrides --zf-card-avatar with its avatar track (52 / 60 px, 44 / 52 narrow).
   card: "size-card-avatar",
 };
 
-/** Box size in CSS px for the image request (the card avatar's largest density). */
+/** Box size in CSS px for the image request. The card tile is 46 / 54 px; 48 keeps it in the 96 px bucket at 2x. */
 const PX: Record<AvatarSize, number> = { "2xs": 16, xs: 20, sm: 28, md: 32, row: 36, lg: 40, xl: 48, card: 48 };
 
 /** Retries of a failed image (ms after the failure); the server negative-caches failures for 15 s first. */
@@ -46,7 +47,8 @@ const TEXT: Record<AvatarSize, string> = {
   row: "text-body",
   lg: "text-title",
   xl: "text-display-2",
-  card: "text-title in-data-[density=comfortable]:text-display-2",
+  // About 40% of the framed tile (46 / 54 px).
+  card: "text-[18px] in-data-[density=comfortable]:text-[21px]",
 };
 
 function toSize(size: AvatarSize | number | undefined): AvatarSize {
@@ -97,11 +99,14 @@ export const TokenAvatar = memo(function TokenAvatar({
   className,
 }: TokenAvatarProps) {
   const s = toSize(size);
-  const letters = (s === "2xs" || s === "xs" ? symbol.slice(0, 1) : symbol.slice(0, 2)).toUpperCase() || "?";
+  const letters = monogram(symbol, s === "2xs" || s === "xs" ? 1 : 2);
   const big = s === "lg" || s === "xl" || s === "card";
   const lp = badge && launchpad && big ? LAUNCHPAD_BY_ID[launchpad] : null;
   const lpLogo = launchpad ? LAUNCHPAD_LOGO[launchpad] : null;
   const ring = progress !== null && progress !== undefined;
+  // The Pulse card draws its bonding ring inside its own box (a 2 px track, a 1 px gap, then
+  // the tile), so the column's avatar track is exactly the box. Other sizes draw it outside.
+  const framed = ring && s === "card";
   const p = migrated ? 1 : Math.max(0, Math.min(1, progress ?? 0));
   const base = tokenImageSrc(mint, imageUri, PX[s], typeof window === "undefined" ? 1 : window.devicePixelRatio);
   const [stored, setImg] = useState<ImgState>({ base, attempt: 0, state: "loading" });
@@ -119,15 +124,19 @@ export const TokenAvatar = memo(function TokenAvatar({
     <div
       aria-hidden="true"
       className={cn(
-        "relative flex shrink-0 items-center justify-center rounded-sm font-semibold transition-colors motion-reduce:transition-none",
+        // The tile: a monogram fill (or surface-3 behind a loaded image, so transparent and white
+        // images sit on a consistent backdrop) clipped to the content box, and a 1 px inner
+        // hairline on ::after above the image so a white image never bleeds into the card.
+        "relative flex shrink-0 items-center justify-center bg-clip-content leading-none font-semibold tracking-[-0.01em] transition-colors select-none motion-reduce:transition-none",
+        "after:pointer-events-none after:absolute after:inset-(--zf-av-in) after:z-[1] after:rounded-sm after:shadow-[inset_0_0_0_1px_var(--zf-hairline-strong)] after:content-['']",
+        framed ? "rounded-md p-[3px] [--zf-av-in:3px]" : "rounded-sm [--zf-av-in:0px]",
         BOX[s],
         TEXT[s],
-        shown
-          ? "bg-surface-2 text-transparent after:pointer-events-none after:absolute after:inset-0 after:rounded-sm after:shadow-[inset_0_0_0_1px_var(--zf-hairline)] after:content-['']"
-          : "text-fg-1",
+        shown ? "bg-surface-3 text-transparent" : "text-fg-1",
         className,
       )}
-      style={shown ? undefined : { background: monoFill(mint) }}
+      // The shorthand carries content-box so the fill stays inside the ring's 3 px frame.
+      style={shown ? undefined : { background: `${monoFill(mint)} content-box` }}
     >
       {letters}
       {src && (
@@ -140,50 +149,40 @@ export const TokenAvatar = memo(function TokenAvatar({
           onLoad={() => setImg({ base, attempt: img.attempt, state: "loaded" })}
           onError={() => setImg({ base, attempt: img.attempt, state: "failed" })}
           className={cn(
-            "absolute inset-0 size-full rounded-sm object-cover transition-opacity motion-reduce:transition-none",
+            "absolute inset-(--zf-av-in) size-[calc(100%-2*var(--zf-av-in))] rounded-sm object-cover transition-opacity motion-reduce:transition-none",
             shown ? "opacity-100" : "opacity-0",
           )}
         />
       )}
       {ring && (
         <svg
-          className="pointer-events-none absolute -inset-[3px] size-[calc(100%+6px)] overflow-visible"
-          viewBox="0 0 100 100"
+          className={cn(
+            "pointer-events-none absolute overflow-visible",
+            framed ? "inset-0 size-full" : "-inset-[3px] size-[calc(100%+6px)]",
+          )}
           aria-hidden="true"
         >
-          <rect
-            x="1"
-            y="1"
-            width="98"
-            height="98"
-            rx="9"
-            fill="none"
-            className="stroke-hairline-strong"
-            strokeWidth="2"
-            vectorEffect="non-scaling-stroke"
-          />
-          <rect
-            x="1"
-            y="1"
-            width="98"
-            height="98"
-            rx="9"
-            fill="none"
-            className="stroke-fg-2"
-            strokeWidth="2"
-            vectorEffect="non-scaling-stroke"
-            pathLength={100}
-            strokeDasharray={`${p * 100} 100`}
-          />
+          <rect fill="none" className={cn(RING_RECT, "stroke-hairline-strong")} strokeWidth="2" />
+          <rect fill="none" className={cn(RING_RECT, "stroke-fg-2")} strokeWidth="2" pathLength={100} strokeDasharray={`${p * 100} 100`} />
         </svg>
       )}
       {lp &&
         (lpLogo ? (
-          <PlatformMark logo={lpLogo} label={lp.label} className="absolute -right-[3px] -bottom-[3px] z-[1] bg-surface-3 ring-2 ring-bg" />
+          <PlatformMark
+            logo={lpLogo}
+            label={lp.label}
+            className={cn(
+              "absolute z-[2] bg-surface-3 ring-2 ring-[color:var(--zf-avatar-bg,var(--zf-bg))]",
+              framed ? BADGE_FRAMED : BADGE,
+            )}
+          />
         ) : (
           <span
             title={lp.label}
-            className="absolute -right-[3px] -bottom-[3px] z-[1] flex size-4 items-center justify-center rounded-xs bg-surface-3 text-micro font-semibold text-fg-2 ring-2 ring-bg"
+            className={cn(
+              "absolute z-[2] flex size-4 items-center justify-center rounded-xs bg-surface-3 text-micro font-semibold text-fg-2 ring-2 ring-[color:var(--zf-avatar-bg,var(--zf-bg))]",
+              framed ? BADGE_FRAMED : BADGE,
+            )}
           >
             {lp.short}
           </span>
@@ -191,6 +190,25 @@ export const TokenAvatar = memo(function TokenAvatar({
     </div>
   );
 });
+
+/**
+ * The ring's rect in CSS geometry, so it follows the box at any size: a 2 px stroke centred 1 px
+ * in from the edge with a 6 px outer radius (DESIGN.md 4.4).
+ */
+const RING_RECT = "[x:1px] [y:1px] [width:calc(100%-2px)] [height:calc(100%-2px)] [rx:5px]";
+const BADGE = "-right-[3px] -bottom-[3px]";
+const BADGE_FRAMED = "-right-0.5 -bottom-0.5";
+
+/**
+ * One or two monogram characters: the ticker's letters and digits (so "$CAT" reads "CA", not
+ * "$C"), uppercase; "?" for a ticker with neither.
+ */
+export function monogram(symbol: string, n: 1 | 2): string {
+  const chars = Array.from(symbol.replace(/[^\p{L}\p{N}]/gu, ""))
+    .slice(0, n)
+    .join("");
+  return (chars || Array.from(symbol.trim()).slice(0, n).join("") || "?").toUpperCase();
+}
 
 /** A tag that is a single emoji (the user picked it, or an import carried it). */
 const EMOJI = /^\p{Extended_Pictographic}(\u{FE0F}|\u{200D}\p{Extended_Pictographic})*$/u;

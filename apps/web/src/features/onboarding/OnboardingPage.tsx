@@ -1,3 +1,4 @@
+import { BadgePercent, ShieldCheck } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Logo } from "../../app/Logo";
@@ -60,9 +61,11 @@ const STEPS = [
 ] as const;
 
 /*
- * Onboarding (DESIGN.md 4.19, 5.6): full screen, no top bar or status bar. The logo sits 24 px
- * from the top-left corner, a 280 px stepper rail starts at y 96, and the content column (max
- * 440 px) starts at x 344, y 64, top-left aligned. Phones get a 4 px segmented progress bar.
+ * Onboarding (DESIGN.md 4.19, 5.6): full screen, no top bar or status bar. One setup card (max 920 px,
+ * 8 px radius, hairline border) holds a 260 px stepper rail and the step content (max 480 px), the way a
+ * login or connect modal does on Axiom, GMGN and OpenSea
+ * (https://mobbin.com/screens/642f1d7c-e592-45ef-9dc9-85a0dcc2cbdc). Phones drop the card for a 4 px
+ * segmented progress bar and full-width content.
  * Stepper after OKX's deposit flow: https://mobbin.com/flows/a6c83dd1-51f7-4e6f-95da-faff776eb1ca
  */
 export default function OnboardingPage() {
@@ -234,26 +237,48 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="relative min-h-dvh bg-bg text-fg-1">
-      <header className="flex items-center gap-3 px-3 pt-4 md:absolute md:top-6 md:left-6 md:p-0">
+    <div className="flex min-h-dvh flex-col bg-bg text-fg-1">
+      <header className="flex h-14 shrink-0 items-center gap-3 px-4 md:px-6">
         <Link to="/pulse" aria-label="zerofee, leave setup" className="shrink-0 rounded-sm">
           <Logo />
         </Link>
         {simulated && <Tag tone="warn">Simulated data</Tag>}
       </header>
 
-      <div className="px-3 pb-16 md:grid md:grid-cols-[280px_minmax(0,440px)] md:gap-x-10 md:px-6">
-        <aside className="pt-4 md:pt-24">
-          <div className="md:hidden">
-            <StepProgress current={step} total={STEPS.length} label={meta.label} />
-          </div>
-          <div className="hidden md:block">
-            <Stepper steps={STEPS} current={step} done={done} sublabels={sublabels} canVisit={canVisit} onSelect={go} />
-          </div>
-        </aside>
-        <main ref={contentRef} key={step} tabIndex={-1} aria-labelledby={STEP_TITLE_ID} className="min-w-0 pt-4 outline-none md:pt-16">
-          {content}
-        </main>
+      <div className="flex flex-1 justify-center pb-12 md:items-start md:px-6 md:pt-[max(16px,5vh)]">
+        <div className="w-full md:grid md:min-h-[600px] md:max-w-[920px] md:grid-cols-[260px_minmax(0,1fr)] md:overflow-hidden md:rounded-lg md:border md:border-hairline md:bg-surface-1">
+          <aside className="px-4 pt-2 md:flex md:flex-col md:border-r md:border-hairline md:bg-bg md:p-6">
+            <div className="md:hidden">
+              <StepProgress current={step} total={STEPS.length} label={meta.label} />
+            </div>
+            <div className="hidden md:mb-6 md:block">
+              <div className="text-heading font-semibold text-fg-1">Set up zerofee</div>
+              <div className="mt-0.5 text-label text-fg-3">Seven steps, about two minutes</div>
+            </div>
+            <div className="hidden md:block">
+              <Stepper steps={STEPS} current={step} done={done} sublabels={sublabels} canVisit={canVisit} onSelect={go} />
+            </div>
+            <ul className="mt-auto hidden space-y-2 pt-6 text-label text-fg-3 md:block">
+              <li className="flex gap-2">
+                <ShieldCheck className="icon-xs mt-px shrink-0" />
+                Non-custodial. The trading key never leaves this browser.
+              </li>
+              <li className="flex gap-2">
+                <BadgePercent className="icon-xs mt-px shrink-0" />
+                Platform fee 0 on every trade.
+              </li>
+            </ul>
+          </aside>
+          <main
+            ref={contentRef}
+            key={step}
+            tabIndex={-1}
+            aria-labelledby={STEP_TITLE_ID}
+            className="min-w-0 px-4 pt-4 outline-none md:px-12 md:pt-6 md:pb-12"
+          >
+            <div className="max-w-[480px]">{content}</div>
+          </main>
+        </div>
       </div>
 
       {/* The simulated wallet popup (sign-in, funding) lives in the shell, which isn't mounted here. */}

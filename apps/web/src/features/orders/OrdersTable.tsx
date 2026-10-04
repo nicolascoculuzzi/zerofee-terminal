@@ -30,7 +30,7 @@ export interface OrdersTableProps {
 }
 
 /** Column widths in ch (DESIGN.md 4.20; Type and Actions widened so "Migration sell" and Re-arm + Cancel fit). */
-const W = { status: 16, type: 12, distance: 8, size: 12, variants: 8, nonce: 9, lane: 9, armed: 5, actions: 19 } as const;
+const W = { status: 16, type: 12, distance: 8, size: 12, variants: 8, nonce: 9, lane: 9, armed: 5, actions: 21 } as const;
 const COLS = 10;
 
 /** "Holding 1.24M · avg 12.4K" from the active wallet's position in this token. */

@@ -72,6 +72,7 @@ export const RiskChips = memo(function RiskChips({
   colored = true,
   letters = "always",
   tips = "own",
+  pending = "dash",
   className,
   children,
 }: {
@@ -79,59 +80,73 @@ export const RiskChips = memo(function RiskChips({
   colored?: boolean;
   letters?: "always" | "auto" | "never";
   tips?: "own" | "delegate";
+  /**
+   * Chips the server hasn't computed yet: "dash" shows "–" (token page, trackers); "quiet" keeps
+   * the chip's slot so the row stays aligned but shows only its letter in text-4, and drops the
+   * chips altogether while none of the five is known (Pulse cards: no wall of dashes).
+   */
+  pending?: "dash" | "quiet";
   className?: string;
   /** Rendered after the chips in the same row (flags such as DEX, T22, LP). */
   children?: ReactNode;
 }) {
   const thresholds = useSettings((s) => s.display.riskThresholds);
+  const chips = RISK_CHIPS.map(({ key }) => riskChip(key, risk, thresholds));
+  const quiet = pending === "quiet";
+  const none = quiet && chips.every((c) => c.unknown);
   return (
     <div className={cn("flex min-w-0 items-center gap-1", className)}>
-      {RISK_CHIPS.map(({ key }) => {
-        const chip = riskChip(key, risk, thresholds);
-        const tone = colored ? TONE_CHIP[chip.tone] : "border-transparent bg-surface-3 text-fg-2";
-        const width = letters === "always" ? "min-w-10" : letters === "never" ? "min-w-[30px]" : "min-w-[30px] @min-[424px]:min-w-10";
-        if (tips === "delegate") {
-          return (
-            <span
-              key={key}
-              role="img"
-              aria-label={chip.aria}
-              data-tip={`risk:${key}`}
-              data-l={RISK_LETTER[key]}
-              className={cn(
-                "zf-num inline-flex h-4 shrink-0 items-center justify-between gap-0.5 rounded-xs border px-[3px] text-label font-medium",
-                "before:text-micro before:font-medium before:text-fg-3 before:content-[attr(data-l)]",
-                letters === "never" && "before:hidden",
-                letters === "auto" && "before:hidden @min-[424px]:before:inline",
-                width,
-                tone,
-              )}
-            >
-              {chip.text}
-            </span>
-          );
-        }
-        return (
-          <Tooltip key={key} content={<RiskTip chip={chip} thresholds={thresholds} />}>
-            <span
-              role="img"
-              aria-label={chip.aria}
-              className={cn("inline-flex h-4 items-center justify-between gap-0.5 rounded-xs border px-[3px]", width, tone)}
-            >
+      {!none &&
+        chips.map((chip) => {
+          const key = chip.key;
+          const tone = colored ? TONE_CHIP[chip.tone] : "border-transparent bg-surface-3 text-fg-2";
+          // 44 px fits every common value ("T 0.4%", "D 14%") so chips line up card to card; only the
+          // rare "<0.1%" and "100%" grow (DESIGN.md 4.5). 34 px without the letter.
+          const width = letters === "always" ? "min-w-11" : letters === "never" ? "min-w-[34px]" : "min-w-[34px] @min-[424px]:min-w-11";
+          if (tips === "delegate") {
+            const hush = quiet && chip.unknown;
+            return (
               <span
+                key={key}
+                role="img"
+                aria-label={chip.aria}
+                data-tip={`risk:${key}`}
+                data-l={RISK_LETTER[key]}
                 className={cn(
-                  "text-micro font-medium text-fg-3",
-                  letters === "never" && "hidden",
-                  letters === "auto" && "hidden @min-[424px]:inline",
+                  "zf-num inline-flex h-4 shrink-0 items-center justify-between gap-0.5 rounded-xs border px-[3px] text-label font-medium",
+                  "before:text-micro before:font-medium before:content-[attr(data-l)]",
+                  hush ? "before:text-fg-4" : "before:text-fg-3",
+                  letters === "never" && "before:hidden",
+                  letters === "auto" && "before:hidden @min-[424px]:before:inline",
+                  width,
+                  tone,
                 )}
               >
-                {RISK_LETTER[key]}
+                {hush ? null : chip.text}
               </span>
-              <span className="zf-num ml-auto text-label font-medium">{chip.text}</span>
-            </span>
-          </Tooltip>
-        );
-      })}
+            );
+          }
+          return (
+            <Tooltip key={key} content={<RiskTip chip={chip} thresholds={thresholds} />}>
+              <span
+                role="img"
+                aria-label={chip.aria}
+                className={cn("inline-flex h-4 items-center justify-between gap-0.5 rounded-xs border px-[3px]", width, tone)}
+              >
+                <span
+                  className={cn(
+                    "text-micro font-medium text-fg-3",
+                    letters === "never" && "hidden",
+                    letters === "auto" && "hidden @min-[424px]:inline",
+                  )}
+                >
+                  {RISK_LETTER[key]}
+                </span>
+                <span className="zf-num ml-auto text-label font-medium">{chip.text}</span>
+              </span>
+            </Tooltip>
+          );
+        })}
       {children}
     </div>
   );

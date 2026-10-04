@@ -2,7 +2,7 @@ import { Rows3, Timer, Wallet } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { Link } from "react-router";
 import { CountBadge, XGlyph } from "../components/ui/bits";
-import { Segmented } from "../components/ui/controls";
+import { Kbd, Segmented } from "../components/ui/controls";
 import { Popover } from "../components/ui/Popover";
 import { Tooltip } from "../components/ui/Tooltip";
 import { cn } from "../lib/cn";
@@ -44,7 +44,7 @@ function LastFill() {
         ref={anchor}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 transition-colors hover:text-fg-1"
+        className="flex h-5 items-center gap-1 rounded-xs transition-colors hover:text-fg-1"
         title="Latency breakdown of the last trade"
       >
         <Timer className="icon-xs" />
@@ -70,7 +70,10 @@ function DockToggle({ active, onClick, children, label }: { active: boolean; onC
       onClick={onClick}
       aria-pressed={active}
       aria-label={label}
-      className={cn("flex h-5 items-center gap-1 rounded-xs px-1.5 transition-colors hover:text-fg-1", active && "bg-surface-3 text-fg-1")}
+      className={cn(
+        "flex h-5 items-center gap-1 rounded-xs px-1.5 transition-colors hover:bg-surface-2 hover:text-fg-1",
+        active && "bg-surface-3 text-fg-1 hover:bg-surface-3-hover",
+      )}
     >
       {children}
     </button>
@@ -84,8 +87,8 @@ function SolUsd() {
   const age = Math.floor((now - at) / 1000);
   const stale = age > 60;
   return (
-    <span className={cn("zf-num", stale ? "text-warn" : "text-fg-2")} title="SOL/USD used for every USD value">
-      SOL/USD {fmtUsdExact(solUsd)}
+    <span className={cn("zf-num", stale && "text-warn")} title="SOL/USD used for every USD value">
+      SOL/USD <span className={stale ? undefined : "text-fg-2"}>{fmtUsdExact(solUsd)}</span>
       {stale && ` · stale ${age}s`}
     </span>
   );
@@ -138,24 +141,41 @@ export function StatusBar() {
       </DockToggle>
       <Sep />
       <Tooltip content={`Feed ${stateLabel.toLowerCase()}. Lists refresh at ${hz} Hz; ingest lag ${feed.lagMs} ms.`}>
-        <span className="flex items-center gap-1.5">
-          <span aria-hidden="true" className={cn("size-1.5 rounded-full", dot)} />
-          <span className="text-fg-2">{stateLabel}</span>
-          <span className="zf-num hidden xl:inline">
-            {hz} Hz · lag <span className="inline-block w-[4ch] text-right">{fmtInt(feed.lagMs)}</span> ms ·{" "}
-            <span className="inline-block w-[5ch] text-right">{fmtCount(Math.round(feed.eventsPerSec))}</span> ev/s
+        <span className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden="true" className={cn("size-1.5 rounded-full", dot)} />
+            <span className="text-fg-2">{stateLabel}</span>
+          </span>
+          <span className="zf-num hidden items-center gap-3 xl:flex">
+            <span>{hz} Hz</span>
+            <span>
+              lag <span className="inline-block min-w-[3ch] text-right text-fg-2">{fmtInt(feed.lagMs)}</span> ms
+            </span>
+            <span>
+              <span className="inline-block min-w-[3ch] text-right text-fg-2">{fmtCount(Math.round(feed.eventsPerSec))}</span> ev/s
+            </span>
           </span>
         </span>
       </Tooltip>
-      <span className="zf-num hidden xl:inline">Slot {slot ? fmtInt(slot) : "–"}</span>
+      <Sep />
+      <span className="zf-num hidden xl:inline">
+        Slot <span className="text-fg-2">{slot ? fmtInt(slot) : "–"}</span>
+      </span>
+      <span className="hidden xl:contents">
+        <Sep />
+      </span>
       <SolUsd />
+      <Sep />
       <LastFill />
 
       <div className="ml-auto flex items-center gap-3">
         {armed > 0 && (
-          <Link to="/orders" className="transition-colors hover:text-fg-1">
-            <span className="zf-num text-fg-1">{armed}</span> armed
-          </Link>
+          <>
+            <Link to="/orders" className="rounded-xs transition-colors hover:text-fg-1">
+              <span className="zf-num text-fg-1">{armed}</span> armed
+            </Link>
+            <Sep />
+          </>
         )}
         <Segmented<QuoteCurrency>
           size="xs"
@@ -172,22 +192,31 @@ export function StatusBar() {
           onClick={toggleDensity}
           title={densityKey ? `Toggle density (${densityKey})` : "Toggle density"}
           aria-label="Toggle density"
-          className="flex items-center transition-colors hover:text-fg-1"
+          className="-mx-1 flex size-5 items-center justify-center rounded-xs transition-colors hover:bg-surface-3 hover:text-fg-1"
         >
           <Rows3 className="icon-xs" />
         </button>
+        {(simulated || dryRun) && <Sep />}
         {simulated && (
           <Tooltip content="All market data, wallets and fills are simulated in your browser. No network calls, no real funds.">
-            <span className="rounded-xs bg-warn-tint px-1 text-micro font-semibold text-warn">Simulated data</span>
+            <span className="inline-flex h-4 items-center rounded-xs bg-warn-tint px-1 text-micro font-semibold text-warn">
+              Simulated data
+            </span>
           </Tooltip>
         )}
         {dryRun && (
           <Tooltip content="Live market data. The server simulates every transaction you submit and sends nothing on-chain (DRY_RUN).">
-            <span className="rounded-xs bg-warn-tint px-1 text-micro font-semibold text-warn">Dry run</span>
+            <span className="inline-flex h-4 items-center rounded-xs bg-warn-tint px-1 text-micro font-semibold text-warn">Dry run</span>
           </Tooltip>
         )}
-        <button type="button" onClick={() => setHelp(true)} className="flex items-center gap-1 transition-colors hover:text-fg-1">
-          <span className="font-mono text-fg-2">?</span> Shortcuts
+        <Sep />
+        <button
+          type="button"
+          onClick={() => setHelp(true)}
+          className="flex h-5 items-center gap-1 rounded-xs transition-colors hover:text-fg-1"
+          title="Keyboard shortcuts"
+        >
+          <Kbd>?</Kbd> Shortcuts
         </button>
       </div>
     </footer>

@@ -19,6 +19,13 @@ export function variantFor(width: number): CardVariant {
   return "narrow";
 }
 
+/**
+ * The avatar track (--zf-card-avatar): the framed avatar fills the card's content height, 52 px in a
+ * 68 px compact card and 60 px in an 80 px comfortable one (44 / 52 px in narrow columns), so the
+ * image reads at 46 / 54 px inside its bonding ring, close to Axiom's card proportions.
+ */
+export const AVATAR_TRACK = "[--zf-card-avatar:52px] in-data-[density=comfortable]:[--zf-card-avatar:60px]";
+
 export interface CardView {
   mint: string;
   symbol: string;
@@ -98,8 +105,9 @@ export function cardView(t: TokenSummary, ctx: CardContext): CardView {
     launchpad: t.launchpad,
     ring: ctx.showRing ? Math.floor(Math.max(0, Math.min(1, t.bondingProgress)) * 100) : -1,
     migrated: t.migratedAt !== null,
-    createdAt: t.createdAt,
-    lastTradeAt: t.lastTradeAt,
+    // 0 = unknown (the card leaves the age out). Never NaN: the card memo compares with !==.
+    createdAt: Number.isFinite(t.createdAt) ? t.createdAt : 0,
+    lastTradeAt: Number.isFinite(t.lastTradeAt) ? t.lastTradeAt : 0,
     x: t.socials.x ?? "",
     web: t.socials.website ?? "",
     tg: t.socials.telegram ?? "",

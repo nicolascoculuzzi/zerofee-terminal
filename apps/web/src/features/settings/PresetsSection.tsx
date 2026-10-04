@@ -37,8 +37,9 @@ export function PresetTabs({ editing, onEditing }: { editing: PresetId; onEditin
   const activePreset = useSettings((s) => s.activePreset);
   const setActivePreset = useSettings((s) => s.setActivePreset);
   return (
-    <div className="mb-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+    <div className="mb-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-hairline">
       <UnderlineTabs<PresetId>
+        bare
         value={editing}
         onChange={onEditing}
         label="Preset to edit"

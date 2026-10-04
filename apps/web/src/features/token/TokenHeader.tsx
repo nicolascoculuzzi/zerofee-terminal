@@ -46,8 +46,8 @@ function Cell({
   className?: string;
 }) {
   return (
-    <div className={cn("flex shrink-0 flex-col justify-center border-l border-hairline px-3", className)}>
-      <span className="text-micro font-medium text-fg-3">
+    <div className={cn("flex shrink-0 flex-col justify-center gap-0.5 border-l border-hairline px-3", className)}>
+      <span className="text-micro leading-3 font-medium whitespace-nowrap text-fg-3">
         {tip ? (
           <Tooltip
             content={
@@ -63,7 +63,7 @@ function Cell({
           <MetricLabel metric={metric}>{label}</MetricLabel>
         )}
       </span>
-      <span className="flex items-center text-data text-fg-1">{children}</span>
+      <span className="flex h-4 items-center text-data whitespace-nowrap text-fg-1">{children}</span>
     </div>
   );
 }
@@ -77,13 +77,11 @@ function TickArrow({ dir }: { dir: "up" | "down" | null }) {
   );
 }
 
-function Change({ value }: { value: number | null }) {
-  return (
-    <span className={cn("zf-num inline-block min-w-[7ch]", value === null ? "text-fg-4" : signClass(value))}>
-      {value === null ? "–" : fmtPct(value, { signed: true })}
-    </span>
-  );
+function Change({ value }: { value: number }) {
+  return <span className={cn("zf-num inline-block min-w-[6ch]", signClass(value))}>{fmtPct(value, { signed: true })}</span>;
 }
+
+const known = (v: number | null | undefined): v is number => v !== null && v !== undefined && Number.isFinite(v);
 
 export function StatsStrip({ token, className }: { token: TokenSummary; className?: string }) {
   const { quote } = useQuote();
@@ -113,34 +111,47 @@ export function StatsStrip({ token, className }: { token: TokenSummary; classNam
         </span>
         {reduced && <TickArrow dir={priceFlash.last} />}
       </Cell>
-      <Cell metric="liquidity">
-        <Money usd={token.liquidityUsd} unit className="inline-block min-w-[6ch]" />
-      </Cell>
-      <Cell metric="volume" label="Vol 24h">
-        <Money usd={token.volumeUsd} unit className="inline-block min-w-[6ch]" />
-      </Cell>
-      <Cell metric="change5m" label="5m">
-        <Change value={token.change5mPct} />
-      </Cell>
-      <Cell
-        metric="change5m"
-        label="1h"
-        tip="Price change over the last hour (since launch for younger tokens)."
-        className="hidden xl:flex"
-      >
-        <Change value={h1} />
-      </Cell>
-      <Cell
-        metric="change5m"
-        label="24h"
-        tip="Price change over the last 24 hours (since launch for younger tokens)."
-        className="hidden 2xl:flex"
-      >
-        <Change value={h24} />
-      </Cell>
-      <Cell metric="holders" className="hidden xl:flex">
-        <span className="zf-num inline-block min-w-[5ch]">{fmtCount(token.holders)}</span>
-      </Cell>
+      {/* Unknown metrics are omitted, not shown as dashes (Axiom; DESIGN.md 3.12). */}
+      {known(token.liquidityUsd) && (
+        <Cell metric="liquidity">
+          <Money usd={token.liquidityUsd} unit className="inline-block min-w-[6ch]" />
+        </Cell>
+      )}
+      {known(token.volumeUsd) && (
+        <Cell metric="volume" label="Vol 24h">
+          <Money usd={token.volumeUsd} unit className="inline-block min-w-[6ch]" />
+        </Cell>
+      )}
+      {known(token.change5mPct) && (
+        <Cell metric="change5m" label="5m">
+          <Change value={token.change5mPct} />
+        </Cell>
+      )}
+      {known(h1) && (
+        <Cell
+          metric="change5m"
+          label="1h"
+          tip="Price change over the last hour (since launch for younger tokens)."
+          className="hidden xl:flex"
+        >
+          <Change value={h1} />
+        </Cell>
+      )}
+      {known(h24) && (
+        <Cell
+          metric="change5m"
+          label="24h"
+          tip="Price change over the last 24 hours (since launch for younger tokens)."
+          className="hidden 2xl:flex"
+        >
+          <Change value={h24} />
+        </Cell>
+      )}
+      {known(token.holders) && (
+        <Cell metric="holders" className="hidden xl:flex">
+          <span className="zf-num inline-block min-w-[4ch]">{fmtCount(token.holders)}</span>
+        </Cell>
+      )}
       <Cell metric="progress" label={migrated ? "Pool" : "BC"}>
         {migrated ? (
           <span className="text-fg-2">Migrated</span>
@@ -174,7 +185,7 @@ function Identity({ token }: { token: TokenSummary }) {
             </Tooltip>
             <CopyButton text={token.mint} label="Copy contract address" />
           </span>
-          <Age ts={token.createdAt} />
+          {Number.isFinite(token.createdAt) && token.createdAt > 0 && <Age ts={token.createdAt} />}
           <SocialLinks socials={token.socials} mint={token.mint} pump={token.launchpad === "pump" || token.launchpad === "mayhem"} />
         </div>
       </div>

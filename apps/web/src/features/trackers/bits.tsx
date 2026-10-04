@@ -140,3 +140,46 @@ export function PaneToolbar({ children, className }: { children: ReactNode; clas
 export function MetaCount({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={cn("zf-num shrink-0 text-label text-fg-3", className)}>{children}</span>;
 }
+
+export type SkeletonKind = "text" | "num" | "avatar" | "none";
+
+/**
+ * Loading rows for the flex grids (DESIGN.md 4.18): exact row height, the real column classes,
+ * 8 px surface-3 bars with a 2 px radius; text at 60% of its column, numbers at 40% on the right,
+ * avatars as squares. Static: no shimmer, no pulse. Skeleton rows under real headers after Square:
+ * https://mobbin.com/screens/09371ef3-f0d0-4fc9-8ab1-607ab3d0e4ab
+ */
+export function SkeletonGridRows({
+  cols,
+  rows = 12,
+  rowClassName,
+}: {
+  cols: readonly { className: string; kind: SkeletonKind }[];
+  rows?: number;
+  rowClassName: string;
+}) {
+  return (
+    <div aria-hidden="true">
+      {Array.from({ length: rows }, (_, r) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder rows
+        <div key={r} className={rowClassName}>
+          {cols.map((c, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static placeholder cells
+            <div key={i} className={cn("flex shrink-0 items-center", c.className)}>
+              {c.kind === "avatar" ? (
+                <span className="flex w-full items-center gap-1">
+                  <span className="size-4 shrink-0 rounded-xs bg-surface-3" />
+                  <span className="h-2 w-2/5 rounded-xs bg-surface-3" />
+                </span>
+              ) : c.kind === "text" ? (
+                <span className="h-2 w-3/5 rounded-xs bg-surface-3" />
+              ) : c.kind === "num" ? (
+                <span className="ml-auto h-2 w-2/5 rounded-xs bg-surface-3" />
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}

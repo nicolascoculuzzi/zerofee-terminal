@@ -3,7 +3,7 @@ import oflText from "../../../licenses/OFL-IBM-Plex.txt?raw";
 import notice from "../../../NOTICE?raw";
 import { Logo } from "../../app/Logo";
 import { getServices } from "../../services";
-import { Block, Row, Rows, SectionHeader, SubHeader, Tag } from "./ui";
+import { Block, Disclosure, Row, Rows, SectionHeader, SubHeader, Tag } from "./ui";
 
 /** Keep in step with apps/web/package.json. */
 const APP_VERSION = "0.1.0";
@@ -16,12 +16,11 @@ const BUILD: string = import.meta.env.VITE_BUILD_HASH || (import.meta.env.DEV ? 
 
 function LicenceText({ summary, text }: { summary: string; text: string }) {
   return (
-    <details className="mt-2">
-      <summary className="cursor-pointer text-label text-fg-2 hover:text-fg-1">{summary}</summary>
+    <Disclosure summary={summary} className="mt-2">
       <pre className="mt-2 max-h-64 overflow-auto rounded-sm bg-surface-2 p-3 font-mono text-label whitespace-pre-wrap text-fg-2">
         {text}
       </pre>
-    </details>
+    </Disclosure>
   );
 }
 
