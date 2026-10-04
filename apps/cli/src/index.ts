@@ -313,6 +313,8 @@ function printState(s: TokenState) {
         `progress ${(launchLabProgressBps(s.pool) / 100).toFixed(2)}% raised=${formatUnits(s.pool.realQuote, s.quoteDecimals)}/${formatUnits(s.pool.totalQuoteFundRaising, s.quoteDecimals)} ` +
         `fees protocol=${s.globalConfig.tradeFeeRate}ppm platform=${s.platformConfig.feeRate}ppm creator=${s.platformConfig.creatorFeeRate}ppm`,
     );
+  } else if (s.venue === "jupiter") {
+    console.log(`venue     Jupiter /build fallback (${s.reason}); quote asset ${s.quoteMint}`);
   } else {
     console.log(
       `venue     Raydium CPMM pool ${s.poolAddress}${s.launchLabPool ? ` (graduated from LaunchLab ${s.launchLabPool})` : ""} ` +

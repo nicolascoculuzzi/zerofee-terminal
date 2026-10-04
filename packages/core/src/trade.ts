@@ -4,9 +4,16 @@
  *   buy  = spend `amount` quote base units (fees included)   -> buy_exact_quote_in(_v2) / buy_exact_in / swap_base_input
  *   sell = sell `amount` base units for >= quote*(1-slippage) -> sell(_v2) / sell_exact_in / swap_base_input
  * Limits are applied to what the user actually RECEIVES (after any Token-2022 transfer fee).
+ *
+ * The exception is the long-tail fallback (venue "jupiter"): no local venue exists, so the quote and the
+ * route come from Jupiter `/build` at build time (one HTTP round trip), with the user's slippage and no
+ * Jupiter fee. Its compute budget and tips are ours (assembleTransaction), and it needs the route's
+ * address lookup tables (BuiltTrade.lookupTables).
  */
-import type { Address, Instruction } from "@solana/kit";
+import type { Address, AddressesByLookupTableAddress, Instruction } from "@solana/kit";
 import { DEFAULT_CU_LIMITS, RAYDIUM_FEE_RATE_DENOMINATOR } from "./constants";
+import { fetchJupiterBuild, type JupiterBuildRequest, type JupiterClientOptions } from "./jupiter/client";
+import { type JupiterRouteInstruction, jupiterRouteFromBuild } from "./jupiter/route";
 import { curveFeeRates, quoteBuyExactQuoteIn, quoteSell } from "./pump/curve";
 import { buildPumpBuyInstructions, buildPumpSellInstructions } from "./pump/instructions";
 import { buildAmmBuyInstructions, buildAmmSellInstructions } from "./pumpswap/instructions";
@@ -15,8 +22,8 @@ import { buildCpmmSwapInstructions } from "./raydium/cpmm/instructions";
 import { cpmmFeeRates, quoteCpmmSwapBaseInput } from "./raydium/cpmm/math";
 import { buildLaunchLabBuyInstructions, buildLaunchLabSellInstructions } from "./raydium/launchlab/instructions";
 import { launchLabTradeParams, quoteLaunchLabBuyExactIn, quoteLaunchLabSellExactIn } from "./raydium/launchlab/math";
-import type { CpmmState, LaunchLabState, TokenState } from "./state";
-import { assertSwappableMint } from "./token";
+import type { CpmmState, JupiterState, LaunchLabState, TokenState } from "./state";
+import { assertSwappableMint, closeAccountInstruction } from "./token";
 import { minOutForTrade } from "./util/math";
 
 export interface TradeRequest {
@@ -48,6 +55,11 @@ export interface TradeQuote {
    * amount_out, CPMM SwapEvent input_amount / output_amount), for exact fill reconciliation.
    */
   expectedEvent?: { amountIn: bigint; amountOut: bigint };
+  /**
+   * Jupiter fallback: Jupiter's quote and route. Venue fees along the route are inside `expectedOut`
+   * (Jupiter does not itemize them), so feesQuote / feesBase / feePpm are all 0 here.
+   */
+  jupiter?: { instruction: JupiterRouteInstruction; labels: string[]; ammKeys: Address[]; priceImpactPct: string | null };
 }
 
 export interface BuiltTrade {
@@ -56,6 +68,17 @@ export interface BuiltTrade {
   /** Hot write-locked account for priority-fee sampling (curve or pool). */
   hotAccount: Address;
   defaultCuLimit: number;
+  /** Address lookup tables the instructions need (Jupiter routes); pass them to assembleTransaction. */
+  lookupTables?: AddressesByLookupTableAddress;
+}
+
+/** How the Jupiter fallback calls `/build` (API key, base URL, fetch) and shapes the route. */
+export interface JupiterTradeOptions
+  extends JupiterClientOptions,
+    Pick<JupiterBuildRequest, "maxAccounts" | "excludeDexes" | "forJitoBundle" | "mode"> {}
+
+export interface BuildTradeOptions {
+  jupiter?: JupiterTradeOptions;
 }
 
 const NO_BASE_FEES = { trade: 0n, creator: 0n, transfer: 0n };
@@ -69,7 +92,7 @@ function closeOnExit(state: TokenState, req: TradeRequest): boolean {
   return (req.closeOnFullExit ?? true) && req.amount === state.userBaseBalance && state.userBaseWithheld === 0n;
 }
 
-export async function buildTrade(state: TokenState, req: TradeRequest): Promise<BuiltTrade> {
+export async function buildTrade(state: TokenState, req: TradeRequest, opts: BuildTradeOptions = {}): Promise<BuiltTrade> {
   if (req.amount <= 0n) throw new RangeError("amount must be > 0");
   switch (state.venue) {
     case "launchlab":
@@ -78,9 +101,75 @@ export async function buildTrade(state: TokenState, req: TradeRequest): Promise<
       return buildCpmmTrade(state, req);
     case "pump":
       return buildPumpTrade(state, req);
+    case "jupiter":
+      return buildJupiterTrade(state, req, opts.jupiter);
     default:
       return buildPumpSwapTrade(state, req);
   }
+}
+
+const NO_QUOTE_FEES = { protocol: 0n, creator: 0n, lp: 0n, buyback: 0n, platform: 0n, fund: 0n, total: 0n };
+const NO_FEE_PPM = { protocol: 0n, platform: 0n, creator: 0n, lp: 0n, fund: 0n };
+
+/**
+ * Long-tail fallback: Jupiter `/build` for quote -> token (buy) or token -> quote (sell), exact in, the
+ * user's slippage. A full exit also closes the token account, like the local venues.
+ */
+async function buildJupiterTrade(state: JupiterState, req: TradeRequest, opts: JupiterTradeOptions = {}): Promise<BuiltTrade> {
+  const isBuy = req.side === "buy";
+  if (!isBuy) assertSellable(state, req.amount);
+  const inputMint = isBuy ? state.quoteMint : state.mint;
+  const outputMint = isBuy ? state.mint : state.quoteMint;
+  const { maxAccounts, excludeDexes, forJitoBundle, mode, ...client } = opts;
+  const build = await fetchJupiterBuild(
+    {
+      inputMint,
+      outputMint,
+      amount: req.amount,
+      slippageBps: req.slippageBps,
+      taker: state.user,
+      maxAccounts,
+      excludeDexes,
+      forJitoBundle,
+      mode,
+    },
+    client,
+  );
+  const route = await jupiterRouteFromBuild(build, {
+    user: state.user,
+    inputMint,
+    outputMint,
+    amount: req.amount,
+    slippageBps: req.slippageBps,
+  });
+  const instructions = [...route.instructions];
+  if (!isBuy && closeOnExit(state, req)) {
+    instructions.push(
+      closeAccountInstruction({
+        account: state.userBaseAta,
+        destination: state.user,
+        owner: state.user,
+        tokenProgram: state.mintInfo.tokenProgram,
+      }),
+    );
+  }
+  return {
+    quote: {
+      venue: "jupiter",
+      side: req.side,
+      amountIn: req.amount,
+      expectedOut: route.outAmount,
+      minOut: route.minOut,
+      feesQuote: NO_QUOTE_FEES,
+      feesBase: NO_BASE_FEES,
+      feePpm: NO_FEE_PPM,
+      jupiter: { instruction: route.instruction, labels: route.labels, ammKeys: route.ammKeys, priceImpactPct: route.priceImpactPct },
+    },
+    instructions,
+    hotAccount: route.ammKeys[0] ?? state.mint,
+    defaultCuLimit: DEFAULT_CU_LIMITS.jupiter,
+    lookupTables: route.lookupTables,
+  };
 }
 
 async function buildPumpTrade(state: Extract<TokenState, { venue: "pump" }>, req: TradeRequest): Promise<BuiltTrade> {
