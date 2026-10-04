@@ -81,7 +81,7 @@ bun run --cwd apps/web dev
 
 `bun run --cwd apps/web build` writes `apps/web/dist`. Set `VITE_BUILD_HASH` to the commit at build time (`VITE_BUILD_HASH=$(git rev-parse --short HEAD) bun run --cwd apps/web build`) and Settings > About shows which build is running; without it About reads "unversioned". CI doesn't set it yet.
 
-To run the live build the way production serves it (precompressed brotli/gzip, immutable caching for hashed assets, `/api` and `/ws` proxied to the server on 8787; `GATEWAY=` points elsewhere):
+To run the live build the way production serves it (precompressed brotli/gzip, immutable caching for hashed assets, the edge's Content-Security-Policy header read from `deploy/docker/Caddyfile`, `/api` and `/ws` proxied to the server on 8787; `GATEWAY=` points elsewhere):
 
 ```bash
 VITE_DATA_SOURCE=live bun run --cwd apps/web build && bun run preview:live

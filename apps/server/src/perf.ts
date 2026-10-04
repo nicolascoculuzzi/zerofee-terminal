@@ -1,8 +1,8 @@
 /**
  * Performance instrumentation: where the time goes between a block and a browser.
  *
- *  - Event-loop lag: a 20 ms timer measures how late it fires. Everything on this process shares the loop,
- *    so a lag spike delays socket reads (detection latency), decoding and every flush at once.
+ *  - Event-loop lag: `perf.loop`, the process's one LoopLagMonitor (util/loopLag.ts; a 20 ms timer measures
+ *    how late it fires). /api/health and /metrics read the same monitor.
  *  - Stages: latency of each hop of the pipeline, per event (ms):
  *      detect.trade / detect.launch   block time -> socket receive (block time is floored to 1 s)
  *      rpc.afterSlot                  slotNotification -> logs notification for that slot (RPC logs only)
@@ -18,9 +18,8 @@
  * Recording is a ring-buffer write: cheap enough to stay on in production.
  */
 import type { PerfResponse, PerfStat } from "@zerofee/protocol";
+import { LoopLagMonitor } from "./util/loopLag";
 import { SampleRing } from "./util/stats";
-
-const LAG_INTERVAL_MS = 20;
 
 class Span {
   readonly ring = new SampleRing(4_096);
@@ -46,39 +45,21 @@ function statOf(ring: SampleRing, count: number, max: number | null): PerfStat {
 export class Perf {
   private readonly stages = new Map<string, { ring: SampleRing; count: number; max: number }>();
   private readonly spans = new Map<string, Span>();
-  private readonly lag = new SampleRing(30_000);
-  private lagMax = 0;
-  private readonly stalls = { over50: 0, over100: 0, over500: 0, worstAt: 0 };
-  private lagTimer: ReturnType<typeof setInterval> | null = null;
-  private lastTick = 0;
+  /** The event-loop lag monitor (20 ms timer, last 5 min). */
+  readonly loop = new LoopLagMonitor(20, 15_000);
   private startedAt = Date.now();
   /** Stage sources owned by other modules (rings they already keep), read at report time. */
   private readonly external = new Map<string, () => PerfStat | null>();
 
   /** Starts the event-loop lag monitor (idempotent). */
   start(): void {
-    if (this.lagTimer) return;
+    if (this.loop.running) return;
     this.startedAt = Date.now();
-    this.lastTick = performance.now();
-    this.lagTimer = setInterval(() => {
-      const now = performance.now();
-      const lag = Math.max(0, now - this.lastTick - LAG_INTERVAL_MS);
-      this.lastTick = now;
-      this.lag.add(lag);
-      if (lag > this.lagMax) {
-        this.lagMax = lag;
-        this.stalls.worstAt = Date.now();
-      }
-      if (lag > 50) this.stalls.over50++;
-      if (lag > 100) this.stalls.over100++;
-      if (lag > 500) this.stalls.over500++;
-    }, LAG_INTERVAL_MS);
-    (this.lagTimer as { unref?: () => void }).unref?.();
+    this.loop.start();
   }
 
   stop(): void {
-    if (this.lagTimer) clearInterval(this.lagTimer);
-    this.lagTimer = null;
+    this.loop.stop();
   }
 
   /** Records one latency sample (ms) for a pipeline stage. */
@@ -131,22 +112,11 @@ export class Perf {
     for (const [name, s] of [...this.spans].sort((a, b) => b[1].totalMs - a[1].totalMs)) {
       spans[name] = { ...statOf(s.ring, s.count, s.maxMs), totalMs: Math.round(s.totalMs), perSecMs: round(s.totalMs / uptimeSec, 2) ?? 0 };
     }
-    const [p50, p90, p99] = this.lag.percentiles([50, 90, 99]);
+    const l = this.loop.stats();
     return {
       at: Date.now(),
       uptimeSec: Math.round(uptimeSec),
-      loop: {
-        intervalMs: LAG_INTERVAL_MS,
-        samples: this.lag.count,
-        p50: round(p50, 1),
-        p90: round(p90, 1),
-        p99: round(p99, 1),
-        max: round(this.lagMax, 1),
-        stallsOver50ms: this.stalls.over50,
-        stallsOver100ms: this.stalls.over100,
-        stallsOver500ms: this.stalls.over500,
-        worstAt: this.stalls.worstAt || null,
-      },
+      loop: { ...l, p50: round(l.p50, 1), p90: round(l.p90, 1), p99: round(l.p99, 1), max: round(l.max, 1) },
       stages,
       spans,
     };
@@ -156,12 +126,7 @@ export class Perf {
   reset(): void {
     this.stages.clear();
     this.spans.clear();
-    this.lag.reset();
-    this.lagMax = 0;
-    this.stalls.over50 = 0;
-    this.stalls.over100 = 0;
-    this.stalls.over500 = 0;
-    this.stalls.worstAt = 0;
+    this.loop.reset();
     this.startedAt = Date.now();
   }
 

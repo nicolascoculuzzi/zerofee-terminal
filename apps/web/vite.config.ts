@@ -2,44 +2,25 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type Plugin } from "vite";
+import { buildCsp, inlineCspProblems } from "./csp";
 
 /**
- * Strict Content-Security-Policy for production builds (SPEC.md, "Front-end integrity").
- * The simulation needs no network origin besides 'self'. A live build also connects to the gateway
- * (VITE_API_ORIGIN and its ws:/wss: twin; same-origin needs nothing extra) and to Jupiter's Swap API,
- * which the browser calls itself for the long-tail fallback (quotes and routes). The signer worker is a
- * same-origin module ('self'); its Argon2 WebAssembly runs inside the worker.
- * Images are same-origin only: token images through the server's image proxy (GET /api/img), platform
- * logos bundled in public/venues/; data: is for the Pulse card icon masks, blob: for chart and share-card
- * previews. The edge (deploy/docker/Caddyfile) sends the same img-src.
- * Dev builds skip it because Vite injects inline styles for HMR.
+ * Strict Content-Security-Policy for production builds (SPEC.md, "Front-end integrity"), as a meta tag; the
+ * policy itself (and the one inline <style> hash it allows) is in csp.ts. Dev builds skip it because Vite
+ * injects inline styles for HMR.
  */
-const JUPITER_API_ORIGIN = "https://api.jup.ag";
-
-function csp(apiOrigin: string, live: boolean): string {
-  const connect = ["'self'"];
-  if (apiOrigin) connect.push(apiOrigin, apiOrigin.replace(/^http/, "ws"));
-  if (live) connect.push(JUPITER_API_ORIGIN);
-  return [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self' data: blob:",
-    "font-src 'self'",
-    `connect-src ${connect.join(" ")}`,
-    "worker-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-  ].join("; ");
-}
-
 function contentSecurityPolicy(policy: string): Plugin {
   return {
     name: "zerofee-csp",
     apply: "build",
-    transformIndexHtml(html) {
-      return html.replace("<head>", `<head>\n    <meta http-equiv="Content-Security-Policy" content="${policy}" />`);
+    transformIndexHtml: {
+      order: "post",
+      handler(html) {
+        // The final document must not need 'unsafe-inline': no style attributes, no <style> without its hash.
+        const problems = inlineCspProblems(html, policy);
+        if (problems.length) throw new Error(`index.html breaks the CSP (style-src / script-src):\n  ${problems.join("\n  ")}`);
+        return html.replace("<head>", `<head>\n    <meta http-equiv="Content-Security-Policy" content="${policy}" />`);
+      },
     },
   };
 }
@@ -149,7 +130,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
-      contentSecurityPolicy(csp(apiOrigin, live)),
+      contentSecurityPolicy(buildCsp(apiOrigin, live)),
       preloadPrimaryFont(),
       preloadCriticalPath(apiOrigin, live),
     ],

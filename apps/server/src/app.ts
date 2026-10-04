@@ -38,7 +38,7 @@ import { StorageReader } from "./storage/reader";
 import { replayHolders, restoreMarket } from "./storage/restore";
 import { StorageWriter } from "./storage/writer";
 import type { UserLayer } from "./user";
-import { LoopLagMonitor } from "./util/loopLag";
+import type { LoopLagMonitor } from "./util/loopLag";
 import { RpcClient } from "./util/rpc";
 import { WalletFeed } from "./wallets/feed";
 
@@ -159,8 +159,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     persistPool: (p) => writer.pool(p),
   });
   resolver.loadPools(reader.pools());
-  const loopLag = new LoopLagMonitor();
-  loopLag.start();
+  // The process's one event-loop lag monitor: /api/perf, /api/health and /metrics all read it. Process-wide
+  // like `perf` itself (its timer is unref'd), so stop() leaves it running for the next app in the process.
+  perf.start();
+  const loopLag = perf.loop;
   // Image and metadata fetches share one pacer (same IPFS gateways) and one pool of niced worker processes
   // for the CPU work (decode / resize / encode, JSON parsing), so the event loop only routes bytes.
   const pacer = new HostPacer({ limits: cfg.media.hostLimits, fallback: cfg.media.hostFallback });
@@ -239,7 +241,6 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   m.persistIntervalMs = cfg.tokenPersistIntervalMs;
   market = m;
   const now = Date.now();
-  perf.start();
   perf.externalStage("detect.trade", () => ringStat(m.latency));
   perf.externalStage("detect.launch", () => ringStat(m.launchLatency));
   const replaySinceMs = now - cfg.replayHours * 3_600_000;
@@ -611,7 +612,6 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       metadata.stop();
       media.stop();
       workPool.stop();
-      loopLag.stop();
       await gateway?.stop();
       await user?.stop();
       await writer.stop();

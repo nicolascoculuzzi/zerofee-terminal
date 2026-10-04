@@ -73,6 +73,29 @@ describe("LiveDataSource", () => {
     m.off();
   });
 
+  test("page load fetches /api/health once: the socket opening does not poll again while the first answer is fresh", async () => {
+    let calls = 0;
+    setApiFetch(async (url) => {
+      if (url.endsWith("/api/health")) calls++;
+      return new Response(JSON.stringify(health));
+    });
+    const f2 = socketFactory();
+    const ds2 = new LiveDataSource({
+      socket: { url: "ws://gw.test/ws", createSocket: f2.create, clock, random: () => 1 },
+      healthPollMs: 60_000,
+    });
+    try {
+      f2.last().open(); // while the constructor's poll is in flight
+      await Bun.sleep(1);
+      f2.last().open(); // just after it answered
+      await Bun.sleep(1);
+      expect(calls).toBe(1);
+      expect(ds2.health()?.version).toBe("0.2.0");
+    } finally {
+      ds2.close();
+    }
+  });
+
   test("pulse: snapshot, merged patches, removals, and a resync for a patch of an unknown token", () => {
     s.snapshot("chain", 1, wireChain());
     const p = ui(ds, "pulse:new");

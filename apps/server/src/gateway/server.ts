@@ -151,9 +151,15 @@ export class Gateway {
   private bootstrapCache: { key: string; body: string; gzip: Uint8Array | null } | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   private connections = 0;
+  /**
+   * WS_COMPRESSION: Bun compresses `server.publish()` (every delta) by itself once permessage-deflate is
+   * negotiated, but `ws.send()` only when asked, so snapshots, the largest messages, pass this flag.
+   */
+  private readonly compress: boolean;
   readonly stats = { connections: 0, messagesIn: 0, rejected: 0, backpressureCloses: 0 };
 
   constructor(private readonly d: GatewayDeps) {
+    this.compress = d.cfg.wsCompression;
     this.restLimiter = new RateLimiter(d.cfg.rateLimit.restPerSec, d.cfg.rateLimit.restBurst);
     this.txLimiter = new RateLimiter(d.cfg.rateLimit.txPerSec, d.cfg.rateLimit.txPerSec * 2);
     this.wsLimiter = new RateLimiter(d.cfg.rateLimit.wsMsgPerSec, d.cfg.rateLimit.wsMsgPerSec * 2);
@@ -522,12 +528,12 @@ export class Gateway {
     const t0 = performance.now();
     if (parsed?.kind === "pulse") {
       // precomputed: one serialization per list change, shared by every connecting client
-      ws.send(this.hub.snapshotRaw(topic, `{"tokens":${this.d.pulse.snapshotJson(parsed.column)}}`));
+      ws.send(this.hub.snapshotRaw(topic, `{"tokens":${this.d.pulse.snapshotJson(parsed.column)}}`), this.compress);
     } else {
       const data = parsed
         ? this.snapshotData(topic as Topic, parsed)
         : { recent: this.recentFeed.slice(-200).reverse(), stats: this.d.debugStats() };
-      ws.send(this.hub.snapshot(topic, data));
+      ws.send(this.hub.snapshot(topic, data), this.compress);
     }
     perf.span(`gateway.snapshot.${parsed?.kind ?? "debug"}`, performance.now() - t0);
     if (!ws.data.subs.has(topic)) {
@@ -592,7 +598,7 @@ export class Gateway {
       if (stillWanted) this.sendError(ws, "unavailable", "no snapshot for this topic right now", topic);
       return;
     }
-    ws.send(this.hub.snapshot(internal, data, topic));
+    ws.send(this.hub.snapshot(internal, data, topic), this.compress);
     if (ws.data.subs.get(topic) === internal) {
       this.hub.removeSubscriber(internal); // resync of an existing subscription: keep one count
       return;

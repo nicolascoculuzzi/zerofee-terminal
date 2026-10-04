@@ -393,7 +393,8 @@ export function loadConfig(env: Env = process.env): ServerConfig {
       adminPerMin: int(env, "RATE_LIMIT_ADMIN_PER_MIN", 60, 1, 100_000),
     },
     wsMaxSubscriptions: int(env, "WS_MAX_SUBSCRIPTIONS", 64, 1, 10_000),
-    wsCompression: bool(env, "WS_COMPRESSION", false),
+    // permessage-deflate on the WebSocket: ~54% fewer bytes on the live feed for no measurable CPU (NOTES.md)
+    wsCompression: bool(env, "WS_COMPRESSION", true),
     logLevel: oneOf(env, "LOG_LEVEL", "info", ["debug", "info", "warn", "error"]),
     userDb: { databaseUrl: optional(env, "DATABASE_URL"), pgliteDir: str(env, "PGLITE_DIR", "data/pglite") },
     auth: loadAuth(env),

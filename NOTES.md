@@ -2,6 +2,27 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-04: follow-ups (CSP style-src, one loop-lag monitor, WS_COMPRESSION on)
+
+Setup: Apple M3 laptop, Bun 1.3.14, `DRY_RUN=true`, headless Chromium (Playwright 1.63) at 1440x900.
+
+**CSP `style-src` violation.** Source: TradingView Lightweight Charts inserts a `<style>` element for its attribution logo (`layout.attributionLogo`, kept on for the Apache-2.0 NOTICE). `style-src 'self'` blocked it on every page with a chart (token page: 4 violations, two per policy, meta tag and edge header) and the logo fell into the document flow (`position: static` instead of `absolute` in the chart corner). index.html and its boot skeleton (classes only) were clean; React `style` props, the QR code's included, go through the CSSOM, which CSP does not restrict. Fix: `apps/web/csp.ts` hashes the rule from the installed library and the build puts `'sha256-3pRED1tOXas1FXFoPb9TGCjmYe9XQsmO9OV23khV2nY='` in the meta CSP; the Caddyfile carries the same hash. No 'unsafe-inline'. Guards: the build fails when the final index.html has a style attribute, an unhashed `<style>` or an inline script; `apps/web/src/csp.test.ts` fails when the Caddyfile's style-src stops matching the library (an upgrade) or index.html grows inline styles. `preview:live` now sends the edge's CSP header. Check: production live build under `preview:live` (edge header + meta tag), Pulse, a token page with its chart, Settings, Portfolio, Onboarding and the Fund modal (no wallet, so its empty state): 0 CSP violations on every page (the token page had 4 before), attribution logo `absolute`.
+
+**One event-loop lag monitor.** `src/perf.ts` (20 ms timer) and `src/util/loopLag.ts` (50 ms timer) both ran. Now `perf.loop` is the only `LoopLagMonitor` (20 ms, last 5 min, stall counters) and `/api/perf` (`loop`), `/api/health` (`eventLoopLag`) and `/metrics` (`zerofee_event_loop_lag_seconds`) read it; names unchanged.
+
+**`GET /api/health` twice on load.** The data source polled at construction and again when the socket went live ~100 ms later. The reconnect poll now skips when a poll is in flight or answered in the last 5 s: 2 -> 1 request on load; reconnects after a restart still refresh.
+
+**WS_COMPRESSION, now on by default.** Bun compresses `server.publish()` (deltas) once permessage-deflate is negotiated, but `ws.send()` only when asked, so with `WS_COMPRESSION=true` every snapshot (the largest messages) went out raw; that is why the speed pass saw no difference in first data. Snapshots now pass the flag. A/B: two servers on the same recorded feed (240 s of pump + PumpSwap logs, replayed at 1x, looped), 3 clients each subscribed like the web app (chain, three Pulse columns, one Final Stretch token's trades + token, refocused when quiet), 60 s warm-up then 5 min, wire bytes counted by a TCP proxy, server CPU from `ps`:
+
+| | off | on, snapshots raw (before) | on (after) |
+|---|---|---|---|
+| Payload per client | 825 KB/min | 825 KB/min | 820 KB/min |
+| Wire per client | 827-829 KB/min | 522 KB/min (-37%) | 381 KB/min (-54%) |
+| Server CPU (whole process) | 16.7-17.2 s/min | 16.8 s/min | 16.6 s/min |
+| Loop lag p50 / p99 | 0.6 / 4.1 ms | 0.6 / 4.1 ms | 0.6 / 4.0 ms |
+
+Connecting: the four first snapshots (three Pulse columns + a trade tape) are 320 KB raw, ~74 KB deflated (estimate with zlib, no context takeover). CPU in isolation (the captured client stream sent to 3 sockets in a loop): ~2 ms/MB raw vs ~12 ms/MB deflated (Bun's shared compressor, no context takeover); `publish()` compresses once per message for every subscriber. At ~0.8 MB per client per minute that is ~8 ms of CPU per client per minute for the snapshot path, invisible next to the process's ~17 s/min. Dedicated (context takeover) compressors were 2.5x the CPU and per-socket memory; not used.
+
 ## 2026-10-04: end-to-end speed pass (server hot path, gateway, web load)
 
 Setup: Apple M3 laptop, Bun 1.3.14, residential network, `DRY_RUN=true`. Server runs come from `bun run perf` (apps/server/scripts/perf.ts): the server in a child process, one or three WebSocket clients on `chain` + the three Pulse columns + one active token's `trades`/`token`, breakdown from `GET /api/perf`. "Restored" runs start from a copy of a 1,225-token database a 4-minute run built (91 tokens with holder replay, 4,710 trades). "Before" is commit e417454 (the instrumentation alone on top of fc8145c); "after" is this branch. Web runs come from `bun run perf:web` (apps/web/scripts/perf-load.ts): the production live build served by `preview:live` (brotli, immutable caching), headless Chrome 153 at 1440x900, 5 cold runs, medians, both builds against the same gateway. Another server from the main checkout was streaming the same public endpoint from this IP for most of the session.
@@ -77,9 +98,9 @@ Medians of 5 cold runs, before -> after; throttling is DevTools emulation (fast4
 
 Bundle (bundle:report; first screen = entry, its imports, the data layer and the Pulse route): 243.2 -> 169.1 KB gzip (148.4 KB brotli), budget 170, after merging main's UI polish rounds (which added ~6 KB; the Pulse hover tips and card menu now load right after the first rows to make room). Entry chunk 125.6 -> 96.0 KB, data layer 61.1 -> 16.1 KB (the trade engine is a 26.8 KB lazy chunk now), CSS 13.9 -> 14.9 KB (the UI polish). Lazy: chart 11.1 + 54.7 KB (lightweight-charts), settings 23.8, onboarding 9.9, signer worker 47.2.
 
-Rendering (perf:web --soak 30000, three Pulse columns under the live feed): 60 fps median, frame p99 16.8 ms, no long tasks; with 4x CPU throttling frame p99 33 ms, one 55 ms task in 30 s. Receive -> paint p50 ~105 ms, p90 ~175 ms: the Pulse batch is applied at the user's Pulse rate (4-10 Hz) by design. `WS_COMPRESSION=true` made no measurable difference to first data on slow 4G (the REST bootstrap is already gzip and preloaded), so it stays off.
+Rendering (perf:web --soak 30000, three Pulse columns under the live feed): 60 fps median, frame p99 16.8 ms, no long tasks; with 4x CPU throttling frame p99 33 ms, one 55 ms task in 30 s. Receive -> paint p50 ~105 ms, p90 ~175 ms: the Pulse batch is applied at the user's Pulse rate (4-10 Hz) by design. `WS_COMPRESSION=true` made no measurable difference to first data on slow 4G (the REST bootstrap is already gzip and preloaded), so it stays off. (Later: snapshots were never compressed; fixed and on by default, see the follow-ups above.)
 
-Not done / noticed: on a loopback network the first Pulse row lands at ~0.4 s in both builds (main-thread time: parse and first render, ~250 ms of tasks); the console shows a CSP `style-src` violation from an inline style on some pages (present before this work).
+Not done / noticed: on a loopback network the first Pulse row lands at ~0.4 s in both builds (main-thread time: parse and first render, ~250 ms of tasks); the console shows a CSP `style-src` violation from an inline style on some pages (present before this work; the chart attribution `<style>`, fixed in the follow-ups above).
 
 ## 2026-10-04: Raydium LaunchLab + CPMM in the live feed (public RPC, laptop)
 

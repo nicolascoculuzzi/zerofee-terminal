@@ -313,7 +313,7 @@ const ing = h.ingest.latency;
 console.log(`\n== ingest latency (trades): p50 ${ing.p50} ms, p90 ${ing.p90} ms, p99 ${ing.p99} ms (${ing.samples} samples)`);
 console.log(`event-loop lag (20 ms timer): p50 ${pct(lag, 50)} ms, p99 ${pct(lag, 99)} ms, max ${pct(lag, 100)} ms`);
 const extra = h as unknown as { eventLoopLag?: unknown };
-if (extra.eventLoopLag) console.log(`server loop-lag monitor (50 ms timer, last 5 min): ${JSON.stringify(extra.eventLoopLag)}`);
+if (extra.eventLoopLag) console.log(`server loop-lag monitor (20 ms timer, last 5 min): ${JSON.stringify(extra.eventLoopLag)}`);
 const m2 = app.media as unknown as {
   pacer?: { snapshot(): { host: string; started: number; throttled: number; rate: number }[] };
   jobCounts?: () => unknown;
