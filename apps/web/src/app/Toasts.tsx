@@ -6,6 +6,7 @@ import { cn } from "../lib/cn";
 import { fmtFee, fmtInt, fmtMs, fmtSol, fmtTokens, shortAddr } from "../lib/format";
 import { useMediaQuery } from "../lib/useMediaQuery";
 import { useNow } from "../lib/useNow";
+import { getServices } from "../services";
 import { useSettings } from "../state/settings";
 import { type Toast, useToasts } from "../state/toasts";
 import { type ClientTrade, useTrades } from "../state/trades";
@@ -33,6 +34,14 @@ function verbPhrase(t: ClientTrade): { verb: string; rest: string; tone: "buy" |
   const fill = t.receipt?.fill;
   if (t.status === "failed")
     return { verb: t.side === "buy" ? "Buy failed" : "Sell failed", rest: t.error ? ` · ${t.error}` : "", tone: "fail" };
+  if (t.status === "confirmed" && fill && t.receipt?.simulated) {
+    // Dry run: the server simulated the signed transaction; nothing reached the chain.
+    return {
+      verb: t.side === "buy" ? "Simulated buy" : "Simulated sell",
+      rest: ` · ${fmtTokens(fill.tokenAmount)} ${t.symbol} for ~${fmtSol(fill.solAmount)} SOL`,
+      tone: t.side,
+    };
+  }
   if (t.status === "confirmed" && fill) {
     return t.side === "buy"
       ? { verb: "Bought", rest: ` ${fmtTokens(fill.tokenAmount)} ${t.symbol} for ${fmtSol(fill.solAmount)} SOL`, tone: "buy" }
@@ -81,19 +90,23 @@ function TradeToastBody({ trade, onDismiss }: { trade: ClientTrade; onDismiss: (
           </>
         )}
         {trade.status === "confirmed" && receipt && (
-          <span className="truncate">
-            Landed in {fmtMs(receipt.latency.landedMs)}
+          <span className="truncate" title={receipt.route ? `Jupiter route: ${receipt.route.join(" → ")}` : undefined}>
+            {receipt.simulated ? "Simulated in " : "Landed in "}
+            {fmtMs(receipt.latency.landedMs)}
             {receipt.latency.slot !== null && ` · slot ${fmtInt(receipt.latency.slot)}`}
-            {trade.landing && ` · ${trade.landing}`}
+            {receipt.simulated ? " · dry run, nothing sent" : trade.landing && ` · ${trade.landing}`}
+            {receipt.route && receipt.route.length > 0 && ` · via ${receipt.route.join(" → ")}`}
           </span>
         )}
         {trade.status === "failed" && (
           <span className="truncate">
-            {fill?.fees
-              ? `Fee ${fmtFee(fill.fees.baseFeeSol + fill.fees.priorityFeeSol)} SOL charged`
-              : trade.amountSol !== undefined
-                ? `${fmtSol(trade.amountSol)} SOL not spent`
-                : "Nothing was spent"}
+            {receipt?.simulated
+              ? "Dry run: nothing was sent"
+              : fill?.fees
+                ? `Fee ${fmtFee(fill.fees.baseFeeSol + fill.fees.priorityFeeSol)} SOL charged`
+                : trade.amountSol !== undefined
+                  ? `${fmtSol(trade.amountSol)} SOL not spent`
+                  : "Nothing was spent"}
           </span>
         )}
       </div>
@@ -106,11 +119,21 @@ function TradeToastBody({ trade, onDismiss }: { trade: ClientTrade; onDismiss: (
               <CopyButton text={receipt.signature} label="Copy signature" />
             </span>
           )}
-          {receipt.signature && (
-            <span className="flex items-center gap-0.5" title="Explorer links are off on simulated data">
-              Solscan <ArrowUpRight className="icon-xs" />
-            </span>
-          )}
+          {receipt.signature &&
+            (getServices().simulated || receipt.simulated ? (
+              <span className="flex items-center gap-0.5" title="Explorer links are off for simulated transactions">
+                Solscan <ArrowUpRight className="icon-xs" />
+              </span>
+            ) : (
+              <a
+                href={`https://solscan.io/tx/${encodeURIComponent(receipt.signature)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-0.5 transition-colors hover:text-fg-1"
+              >
+                Solscan <ArrowUpRight className="icon-xs" />
+              </a>
+            ))}
           <button
             type="button"
             onClick={() => setOpen((o) => !o)}
@@ -124,7 +147,7 @@ function TradeToastBody({ trade, onDismiss }: { trade: ClientTrade; onDismiss: (
 
       {open && receipt && (
         <div className="mt-2 border-t border-hairline pt-2">
-          <LatencyBreakdownView latency={receipt.latency} status={receipt.status} />
+          <LatencyBreakdownView latency={receipt.latency} status={receipt.status} simulated={receipt.simulated} />
         </div>
       )}
 

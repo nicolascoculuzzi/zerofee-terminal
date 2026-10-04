@@ -5,7 +5,7 @@
 #   APP_DOMAIN         the one canonical app domain, e.g. app.example.com
 #   ACME_EMAIL         Let's Encrypt account e-mail (expiry and policy notices)
 #   SERVER_UPSTREAM    the Bun server; Caddy runs with host networking, so 127.0.0.1:8787
-#   CSP_CONNECT_EXTRA  origins the browser may call besides us (independent RPC, Helius Sender lane)
+#   CSP_CONNECT_EXTRA  origins the browser may call besides us (independent RPC, Helius Sender lane, Jupiter)
 #   SIGNER_DOMAIN      the isolated signer origin (commented site block at the bottom)
 #
 # Reload after editing (keeps open WebSockets for up to 5 minutes; an invalid file is rejected and the

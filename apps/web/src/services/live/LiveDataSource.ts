@@ -15,7 +15,17 @@ import type {
   Order as WireOrder,
   TokenSummary as WireToken,
 } from "@zerofee/protocol";
-import type { DeltaData, PnlPoint, PulseColumnId, SearchResults, Timeframe, TokenSummary, Topic, WalletStatus } from "../../protocol";
+import type {
+  DeltaData,
+  PnlPoint,
+  PulseColumnId,
+  SearchResults,
+  Timeframe,
+  TokenSummary,
+  Topic,
+  TradeRoute,
+  WalletStatus,
+} from "../../protocol";
 import { useBackend } from "../../state/backend";
 import type { DataSource, FeedConnectionState, TopicHandler } from "../dataSource";
 import { adaptToken, columnOf } from "./adapters";
@@ -63,6 +73,7 @@ export class LiveDataSource implements DataSource, ViewHost {
   private readonly engineListeners = new Set<() => void>();
   private readonly connListeners = new Set<(s: FeedConnectionState) => void>();
   private feeEngine: ((ctx: TradeContext) => number | null) | null = null;
+  private readonly routes = new Map<string, TradeRoute>();
   private readonly wireOrders = new Map<string, WireOrder>();
   private readonly walletModels = new Map<string, WalletModel>();
   private nonceIndexFn: ((account: string) => number | null) | null = null;
@@ -162,6 +173,17 @@ export class LiveDataSource implements DataSource, ViewHost {
     for (const l of this.engineListeners) l();
   }
 
+  /** The trade engine quoted a Jupiter route for a mint: the token page shows its venues. */
+  setRoute(mint: string, route: TradeRoute): void {
+    this.routes.delete(mint);
+    if (this.routes.size >= 256) {
+      const oldest = this.routes.keys().next().value;
+      if (oldest !== undefined) this.routes.delete(oldest);
+    }
+    this.routes.set(mint, route);
+    for (const l of this.engineListeners) l();
+  }
+
   /** Nonce slot numbers (the wallet's derived slots) and how many exist on chain, from the order engine. */
   setNonceInfo(indexOf: ((account: string) => number | null) | null, totals: Map<string, number>): void {
     this.nonceIndexFn = indexOf;
@@ -215,6 +237,10 @@ export class LiveDataSource implements DataSource, ViewHost {
 
   feeBps(ctx: TradeContext): number | null {
     return this.feeEngine ? this.feeEngine(ctx) : null;
+  }
+
+  route(mint: string): TradeRoute | null {
+    return this.routes.get(mint) ?? null;
   }
 
   onEngineReady(fn: () => void): () => void {

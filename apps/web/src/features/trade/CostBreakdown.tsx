@@ -4,7 +4,7 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { fmtFee, fmtLamports, fmtPct, fmtSol, fmtSolShort, fmtTokens } from "../../lib/format";
 import { LANDING_INFO } from "../../lib/landing";
-import type { LandingPreset } from "../../protocol";
+import type { LandingPreset, TradeRoute } from "../../protocol";
 import type { CostLines } from "./tradeMath";
 
 /*
@@ -68,6 +68,7 @@ export function CostBreakdown({
   cost,
   symbol,
   venue,
+  route = null,
   landing,
   slippagePct,
   open,
@@ -77,6 +78,8 @@ export function CostBreakdown({
   cost: CostLines;
   symbol: string;
   venue: string;
+  /** Live: the coin trades through the Jupiter fallback (no local venue); shown instead of the venue fee. */
+  route?: TradeRoute | null;
   landing: LandingPreset;
   slippagePct: number;
   open: boolean;
@@ -134,10 +137,22 @@ export function CostBreakdown({
           )}
           {(kind === "buy" || kind === "sell") && (
             <Line label="Price impact" tip="How far this trade moves the price against you at today's reserves.">
-              <span className={cn("zf-num", cost.impactPct !== null && cost.impactPct >= 10 && "text-warn")}>{fmtPct(cost.impactPct)}</span>
+              <span className={cn("zf-num", (cost.impactPct ?? route?.priceImpactPct ?? 0) >= 10 && "text-warn")}>
+                {fmtPct(cost.impactPct ?? route?.priceImpactPct ?? null)}
+              </span>
             </Line>
           )}
-          {kind !== "ladder" && kind !== "limitSell" && kind !== "limitBuy" && (
+          {route && (
+            <Line
+              label="Route (Jupiter)"
+              tip={`No pump.fun curve or PumpSwap pool to build on (${route.reason}), so Jupiter routes this trade, chosen when you trade. Venue fees along the route are inside its quote; Jupiter adds no fee and neither does zerofee.`}
+            >
+              <span className="block max-w-44 truncate text-fg-1" title={route.labels.join(" → ")}>
+                {route.labels.length > 0 ? route.labels.join(" → ") : "Best route at trade time"}
+              </span>
+            </Line>
+          )}
+          {!route && kind !== "ladder" && kind !== "limitSell" && kind !== "limitBuy" && (
             <Line
               label={`Venue fee (${venue} ${fmtSolShort(cost.venuePct)}%)`}
               tip={`Charged by ${venue} on every trade. It goes to the launchpad or AMM, not to zerofee.`}

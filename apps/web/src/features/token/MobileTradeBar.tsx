@@ -153,6 +153,7 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
             cost={buyCost(buyQ, quickBuy, exec, holding <= 0, feeBps)}
             symbol={token.symbol}
             venue={venueShort(token.venue)}
+            route={detail.route ?? null}
             landing={exec.landing}
             slippagePct={exec.slippagePct}
             open={costOpen}

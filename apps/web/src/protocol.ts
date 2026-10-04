@@ -275,10 +275,26 @@ export interface TopTrader {
 }
 
 /** `token:<mint>` snapshot. */
+/**
+ * How a coin with no local venue trades (live mode: the Jupiter fallback). Set instead of `curve` / `pool`
+ * when the browser cannot price the coin on a pump.fun curve or PumpSwap pool itself.
+ */
+export interface TradeRoute {
+  via: "jupiter";
+  /** Why no local venue is used. */
+  reason: string;
+  /** Venues of the last quoted route, in order ("Meteora DBC"); empty until a trade is quoted. */
+  labels: string[];
+  /** Price impact of that quote, %; null when unknown. */
+  priceImpactPct: number | null;
+}
+
 export interface TokenDetail {
   summary: TokenSummary;
   curve: CurveState | null;
   pool: PoolState | null;
+  /** Live mode: the Jupiter fallback route, when the coin has no local venue. */
+  route?: TradeRoute | null;
   /** Top holders, largest first (curve and pool accounts included and tagged). */
   holders: Holder[];
   topTraders: TopTrader[];
@@ -293,6 +309,7 @@ export interface TokenDetailDelta {
   summary?: TokenSummary;
   curve?: CurveState | null;
   pool?: PoolState | null;
+  route?: TradeRoute | null;
   holders?: Holder[];
   topTraders?: TopTrader[];
 }

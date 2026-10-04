@@ -61,8 +61,18 @@ export async function submitSigned(wire: Uint8Array, preset: LandingPreset, clie
   return api<TxSubmitResponse>("/api/tx", { method: "POST", body });
 }
 
+/** Transaction-level errors in plain words (the runtime names them before any program runs). */
+const TX_ERRORS: Record<string, string> = {
+  AccountNotFound: "the paying wallet has no SOL yet (account not found)",
+  InsufficientFundsForFee: "not enough SOL for the network fee",
+  InsufficientFundsForRent: "not enough SOL to keep an account open (rent)",
+  BlockhashNotFound: "the blockhash expired; try again",
+  AlreadyProcessed: "this transaction was already processed",
+};
+
 /** Short reason for a simulation error object ({ InstructionError: [2, { Custom: 6003 }] } ...). */
 export function simulationError(err: unknown, logs: readonly string[]): string {
+  if (typeof err === "string" && TX_ERRORS[err]) return TX_ERRORS[err];
   const failed = logs.find((l) => /failed:|Error:/i.test(l));
   if (failed) return failed.replace(/^Program \S+ /, "");
   try {

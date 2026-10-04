@@ -474,6 +474,7 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
         cost={cost}
         symbol={sym}
         venue={venue}
+        route={detail.route ?? null}
         landing={exec.landing}
         slippagePct={exec.slippagePct}
         open={ui.costOpen}

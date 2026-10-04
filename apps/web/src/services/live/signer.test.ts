@@ -5,17 +5,16 @@
  * transfers.ts must pass the firewall to the bound connected wallet and nowhere else.
  */
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import type { SpendState, StoredVault } from "@zerofee/signer";
-import { createSignerPolicy, isSignerError, MemoryStore, type MessageEndpoint, startSignerWorker } from "@zerofee/signer";
+import { isSignerError } from "@zerofee/signer";
 import { firstSignature } from "./bytes";
 import { wireChain } from "./fixtures";
 import { decodeSignerConfig, encodeSignerConfig, signerConfigFromSettings } from "./signerConfig";
-import { SignerHost, type WorkerLike } from "./signerHost";
+import { SignerHost } from "./signerHost";
+import { inProcessSignerFactory } from "./testkit";
 import { buildSolTransfer, recentBlockhash, TransferError } from "./transfers";
 
 setDefaultTimeout(30_000);
 
-const FAST_KDF = { memoryKiB: 64, iterations: 1, parallelism: 1 };
 const PASSWORD = "correct horse battery staple";
 const CONNECTED = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const STRANGER = "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7D4xWLs4gDB4T";
@@ -24,41 +23,6 @@ const stops: (() => void)[] = [];
 afterEach(() => {
   for (const s of stops.splice(0)) s();
 });
-
-/** An in-process "worker": the same handlers the real worker entry starts, over a MessageChannel. */
-function inProcessFactory(stores: { vault: MemoryStore<StoredVault>; spend: MemoryStore<SpendState> }) {
-  const started: string[] = [];
-  const factory = (name: string): WorkerLike => {
-    started.push(name);
-    const cfg = decodeSignerConfig(name);
-    if (!cfg) throw new Error("bad config");
-    const ch = new MessageChannel();
-    ch.port1.start();
-    ch.port2.start();
-    const handle = startSignerWorker({
-      policy: createSignerPolicy({ caps: { maxBuyLamports: BigInt(cfg.maxBuyLamports) } }),
-      dailyCaps: { buyLamports: BigInt(cfg.dailyBuyLamports), feeLamports: BigInt(cfg.dailyFeeLamports) },
-      vault: { kdfParams: FAST_KDF, allowWeakKdfForTesting: true, autoLockMs: cfg.autoLockMs },
-      vaultStorage: stores.vault,
-      spendStorage: stores.spend,
-      endpoint: ch.port2 as unknown as MessageEndpoint,
-    });
-    const port = ch.port1 as unknown as MessageEndpoint;
-    const terminate = () => {
-      handle.stop();
-      ch.port1.close();
-      ch.port2.close();
-    };
-    stops.push(terminate);
-    return Object.assign(Object.create(null), {
-      postMessage: (m: unknown) => port.postMessage(m),
-      addEventListener: (t: "message", l: (e: MessageEvent) => void) => port.addEventListener(t, l),
-      removeEventListener: (t: "message", l: (e: MessageEvent) => void) => port.removeEventListener(t, l),
-      terminate,
-    }) as WorkerLike;
-  };
-  return { factory, started };
-}
 
 describe("signer config", () => {
   test("settings become caps and auto-lock; the encoding round-trips and rejects junk", () => {
@@ -73,8 +37,8 @@ describe("signer config", () => {
 
 describe("live signer path", () => {
   test("vault in the worker, withdrawal to the bound connected wallet signs; anywhere else is refused", async () => {
-    const stores = { vault: new MemoryStore<StoredVault>(), spend: new MemoryStore<SpendState>() };
-    const { factory, started } = inProcessFactory(stores);
+    const { factory, started, stopAll } = inProcessSignerFactory();
+    stops.push(stopAll);
     const host = new SignerHost(factory);
     const locks: string[] = [];
     host.onLocked((r) => locks.push(r));

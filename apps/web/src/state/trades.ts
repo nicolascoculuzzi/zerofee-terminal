@@ -38,6 +38,8 @@ export interface TradesState {
   items: ClientTrade[];
   lastLatency: LatencyBreakdown | null;
   lastLatencyStatus: "confirmed" | "failed" | null;
+  /** The last trade was a dry-run simulation (nothing sent). */
+  lastLatencySimulated: boolean;
   daily: { day: string; spentSol: number };
   begin(trade: ClientTrade): void;
   progress(id: string, stage: TradeStage, atMs?: number): void;
@@ -53,6 +55,7 @@ export const useTrades = create<TradesState>()(
       items: [],
       lastLatency: null,
       lastLatencyStatus: null,
+      lastLatencySimulated: false,
       daily: { day: today(), spentSol: 0 },
       begin(trade) {
         set((s) => ({ items: [trade, ...s.items].slice(0, 60) }));
@@ -81,6 +84,7 @@ export const useTrades = create<TradesState>()(
           ),
           lastLatency: receipt.latency,
           lastLatencyStatus: receipt.status,
+          lastLatencySimulated: receipt.simulated === true,
         }));
       },
       fail(id, error) {

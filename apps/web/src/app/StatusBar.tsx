@@ -28,6 +28,7 @@ function Sep() {
 function LastFill() {
   const latency = useTrades((s) => s.lastLatency);
   const status = useTrades((s) => s.lastLatencyStatus);
+  const simulated = useTrades((s) => s.lastLatencySimulated);
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   if (!latency) {
@@ -47,14 +48,16 @@ function LastFill() {
         title="Latency breakdown of the last trade"
       >
         <Timer className="icon-xs" />
-        Last fill
+        {simulated ? "Last simulation" : "Last fill"}
         <span className={cn("zf-num", status === "failed" ? "text-sell" : "text-fg-1")}>
           {status === "failed" ? "failed" : fmtMs(latency.landedMs)}
         </span>
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} width={300} padding="form">
-        <div className="mb-2 text-data font-semibold text-fg-1">Latency, click to landed</div>
-        <LatencyBreakdownView latency={latency} status={status} />
+        <div className="mb-2 text-data font-semibold text-fg-1">
+          {simulated ? "Latency, click to simulated (dry run)" : "Latency, click to landed"}
+        </div>
+        <LatencyBreakdownView latency={latency} status={status} simulated={simulated} />
       </Popover>
     </>
   );

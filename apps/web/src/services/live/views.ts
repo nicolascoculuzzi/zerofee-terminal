@@ -32,6 +32,7 @@ import type {
   Topic,
   TrackedTrade,
   Trade,
+  TradeRoute,
   WalletStatus,
 } from "../../protocol";
 import type { TopicHandler } from "../dataSource";
@@ -49,6 +50,9 @@ export interface ViewHost {
   ownWallets(): ReadonlySet<string>;
   /** Total venue fee in bps for a trade context, once the trade engine has the program accounts. */
   feeBps(ctx: TradeContext): number | null;
+  /** The last Jupiter route the trade engine quoted for a mint (labels, impact), if any. */
+  route(mint: string): TradeRoute | null;
+  /** Fee engine loaded, or a new route quoted: views recompute venue state. */
   onEngineReady(fn: () => void): () => void;
   chain(): ChainState | null;
   onChain(fn: (chain: ChainState) => void): () => void;
@@ -198,9 +202,14 @@ export class PulseView extends View<`pulse:${PulseColumnId}`> {
 // Token detail: token:<mint> (summary) + tradectx:<mint> (curve / pool for the display quote)
 // ---------------------------------------------------------------------------------------------
 
+/** Wrapped SOL: trade contexts name it as the quote of SOL pairs. */
+const WSOL = "So11111111111111111111111111111111111111112";
+
 export class TokenView extends View<`token:${string}`> {
   private summary: WireToken | null = null;
   private ctx: TradeContext | null = null;
+  /** The tradectx snapshot arrived (a null context then means the server has none: Jupiter fallback). */
+  private ctxKnown = false;
   private offs: (() => void)[] = [];
 
   constructor(
@@ -228,11 +237,24 @@ export class TokenView extends View<`token:${string}`> {
     return this.summary ? this.detail(this.summary) : null;
   }
 
-  private venue(): Pick<TokenDetail, "curve" | "pool"> {
+  /**
+   * Curve or pool for SOL-quoted coins the engine builds locally; otherwise (no trade context, or a quote
+   * other than SOL) the Jupiter route the trade engine uses for them.
+   */
+  private venue(): Pick<TokenDetail, "curve" | "pool" | "route"> {
     const ctx = this.ctx;
+    if (this.ctxKnown && (!ctx || ctx.quoteMint !== WSOL)) {
+      const route: TradeRoute = this.host.route(this.mint) ?? {
+        via: "jupiter",
+        reason: ctx ? "quoted in a token other than SOL" : "no pump.fun curve or PumpSwap pool the server can price",
+        labels: [],
+        priceImpactPct: null,
+      };
+      return { curve: null, pool: null, route };
+    }
     const fee = ctx ? this.host.feeBps(ctx) : null;
-    if (!ctx || fee === null) return { curve: null, pool: null };
-    return { curve: curveStateOf(ctx, fee), pool: poolStateOf(ctx, fee) };
+    if (!ctx || fee === null) return { curve: null, pool: null, route: null };
+    return { curve: curveStateOf(ctx, fee), pool: poolStateOf(ctx, fee), route: null };
   }
 
   private detail(s: WireToken): TokenDetail {
@@ -276,6 +298,7 @@ export class TokenView extends View<`token:${string}`> {
   private onCtx(m: WireMessage): void {
     if (m.type !== "snapshot" && m.type !== "delta") return;
     this.ctx = (m.data as TradeContext | null) ?? null;
+    this.ctxKnown = true;
     this.pushVenue();
   }
 

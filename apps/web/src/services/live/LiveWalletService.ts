@@ -135,6 +135,11 @@ export class LiveWalletService implements WalletService {
     return this.state;
   }
 
+  /** The connected wallet (direct-mode trades sign through its popup); null while none is connected. */
+  connectedSession(): ConnectedSession | null {
+    return this.conn;
+  }
+
   subscribe(listener: (state: WalletServiceState) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

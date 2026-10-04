@@ -2,6 +2,16 @@
  * Test doubles for the live services: a scripted WebSocket and a manual clock. Used by the
  * apps/web live tests (bun test); not imported by app code.
  */
+import {
+  createSignerPolicy,
+  MemoryStore,
+  type MessageEndpoint,
+  type SpendState,
+  type StoredVault,
+  startSignerWorker,
+} from "@zerofee/signer";
+import { decodeSignerConfig } from "./signerConfig";
+import type { WorkerLike } from "./signerHost";
 import type { Clock, SocketLike } from "./socket";
 
 export class FakeSocket implements SocketLike {
@@ -133,4 +143,48 @@ export function socketFactory(): { sockets: FakeSocket[]; create: (url: string) 
       return s;
     },
   };
+}
+
+/**
+ * An in-process signer "worker": the handlers the real worker entry starts (packages/signer's
+ * startSignerWorker with the shipped createSignerPolicy and the config decoded from the worker name), over a
+ * real MessageChannel (structured cloning, like a Web Worker). Fast KDF, for tests only.
+ */
+export function inProcessSignerFactory(stores?: { vault: MemoryStore<StoredVault>; spend: MemoryStore<SpendState> }) {
+  const s = stores ?? { vault: new MemoryStore<StoredVault>(), spend: new MemoryStore<SpendState>() };
+  const started: string[] = [];
+  const stops: (() => void)[] = [];
+  const factory = (name: string): WorkerLike => {
+    started.push(name);
+    const cfg = decodeSignerConfig(name);
+    if (!cfg) throw new Error("bad config");
+    const ch = new MessageChannel();
+    ch.port1.start();
+    ch.port2.start();
+    const handle = startSignerWorker({
+      policy: createSignerPolicy({ caps: { maxBuyLamports: BigInt(cfg.maxBuyLamports) } }),
+      dailyCaps: { buyLamports: BigInt(cfg.dailyBuyLamports), feeLamports: BigInt(cfg.dailyFeeLamports) },
+      vault: { kdfParams: { memoryKiB: 64, iterations: 1, parallelism: 1 }, allowWeakKdfForTesting: true, autoLockMs: cfg.autoLockMs },
+      vaultStorage: s.vault,
+      spendStorage: s.spend,
+      endpoint: ch.port2 as unknown as MessageEndpoint,
+    });
+    const port = ch.port1 as unknown as MessageEndpoint;
+    const terminate = () => {
+      handle.stop();
+      ch.port1.close();
+      ch.port2.close();
+    };
+    stops.push(terminate);
+    return Object.assign(Object.create(null), {
+      postMessage: (m: unknown) => port.postMessage(m),
+      addEventListener: (t: "message", l: (e: MessageEvent) => void) => port.addEventListener(t, l),
+      removeEventListener: (t: "message", l: (e: MessageEvent) => void) => port.removeEventListener(t, l),
+      terminate,
+    }) as WorkerLike;
+  };
+  const stopAll = () => {
+    for (const stop of stops.splice(0)) stop();
+  };
+  return { factory, started, stopAll };
 }

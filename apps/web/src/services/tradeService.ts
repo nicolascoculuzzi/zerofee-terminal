@@ -81,6 +81,10 @@ export interface TradeReceipt {
     priceSol: number;
     fees: TradeFees;
   } | null;
+  /** Dry run (server DRY_RUN=true): the signed transaction was simulated and nothing was sent. */
+  simulated?: boolean;
+  /** Jupiter fallback: the venues of the route, in order. */
+  route?: string[];
 }
 
 export interface LimitOrderRequest {

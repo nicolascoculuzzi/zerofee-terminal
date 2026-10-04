@@ -5,15 +5,19 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 /**
  * Strict Content-Security-Policy for production builds (SPEC.md, "Front-end integrity").
  * The simulation needs no network origin besides 'self'. A live build also connects to the gateway
- * (VITE_API_ORIGIN and its ws:/wss: twin; same-origin needs nothing extra). Token images come through
+ * (VITE_API_ORIGIN and its ws:/wss: twin; same-origin needs nothing extra) and to Jupiter's Swap API,
+ * which the browser calls itself for the long-tail fallback (quotes and routes). Token images come through
  * the gateway's same-origin image proxy, so img-src stays 'self' (data: covers wallet logos from Wallet
  * Standard). The signer worker is a same-origin module ('self'); its Argon2 WebAssembly runs inside the
  * worker, which this meta-tag policy does not cover. Dev builds skip the policy because Vite injects
  * inline styles for HMR.
  */
-function csp(apiOrigin: string): string {
+const JUPITER_API_ORIGIN = "https://api.jup.ag";
+
+function csp(apiOrigin: string, live: boolean): string {
   const connect = ["'self'"];
   if (apiOrigin) connect.push(apiOrigin, apiOrigin.replace(/^http/, "ws"));
+  if (live) connect.push(JUPITER_API_ORIGIN);
   return [
     "default-src 'self'",
     "script-src 'self'",
@@ -80,7 +84,7 @@ export default defineConfig(({ mode }) => {
   return {
     // A literal, so the bundler drops the implementation that is not selected (src/services/index.ts).
     define: { "import.meta.env.VITE_DATA_SOURCE": JSON.stringify(live ? "live" : "mock") },
-    plugins: [react(), tailwindcss(), contentSecurityPolicy(csp(apiOrigin)), preloadPrimaryFont()],
+    plugins: [react(), tailwindcss(), contentSecurityPolicy(csp(apiOrigin, live)), preloadPrimaryFont()],
     server: { port: 5173, strictPort: false, proxy },
     preview: { port: 4173, proxy },
     worker: { format: "es" as const },
