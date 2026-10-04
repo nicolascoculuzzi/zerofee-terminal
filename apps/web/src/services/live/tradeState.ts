@@ -73,14 +73,20 @@ async function baseHolding(user: Address, mint: Address, program: TokenProgram, 
   return { ata, amount: inAta ? balance.amount : 0n, ataExists: inAta };
 }
 
-/** True when the coin trades against SOL (the venues core builds locally for a SOL-sized trade). */
-export function isSolQuoted(ctx: TradeContext): boolean {
-  return ctx.quoteMint === WSOL_MINT;
+/** A pump.fun curve or PumpSwap pool context: the venues the browser builds locally. */
+export type LocalTradeContext = CurveTradeContext | PoolTradeContext;
+
+/**
+ * True when the browser builds this coin's trade itself: a pump.fun or PumpSwap coin that trades against SOL.
+ * Everything else (Raydium LaunchLab / CPMM, other quotes) goes through the Jupiter fallback.
+ */
+export function isSolQuoted(ctx: TradeContext): ctx is LocalTradeContext {
+  return (ctx.venue === "pump" || ctx.venue === "pumpswap") && ctx.quoteMint === WSOL_MINT;
 }
 
 /** pump.fun curve or PumpSwap pool state from the streamed trade context. */
 export async function tokenStateFromContext(
-  ctx: TradeContext,
+  ctx: LocalTradeContext,
   programs: ProgramConfigs,
   u: UserInputs,
 ): Promise<PumpCurveState | PumpSwapState> {
@@ -212,6 +218,7 @@ export async function jupiterStateFor(
  */
 export function venueFeeBps(ctx: TradeContext, programs: ProgramConfigs | null): number | null {
   if (!programs) return null;
+  if (ctx.venue !== "pump" && ctx.venue !== "pumpswap") return null;
   try {
     if (ctx.venue === "pump") {
       if (!programs.global) return null;

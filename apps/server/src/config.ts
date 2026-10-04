@@ -23,9 +23,15 @@ export interface ServerConfig {
   rpcUrl: string;
   rpcWsUrl: string;
   rpcLogsCommitment: RpcCommitment;
-  rpcLogsPrograms: ("pump" | "pumpswap")[];
+  rpcLogsPrograms: ("pump" | "pumpswap" | "launchlab" | "cpmm")[];
   /** Bounded queue between the WebSocket and the decoder; overflow drops the oldest. */
   rpcLogsQueueMax: number;
+  /**
+   * getTransaction calls per second the RPC logs source may spend re-reading Raydium transactions (their
+   * events lack mints and wallets; graduations emit no event). 0 = logs only (Raydium trades then carry no
+   * trader and graduations are found by pool checks).
+   */
+  rpcLogsTxFetchPerSec: number;
   blockhashPollMs: number;
 
   yellowstoneEndpoint: string | null;
@@ -289,10 +295,12 @@ function base64UrlBytes(text: string): Uint8Array | null {
 
 export function loadConfig(env: Env = process.env): ServerConfig {
   const rpcUrl = str(env, "RPC_URL", DEFAULT_RPC_URL);
-  const programs = list(env, "RPC_LOGS_PROGRAMS", ["pump", "pumpswap"]);
+  const programs = list(env, "RPC_LOGS_PROGRAMS", ["pump", "pumpswap", "launchlab", "cpmm"]);
   // Curated, source-cited fee-wallet registry (market/feeWallets.ts) plus operator additions.
   const pros = proTraderSet(oneOf(env, "PRO_TRADER_PROVENANCE", "all", ["all", "vendor-docs"]), list(env, "PRO_TRADER_WALLETS", []));
-  for (const p of programs) if (p !== "pump" && p !== "pumpswap") throw new Error("RPC_LOGS_PROGRAMS entries must be pump or pumpswap");
+  for (const p of programs)
+    if (!["pump", "pumpswap", "launchlab", "cpmm"].includes(p))
+      throw new Error("RPC_LOGS_PROGRAMS entries must be pump, pumpswap, launchlab or cpmm");
   const cfg: ServerConfig = {
     host: str(env, "SERVER_HOST", "127.0.0.1"),
     port: int(env, "SERVER_PORT", 8787, 0, 65535),
@@ -301,8 +309,9 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcUrl,
     rpcWsUrl: str(env, "RPC_WS_URL", rpcUrl.replace(/^http/, "ws")),
     rpcLogsCommitment: oneOf<RpcCommitment>(env, "RPC_LOGS_COMMITMENT", "processed", ["processed", "confirmed"]),
-    rpcLogsPrograms: programs as ("pump" | "pumpswap")[],
+    rpcLogsPrograms: programs as ServerConfig["rpcLogsPrograms"],
     rpcLogsQueueMax: int(env, "RPC_LOGS_QUEUE_MAX", 50_000, 100, 10_000_000),
+    rpcLogsTxFetchPerSec: int(env, "RPC_LOGS_TX_FETCH_RPS", 2, 0, 1_000),
     blockhashPollMs: int(env, "BLOCKHASH_POLL_MS", 2_000, 250, 60_000),
     yellowstoneEndpoint: optional(env, "YELLOWSTONE_ENDPOINT"),
     yellowstoneXToken: optional(env, "YELLOWSTONE_X_TOKEN"),

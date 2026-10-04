@@ -3,12 +3,14 @@
  * with recorded updates (no paid endpoint needed).
  *
  * Transactions carry the full message + meta: events are decoded from the event-CPI inner instructions
- * (logs only as fallback), PumpSwap pool mints come from swap instruction accounts, signers from the
- * header, and absolute post-tx token balances from pre/post token balances.
+ * (logs only as fallback), PumpSwap pool mints and Raydium mints / wallets / graduations come from
+ * instruction accounts (ingest/raydium.ts), signers from the header, and absolute post-tx token balances
+ * from pre/post token balances.
  */
 import { type Address, getAddressDecoder, getBase58Decoder } from "@solana/kit";
 import type { SubscribeUpdate } from "@triton-one/yellowstone-grpc";
 import { decodeTransactionEvents, extractAmmPoolMints, type TransactionEventInput, type TxInstruction } from "@zerofee/core";
+import { extractRaydium } from "./raydium";
 import type { BlockMeta, IngestTx, SlotStatus, TokenBalanceUpdate } from "./types";
 
 const addressDecoder = getAddressDecoder();
@@ -93,6 +95,11 @@ export function parseSubscribeUpdate(u: SubscribeUpdate, receivedAt: number): Pa
         signers: accountKeys.slice(0, msg.header?.numRequiredSignatures ?? 1),
         accountKeys,
         poolMints: r.events.some((e) => e.kind === "ammBuy" || e.kind === "ammSell") ? extractAmmPoolMints(input) : [],
+        raydium: extractRaydium(
+          input,
+          r.events,
+          meta.postTokenBalances.map((b) => ({ accountIndex: b.accountIndex, amount: b.uiTokenAmount?.amount ?? "0" })),
+        ),
         tokenBalances: tokenBalancesFromMeta(meta.preTokenBalances, meta.postTokenBalances),
         lamports: { pre: meta.preBalances, post: meta.postBalances },
       },

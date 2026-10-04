@@ -2,6 +2,27 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-04: Raydium LaunchLab + CPMM in the live feed (public RPC, laptop)
+
+Setup: `https://api.mainnet-beta.solana.com`, `INGEST_SOURCE=rpc`, `RPC_LOGS_PROGRAMS=pump,pumpswap,launchlab,cpmm`, `RPC_LOGS_TX_FETCH_RPS=2`, `DRY_RUN=true`, server in-process with an anonymous socket on the Pulse topics. Two runs on a Sunday morning UTC (05:42-05:49 and 05:50-05:56). An independent `logsSubscribe` counter on the LaunchLab program ran alongside the second one.
+
+| | Run 1 (7 min) | Run 2 (6 min, final code) |
+|---|---|---|
+| pump launches | 173 | 135 |
+| LaunchLab launches | 3 | 1 (probe: 1 initialize) |
+| LaunchLab trades | 81 (2-25/min) | 40 (3-11/min; probe: 43 swap instructions) |
+| LaunchLab curves completed / graduations seen | 0 / 0 | 0 / 0 |
+| Earlier graduates found through their CPMM pool | 149 | 145 |
+| CPMM trades on graduation pools / swaps on other pools ignored | 484 / 583 | 374 / 400 |
+| Decode failures | 0 | 0 |
+| LaunchLab coins in Pulse (seen on the socket) | new 3, final 4, migrated 0 | new 1, final 2, migrated 0 |
+| LaunchLab coins with a trade context | 180 of 183 | 170 of 171 |
+
+- LaunchLab was quiet at that hour: about 0.5 launches and 7-14 trades per minute against pump's 20-25 launches. The "half of all launches" share is not what this window showed. No curve completed, so the graduation path was not exercised live; it is covered by tests on the real `migrate_to_cpswap`.
+- Every LaunchLab coin seen on Pulse was StonkFun, and most were quoted in xStocks or other tokens. Those carried null SOL values with known quote-unit prices. No SOL value was ever 0.
+- `getTransaction` on the public RPC answered HTTP 429 even at 2/s (60 of about 400 calls in run 2). Re-reads now pause on their own client during the cooldown. In run 2, 87 transactions waited past 20 s and kept their logs-only record. Most trades without a wallet (252 in run 2) are swaps on graduates found after the fact, which are logs-only by design (`wantsRaydiumTx`). Run 1, before that rule, let those swaps take the whole budget.
+- Classifying unknown CPMM pools took one batched read of two LaunchLab PDAs per new pool. About 95-120 pools were rejected per run, and later swaps on them cost nothing.
+
 ## 2026-10-03: Jupiter hops are not checked by Jupiter (mainnet simulation)
 
 `bun run packages/core/scripts/jupiter-hop-redirect.ts <wallet> <mint> <other holder>` builds a real `/build` route, then points only the hop's output account at another holder's token account. `user_destination_token_account` stays the wallet's ATA. Both versions are simulated (public RPC, unsigned, never sent).

@@ -11,7 +11,7 @@
  * per frame; nothing is built for users without a subscribed socket. A dead slot removes its matches
  * from the rings and sends `correction { remove }` to the owners.
  */
-import type { CorrectionReason, Launchpad, TrackedRowKind, TrackedTradeRow, TradeTag } from "@zerofee/protocol";
+import type { CorrectionReason, Launchpad, TrackedRowKind, TrackedTradeRow, TradeTag, TradeVenue } from "@zerofee/protocol";
 import { LruMap } from "../util/lru";
 import type { WalletIndex, Watcher } from "./walletIndex";
 
@@ -38,7 +38,7 @@ export interface MatchRecord {
   name: string;
   image: string | null;
   launchpad: Launchpad;
-  venue: "pump" | "pumpswap";
+  venue: TradeVenue;
   amountSol: number | null;
   amountUsd: number | null;
   tokenAmount: string;
