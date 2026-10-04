@@ -9,6 +9,7 @@
  */
 
 import { FINAL_STRETCH_EXIT, FINAL_STRETCH_PROGRESS } from "../../config";
+import { fmtPct, fmtSol } from "../../lib/format";
 import type {
   ActivityItem,
   Candle,
@@ -2049,14 +2050,14 @@ export class SimEngine {
       const sol = p.solAmount ?? 0;
       if (sol <= 0) return { ok: false, error: "Amount must be greater than zero" };
       if (u.sol < sol + extra) {
-        return { ok: false, error: `Insufficient SOL: need ${(sol + extra).toFixed(4)}, have ${u.sol.toFixed(4)}` };
+        return { ok: false, error: `Insufficient SOL: need ${fmtSol(sol + extra)}, have ${fmtSol(u.sol)}` };
       }
       const q = t.pool ? quotePoolBuy(t.pool, sol) : quoteCurveBuy(t.curve, sol);
       if (q.tokens <= 0) return { ok: false, error: "Nothing left to buy on the curve" };
       const exec = q.sol / q.tokens;
       const moved = (exec / p.expectedPriceSol - 1) * 100;
       if (p.expectedPriceSol > 0 && moved > p.slippagePct) {
-        return { ok: false, error: `Slippage exceeded: price moved ${moved.toFixed(1)}% (max ${p.slippagePct}%)` };
+        return { ok: false, error: `Slippage exceeded: price moved ${fmtPct(moved)} (max ${p.slippagePct}%)` };
       }
       if (t.pool) applyPoolBuy(t.pool, q);
       else applyCurveBuy(t.curve, q);
@@ -2121,7 +2122,7 @@ export class SimEngine {
     const exec = q.sol / q.tokens;
     const moved = (1 - exec / p.expectedPriceSol) * 100;
     if (p.expectedPriceSol > 0 && moved > p.slippagePct) {
-      return { ok: false, error: `Slippage exceeded: price moved ${moved.toFixed(1)}% (max ${p.slippagePct}%)` };
+      return { ok: false, error: `Slippage exceeded: price moved ${fmtPct(moved)} (max ${p.slippagePct}%)` };
     }
     if (u.sol < extra) return { ok: false, error: "Insufficient SOL for network fees" };
     if (t.pool) applyPoolSell(t.pool, q);

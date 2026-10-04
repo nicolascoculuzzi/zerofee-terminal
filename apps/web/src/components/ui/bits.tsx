@@ -137,17 +137,17 @@ export function EmptyState({
   );
 }
 
-/** SOL glyph as SVG (the "◎" character isn't in our fonts). Only where a unit word doesn't fit. */
+/** SOL glyph as SVG (the U+25CE character isn't in our fonts). Only where a unit word doesn't fit. */
 export function SolGlyph({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 12 12" className={cn("inline-block size-3 shrink-0", className)} role="img" aria-label="SOL">
-      <circle cx="6" cy="6" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.25" />
-      <circle cx="6" cy="6" r="2" fill="none" stroke="currentColor" strokeWidth="1.25" />
+      <circle cx="6" cy="6" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <circle cx="6" cy="6" r="2" fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
 
-/** X links show the letter "X" in Plex Sans 600 (no brand logos, no "𝕏" fallback glyph). */
+/** X links show the letter "X" in Plex Sans 600 (no brand logos, no U+1D54F fallback glyph). */
 export function XGlyph({ className }: { className?: string }) {
   return (
     <span aria-hidden="true" className={cn("inline-flex w-3 justify-center text-label font-semibold leading-none", className)}>

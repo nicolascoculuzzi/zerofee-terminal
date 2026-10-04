@@ -1,3 +1,4 @@
+import { fmtSol } from "../../lib/format";
 import type {
   ApprovalRequest,
   ConnectedWallet,
@@ -169,7 +170,7 @@ export class MockWalletService implements WalletService {
     const wallet = this.state.tradingWallets.find((w) => w.id === walletId && !w.archived);
     if (!wallet) throw new Error("Unknown trading wallet");
     const sol = this.engine.userSol(wallet.address);
-    if (sol > 0.001) throw new Error(`Withdraw its ${Number(sol.toFixed(4))} SOL first.`);
+    if (sol > 0.001) throw new Error(`Withdraw its ${fmtSol(sol)} SOL first.`);
     const orders = this.engine.liveOrderCount(wallet.address);
     if (orders > 0) throw new Error(`Cancel its ${orders} armed order${orders === 1 ? "" : "s"} first.`);
     await wait(300);

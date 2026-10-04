@@ -11,7 +11,7 @@ export interface Quote {
   /** SOL paid incl. venue fee (buy) or received net of it (sell). */
   sol: number;
   venueFeeSol: number;
-  /** Execution price vs spot, %. Always ≥ 0. */
+  /** Execution price vs spot, %. Never negative. */
   impactPct: number;
   /** Buy hit the end of the curve and was capped. */
   capped: boolean;

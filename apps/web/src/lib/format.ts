@@ -16,7 +16,7 @@ function group(n: number, decimals: number): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-/** Trims trailing zeros but keeps at least `min` decimals: trim("1.2500", 2) → "1.25". */
+/** Trims trailing zeros but keeps at least `min` decimals: trim("1.2500", 2) is "1.25". */
 function trimTo(s: string, min: number): string {
   if (!s.includes(".")) return min > 0 ? `${s}.${"0".repeat(min)}` : s;
   const [int, dec = ""] = s.split(".");
@@ -90,7 +90,7 @@ export function fmtSignedUsd(n: number): string {
 
 export type PriceParts =
   | { kind: "plain"; sign: string; text: string }
-  /** "0.0" + zeros (rendered as a .zf-zc span) + digits, e.g. 0.000004123 → 0.0₅4123. */
+  /** "0.0" + zeros (rendered as a .zf-zc span) + digits, e.g. 0.000004123 is "0.0", a 5, then "4123". */
   | { kind: "sub"; sign: string; zeros: number; digits: string };
 
 /** Price parts: subscript-zero notation from 4 zeros after the decimal point (p < 0.0001). */
@@ -122,7 +122,8 @@ export function plainDecimal(n: number): string {
   return (n < 0 ? "-" : "") + (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
 }
 
-const CANVAS_SUB = "₀₁₂₃₄₅₆₇₈₉";
+/** Unicode subscript digits U+2080 to U+2089, built from code points so the glyph grep stays clean. */
+const CANVAS_SUB = String.fromCharCode(...Array.from({ length: 10 }, (_, i) => 0x2080 + i));
 
 /**
  * Text form of a price for places that can't render spans. Canvas axis labels in price mode

@@ -331,13 +331,13 @@ export function chordFromEvent(e: KeyboardEvent, spaceHeld: boolean): string | n
   return parts.join("+");
 }
 
-/** Human label: "Space+Q" → ["␣", "Q"], "Mod+K" → ["⌘", "K"]. */
+/** Human label in words: "Space+Q" gives ["Space", "Q"], "Mod+K" gives ["Cmd", "K"] on macOS. */
 export function bindingLabel(text: string): string[][] {
   const binding = parseBinding(text);
   if (!binding) return [[text]];
   return binding.map((c) => {
     const keys: string[] = [];
-    // Words, never ⌘ ⇧ ⌥ glyphs (missing from our fonts, DESIGN.md 2.2). <Hotkey> draws the
+    // Words, never the macOS modifier glyphs (missing from our fonts, DESIGN.md 2.2). <Hotkey> draws the
     // macOS modifiers as icons.
     if (c.space) keys.push("Space");
     if (c.mod) keys.push(IS_MAC ? "Cmd" : "Ctrl");

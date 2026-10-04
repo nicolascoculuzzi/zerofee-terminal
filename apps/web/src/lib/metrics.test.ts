@@ -24,7 +24,7 @@ describe("risk bands (DESIGN.md 3.11)", () => {
     expect(riskTone("snipers", null)).toBe("unknown");
     expect(riskTone("snipers", Number.NaN)).toBe("unknown");
   });
-  test("tooltips write the bands out without ≥ glyphs", () => {
+  test("tooltips write the bands out in words, without comparison glyphs", () => {
     expect(bandsText("top10")).toBe("Green under 20% · Amber 20–35% · Red 35% or more");
   });
 });

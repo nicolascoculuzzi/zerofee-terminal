@@ -16,7 +16,7 @@ describe("pump-style bonding curve (simulation)", () => {
   test("starts at 30 SOL / 1.073B virtual reserves", () => {
     const c = newCurve();
     expect(curvePrice(c)).toBeCloseTo(30 / 1_073_000_000, 15);
-    // ≈ 27.96 SOL market cap at launch
+    // About 27.96 SOL market cap at launch
     expect(curvePrice(c) * PUMP.totalSupply).toBeCloseTo(27.96, 2);
     expect(curveProgress(c)).toBe(0);
   });

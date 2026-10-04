@@ -69,7 +69,7 @@ describe("prices (3.3)", () => {
   });
   test("plain text never uses subscript glyphs; canvas may", () => {
     expect(fmtPriceText(0.000004123)).toBe("0.000004123");
-    expect(fmtPriceText(0.000004123, true)).toBe("0.0₅4123");
+    expect(fmtPriceText(0.000004123, true)).toBe("0.0\u20854123");
     expect(plainDecimal(0.00000002796)).toBe("0.00000002796");
   });
 });

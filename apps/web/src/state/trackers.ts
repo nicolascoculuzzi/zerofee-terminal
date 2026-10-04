@@ -47,7 +47,7 @@ export interface TrackersState {
   markRead(kind: "trades" | "posts"): void;
 }
 
-/** "@Name" → "name"; null when it isn't a valid X handle (1–15 of a–z, 0–9, _). */
+/** "@Name" becomes "name"; null when it isn't a valid X handle (1–15 of a–z, 0–9, _). */
 function normalizeHandle(raw: string): string | null {
   const handle = raw.trim().replace(/^@/, "").toLowerCase();
   return /^[a-z0-9_]{1,15}$/.test(handle) ? handle : null;

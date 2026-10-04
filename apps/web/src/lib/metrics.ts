@@ -185,7 +185,7 @@ export function riskTone(key: RiskKey, pct: number | null | undefined, threshold
   return "bad";
 }
 
-/** Bands written out for tooltips, with no ≥ glyph: "Green under 20% · Amber 20–35% · Red 35% or more". */
+/** Bands written out for tooltips, with no comparison glyph: "Green under 20% · Amber 20–35% · Red 35% or more". */
 export function bandsText(key: RiskKey, thresholds: RiskThresholds = RISK_DEFAULTS): string {
   const [mid, high] = thresholds[key];
   return `Green under ${mid}% · Amber ${mid}–${high}% · Red ${high}% or more`;

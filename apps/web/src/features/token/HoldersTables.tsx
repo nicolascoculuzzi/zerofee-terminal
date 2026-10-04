@@ -166,7 +166,7 @@ function holderCell(v: HolderView, key: HolderKey, token: TokenSummary, tracked:
         <span className="flex items-center gap-2">
           <span className="zf-num">{fmtPct(h.pct)}</span>
           <span aria-hidden="true" className="h-1 w-10 bg-surface-3">
-            <span className="block h-full bg-hairline-strong" style={{ width: `${Math.min(100, h.pct)}%` }} />
+            <span className="block h-full bg-fg-3/50" style={{ width: `${Math.min(100, h.pct)}%` }} />
           </span>
         </span>
       );

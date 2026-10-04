@@ -124,12 +124,12 @@ export type DeltaData<T extends Topic> = T extends `pulse:${string}`
                   ? SocialDelta
                   : never;
 
-/** Server → client envelope: `{ type: 'snapshot' | 'delta', topic, seq, data }`. */
+/** Server-to-client envelope: `{ type: 'snapshot' | 'delta', topic, seq, data }`. */
 export type ServerMessage<T extends Topic = Topic> =
   | { type: "snapshot"; topic: T; seq: number; ts?: number; data: SnapshotData<T> }
   | { type: "delta"; topic: T; seq: number; ts?: number; data: DeltaData<T> };
 
-/** Client → server messages. */
+/** Client-to-server messages. */
 export type ClientMessage = { op: "subscribe"; topics: Topic[] } | { op: "unsubscribe"; topics: Topic[] } | { op: "ping"; ts: number };
 
 // ---------------------------------------------------------------------------

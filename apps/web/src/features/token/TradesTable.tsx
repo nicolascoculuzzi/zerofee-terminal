@@ -412,7 +412,7 @@ export function MobileTradesList({ supply }: { supply: number }) {
   const rows = trades.slice(0, 100);
   if (rows.length === 0) return <EmptyState title="No trades yet" body="New trades appear within about a second of landing." />;
   return (
-    <ul aria-label="Trades" className="divide-y divide-hairline">
+    <ul aria-label="Trades">
       {rows.map((t) => {
         const buy = t.side === "buy";
         return (
