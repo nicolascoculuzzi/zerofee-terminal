@@ -37,7 +37,15 @@ export interface ServerConfig {
    * HTTP read shares the per-IP allowance with the logs stream; keep this low there, or point RPC_URL elsewhere.
    */
   rpcMaxConcurrent: number;
+  /** After a reconnect or a lost transaction, gap-fill the active coins from chain (history service). */
+  rpcLogsGapFill: boolean;
+  /** Recycle the logs socket after this long without any message. */
+  rpcLogsIdleMs: number;
+  /** Recycle it when pump is silent this many slots while slots advance (0 = off). */
+  rpcLogsSilenceSlots: number;
   blockhashPollMs: number;
+  /** Trade-history backfill and gap-fill from chain (src/history). */
+  history: HistoryConfig;
 
   yellowstoneEndpoint: string | null;
   yellowstoneXToken: string | null;
@@ -184,6 +192,39 @@ export interface ServerConfig {
   orders: OrdersConfig;
 }
 
+export interface HistoryConfig {
+  enabled: boolean;
+  /** Endpoint for history reads (getSignaturesForAddress, getTransaction); its own client and 429 cooldown. */
+  rpcUrl: string;
+  /** Calls per second for history reads (the public RPC 429s at ~2/s on getTransaction; live re-reads go first). */
+  rps: number;
+  /** getTransaction calls per JSON-RPC batch (1 = no batching; each item still counts against `rps`). */
+  batch: number;
+  /** Most transactions fetched per coin and backfill (pump.fun coins can have thousands of trades). */
+  maxTxPerCoin: number;
+  /** Most getSignaturesForAddress pages (1,000 each) per account and backfill. */
+  maxSignaturePages: number;
+  /** Also backfill coins nobody views (first seen mid-life), after the viewed and Final Stretch / Migrated ones. */
+  background: boolean;
+  /** Most queued coins (the background tier is trimmed first). */
+  queueMax: number;
+  /** A backfilled coin's trades are kept this long past TRADES_RETENTION_HOURS (0 = normal retention). */
+  retainDays: number;
+  /** Transactions per merge round (trades stored, candles rebuilt, a backfill correction published). */
+  mergeEvery: number;
+  /** Wait after a feed gap before gap-filling (in-flight re-reads land first). */
+  gapDelayMs: number;
+  /**
+   * Re-check a viewed coin's newest trades against the chain this often (a getSignaturesForAddress page down to the
+   * last signature covered; drops the feed never noticed are caught here). 0 = off.
+   */
+  viewRefreshMs: number;
+  /** The same for Final Stretch / Migrated coins (0 = off). */
+  listedRefreshMs: number;
+  /** Helius getTransactionsForAddress full pages (needs HELIUS_API_KEY; HISTORY_RPC_URL defaults to Helius). */
+  helius: boolean;
+}
+
 type Env = Record<string, string | undefined>;
 
 function str(env: Env, name: string, def: string): string {
@@ -322,7 +363,11 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     rpcLogsQueueMax: int(env, "RPC_LOGS_QUEUE_MAX", 50_000, 100, 10_000_000),
     rpcLogsTxFetchPerSec: int(env, "RPC_LOGS_TX_FETCH_RPS", 2, 0, 1_000),
     rpcMaxConcurrent: int(env, "RPC_MAX_CONCURRENT", 4, 1, 256),
+    rpcLogsGapFill: bool(env, "RPC_LOGS_GAP_FILL", true),
+    rpcLogsIdleMs: int(env, "RPC_LOGS_IDLE_MS", 10_000, 1_000, 600_000),
+    rpcLogsSilenceSlots: int(env, "RPC_LOGS_SILENCE_SLOTS", 40, 0, 100_000),
     blockhashPollMs: int(env, "BLOCKHASH_POLL_MS", 2_000, 250, 60_000),
+    history: loadHistory(env, rpcUrl),
     yellowstoneEndpoint: optional(env, "YELLOWSTONE_ENDPOINT"),
     yellowstoneXToken: optional(env, "YELLOWSTONE_X_TOKEN"),
     yellowstoneCommitment: oneOf<RpcCommitment>(env, "YELLOWSTONE_COMMITMENT", "processed", ["processed", "confirmed"]),
@@ -443,6 +488,28 @@ export function loadConfig(env: Env = process.env): ServerConfig {
   if (cfg.monitoring.metricsToken !== null && cfg.monitoring.metricsToken.length < 16)
     throw new Error("METRICS_TOKEN must be at least 16 characters (openssl rand -hex 32)");
   return cfg;
+}
+
+function loadHistory(env: Env, rpcUrl: string): HistoryConfig {
+  const heliusKey = optional(env, "HELIUS_API_KEY");
+  const helius = bool(env, "HISTORY_HELIUS", false) && heliusKey !== null;
+  const heliusRpc = `${str(env, "HELIUS_RPC_URL", "https://mainnet.helius-rpc.com").replace(/\/+$/, "")}/?api-key=${heliusKey ?? ""}`;
+  return {
+    enabled: bool(env, "HISTORY_ENABLED", true),
+    rpcUrl: str(env, "HISTORY_RPC_URL", helius ? heliusRpc : rpcUrl),
+    rps: float(env, "HISTORY_RPS", 1, 0.05, 10_000),
+    batch: int(env, "HISTORY_BATCH", 1, 1, 100),
+    maxTxPerCoin: int(env, "HISTORY_MAX_TX_PER_COIN", 3_000, 10, 1_000_000),
+    maxSignaturePages: int(env, "HISTORY_MAX_SIG_PAGES", 30, 1, 10_000),
+    background: bool(env, "HISTORY_BACKGROUND", true),
+    queueMax: int(env, "HISTORY_QUEUE_MAX", 2_000, 10, 1_000_000),
+    retainDays: int(env, "HISTORY_RETAIN_DAYS", 14, 0, 3_650),
+    mergeEvery: int(env, "HISTORY_MERGE_EVERY", 40, 1, 10_000),
+    gapDelayMs: int(env, "HISTORY_GAP_DELAY_MS", 15_000, 0, 600_000),
+    viewRefreshMs: int(env, "HISTORY_VIEW_REFRESH_MS", 60_000, 0, 86_400_000),
+    listedRefreshMs: int(env, "HISTORY_LISTED_REFRESH_MS", 600_000, 0, 86_400_000),
+    helius,
+  };
 }
 
 function loadAuth(env: Env): ServerConfig["auth"] {

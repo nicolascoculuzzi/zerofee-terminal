@@ -186,6 +186,11 @@ export class PulseBoard {
     return best.map(([mint]) => mint);
   }
 
+  /** Mints in a published list (no order). */
+  members(col: PulseColumn): string[] {
+    return [...this.published[col].keys()];
+  }
+
   /**
    * The column's published list as JSON (`snapshot(col)` serialized), cached until the list changes: every
    * client connecting between two flushes shares one serialization.

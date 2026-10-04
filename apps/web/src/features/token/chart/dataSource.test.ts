@@ -7,6 +7,7 @@ import {
   type FeedDeps,
   type FeedStatus,
   fromWire,
+  HISTORY_POLL_MS,
   type HistoryInfo,
   historyStateOf,
   type OlderPage,
@@ -221,5 +222,31 @@ describe("wire helpers", () => {
     expect(historyStateOf({ historyState: "partial" })).toBe("partial");
     expect(historyStateOf({ history: "weird" })).toBe("unknown");
     expect(historyStateOf(null)).toBe("unknown");
+    // the server's TokenHistory object
+    expect(historyStateOf({ history: { state: "complete", fromCreation: true } })).toBe("complete");
+  });
+
+  test("the server's coverage is polled while incomplete; an adapter's missing field never overrides it", async () => {
+    const h = harness();
+    const answers = ["backfilling", "backfilling", "complete"] as const;
+    let calls = 0;
+    const deps = (h.feed as unknown as { deps: FeedDeps }).deps;
+    deps.fetchHistory = () => Promise.resolve(answers[Math.min(calls++, answers.length - 1)] ?? "complete");
+    h.feed.start();
+    await tick();
+    expect(h.history.at(-1)?.state).toBe("backfilling");
+    h.feed.setHistoryState("unknown"); // the adapted summary carries no field
+    expect(h.history.at(-1)?.state).toBe("backfilling");
+    for (let i = 0; i < 2; i++) {
+      const t = h.timers.find((x) => x.ms === HISTORY_POLL_MS);
+      expect(t).toBeDefined();
+      h.timers.splice(h.timers.indexOf(t as (typeof h.timers)[number]), 1);
+      t?.fn();
+      await tick();
+    }
+    expect(calls).toBe(3);
+    expect(h.history.at(-1)?.state).toBe("complete");
+    expect(h.timers.some((x) => x.ms === HISTORY_POLL_MS)).toBe(false);
+    h.feed.stop();
   });
 });

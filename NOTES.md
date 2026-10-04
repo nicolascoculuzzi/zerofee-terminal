@@ -2,6 +2,38 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-04: trade capture audit, gap repair and history backfill (public RPC, laptop)
+
+Setup: `https://api.mainnet-beta.solana.com` for everything (feed, re-reads, history, verification) from one IP, `DRY_RUN=true`, reads only. Tool: `bun run apps/server/scripts/capture-audit.ts` (`--db` audits a running server's SQLite; `--inprocess` runs the server instrumented; `--backfill-only --mint` backfills and checks whole histories). Truth = `getSignaturesForAddress` on each coin's curve / pool, then `getTransaction` for every successful signature in the window, decoded with the live decoders; a trade is captured when the store holds one of the same signature and side for the coin.
+
+| Run | Code | Window | pump | PumpSwap | LaunchLab | CPMM | All |
+|---|---|---|---|---|---|---|---|
+| Preview server on :8787 (`--db`, 57 min uptime, 20 reconnects, ingest latency p50 28 s) | before | 10 min, 6 coins | 84/127 (66.1%) | 12/26 (46.2%) | - | - | 96/153 (62.7%) |
+| In-process, no outage in the window | before | 4.8 min, 7 coins | 28/28 | 19/19 | 5/5 | 5/5 | 57/57 (100%) |
+| In-process, two socket outages in the window (238 and 122 slots) | after | 4.4 min, 7 coins | 66/66 (100%) | 23/38 (60.5%) | (verifier hit the data allowance) | 23/28 (82.1%) | 112/132 (84.8%) |
+| In-process on merged main (speed pass: writer thread, ingest p50 ~1.1 s), no outage in the window | after | 4.8 min, 8 coins | 77/77 | 78/78 | 22/22 | 5/5 | 182/182 (100%) |
+
+Where trades were lost (instrumented runs: every notification, every decoded transaction and every socket up / down recorded):
+
+- **Coins first seen mid-life have no history at all.** 4,805 of the preview's 5,998 tokens were first seen mid-life. FLOP (`4ddZ…pump`, 97% bonding) had 2 stored trades while its curve has 439 signatures. This is what the token page showed.
+- **Socket outages.** logsSubscribe does not replay, so everything between the last notification and the reconnect is gone. The public socket stalls silently (the old watchdog waited 30 s), refuses upgrades ("Expected 101", TLS handshake failures) with backoff up to 30 s, and drops its backlog on reconnect: the 238-slot gap above is ~95 s of trades for a 2 s disconnect. The old run saw 5 outages (42, 4, 13, 35 s, …) in 12 minutes; the preview had 20 reconnects in 57 minutes. All 20 misses of the after run are classified "not delivered (reconnect gap)".
+- **Not observed:** truncated logs (0 of ~800k notifications), decode failures (0), decode-queue drops (0 in-process; the preview's queue peaked at 11,558 of 50,000 with 28 s ingest latency, so it was close). Raydium re-reads are budget-bound: 167-203 logs-only fallbacks per run (429s at 2/s), recorded without a wallet, not lost.
+
+What changed:
+
+- Live: the idle watchdog recycles after 10 s (was 30 s) and checks every second; a logs subscription that stalls while slots keep coming (pump silent 40 slots) is recycled too. Every outage is reported as a gap with its slot range. Truncated / incomplete logs (fewer trade events than pump / PumpSwap trade instructions, or an undecodable event) are re-read with getTransaction at top priority. Notifications the decode queue drops are re-read by signature, or reported as gaps. Everything is counted (`capture` in /api/health, `zerofee_capture_*` in /metrics). Yellowstone reports outages longer than its replay window as gaps.
+- History (`src/history`): gaps queue a gap-fill for the active coins (viewed, Final Stretch / Migrated, then the 50 busiest recent ones). Viewed coins are re-checked every 60 s and listed ones every 10 min (one signatures page down to the last signature covered), which also catches drops nothing signals. Coins first seen mid-life, or opened by a user, are backfilled from chain. Idempotent: a trade held by id or by signature + side + amount is never added twice. Candles, windows, the ring, the ATH and (from the creation) the holder book are rebuilt.
+- In the after run, the pump coins hit by the two outages were repaired to 100% before verification. The PumpSwap / CPMM ones were not yet: gap-fill on the public RPC runs at ~1 call/s shared with everything else, busy pools need many signature pages, and the background tier is capped at 50 coins. Viewed and listed coins go first; a paid endpoint (`HISTORY_RPC_URL`, `HISTORY_RPS`, `HISTORY_BATCH`) repairs the rest.
+- Holder shares: a trade-only book that missed sells only grows (top 10 at 109% on DONALDMAXX). Shares are now scaled to what can be in circulation (curve: tokens sold, plus a mayhem coin's second 1e15; pool: supply minus pool base), never above 100%. An overcounted book on a viewed / listed coin triggers a gap-fill, and the rebuild from the full history makes it exact again.
+
+Whole-history backfill of FLOP (`--backfill-only`, server never saw the coin: discovered from its curve PDA; created 2026-09-26, 97% bonding, 439 curve signatures of which 10 failed):
+
+| Run | Fetched | Stored trades | Chain successful txs | Missing with FLOP trades | Holders / top 10 |
+|---|---|---|---|---|---|
+| 1 (first code) | 393 in 64 min | 156 | 429 | 199 | 19 / 35.2% (wrong: built on 156 trades) |
+| 2 (fixed, merged main) | 429 in 31 min | 428 (in 428 txs) | 429 | 0 (the one other successful tx carries no FLOP trade) | 24 / 73.1%, complete from the creation |
+
+Run 1 found two bugs. (1) The 72 h trade-retention prune (every minute) deleted the backfilled trades of a coin older than 72 h while its backfill ran, because the retention exemption was only written when the job finished. It is now written when the job starts. (2) A getTransaction batch that still failed after the reader's retries (429) was dropped. It is now put back and retried after a 15 s pause. The public RPC gave this run ~0.1-0.2 getTransaction/s: the preview server on the same IP kept a 500-deep Raydium re-read queue.
 ## 2026-10-04: follow-ups (CSP style-src, one loop-lag monitor, WS_COMPRESSION on)
 
 Setup: Apple M3 laptop, Bun 1.3.14, `DRY_RUN=true`, headless Chromium (Playwright 1.63) at 1440x900.

@@ -24,6 +24,7 @@ import {
 import {
   imageProxyUrl,
   type Launchpad,
+  type TokenHistory,
   type TokenSocials,
   type TokenSummary,
   type Trade,
@@ -161,6 +162,8 @@ export interface TokenRecord {
   devLaunches: number | null;
   devMigrated: number | null;
   trades: TradeEntry[];
+  /** Trade-history coverage (history/service.ts); null until assessed. Not persisted here (token_history). */
+  history: TokenHistory | null;
   dangers: Token2022Danger[];
   bootstrapRequested: boolean;
   lastPersistAt: number;
@@ -227,6 +230,7 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
     devLaunches: null,
     devMigrated: null,
     trades: [],
+    history: null,
     dangers: [],
     bootstrapRequested: false,
     lastPersistAt: 0,
@@ -258,6 +262,22 @@ export function bondingProgress(rec: TokenRecord): number {
   return Math.min(10_000, Number((sold * BPS_DENOMINATOR) / initial));
 }
 
+/**
+ * Most tokens holders can own together: everything outside the curve (tokens sold, plus a mayhem coin's second
+ * 1e15 minted to the Mayhem vault) while on the curve, everything outside the price pool after migration. null
+ * when the reserves are unknown (the total supply bounds then).
+ */
+export function circulatingBound(rec: TokenRecord): bigint | null {
+  if (rec.poolState && (rec.migrated || !rec.curve)) return rec.supply > rec.poolState.base ? rec.supply - rec.poolState.base : 0n;
+  if (rec.curve && rec.initialRealTokenReserves !== null && rec.initialRealTokenReserves > 0n) {
+    const sold = rec.initialRealTokenReserves - rec.curve.rToken;
+    const outsideCurve =
+      rec.curveTokenTotalSupply !== null && rec.supply > rec.curveTokenTotalSupply ? rec.supply - rec.curveTokenTotalSupply : 0n;
+    return (sold > 0n ? sold : 0n) + outsideCurve;
+  }
+  return null;
+}
+
 export interface MarketView {
   solUsd: number | null;
   now: number;
@@ -281,7 +301,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
         : 0;
   const liquidity = rate !== null ? liqQuote * rate : null;
   const w = rec.windows.totals(view.now);
-  const m = rec.holders?.metrics(rec.supply) ?? null;
+  const m = rec.holders?.metrics(rec.supply, circulatingBound(rec)) ?? null;
   return {
     mint: rec.mint,
     name: rec.name,
@@ -336,6 +356,13 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     athMcSol: mcSol !== null ? Math.max(rec.athMcSol, mcSol) : rec.athMcSol > 0 ? rec.athMcSol : null,
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,
+    ...(rec.history
+      ? {
+          history: rec.history,
+          historyState: rec.history.state,
+          holdersPending: rec.holders === null && rec.history.state === "backfilling",
+        }
+      : {}),
     updatedAt: rec.updatedAt,
   };
 }

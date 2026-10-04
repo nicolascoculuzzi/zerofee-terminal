@@ -18,6 +18,13 @@
  * (IngestTx.raydium) or the registry (accounts/raydium.ts, asynchronous) supply it, and events wait for it
  * like PumpSwap swaps wait for their pool. The trading wallet comes from the instruction's payer; without
  * accounts (RPC logs feed, no fetch) a trade is recorded with trader "" and does not move holder balances.
+ *
+ * History (backfill, history/service.ts): `collectHistory` runs one coin's fetched transactions through the
+ * same event handlers in "history mode" (trades are collected with their prices, nothing live happens: no tape,
+ * no listeners, no stats), and `mergeHistory` merges them with the stored and in-memory trades (idempotent:
+ * a trade already held, by id or by signature + side + amount, is never added twice), stores the new ones and
+ * rebuilds what derives from the whole trade list: candles, rolling windows, the trade ring, the ATH and, when
+ * the history reaches the creation, the holder book (holders, dev / sniper / bundler shares).
  */
 import type { Address } from "@solana/kit";
 import {
@@ -52,13 +59,25 @@ import {
   transferInverseFeeFor,
   USDC_MINT,
 } from "@zerofee/core";
-import type { Candle, Timeframe, TokenSocials, TokenSummary, Trade, TradeContext, TradeTag, TradeVenue } from "@zerofee/protocol";
+import type {
+  Candle,
+  Timeframe,
+  TokenHistory,
+  TokenSocials,
+  TokenSummary,
+  Trade,
+  TradeContext,
+  TradeTag,
+  TradeVenue,
+} from "@zerofee/protocol";
 import type { CpmmPoolInfo, LaunchLabPoolInfo, RaydiumRegistry } from "../accounts/raydium";
 import { AccountResolver, type CurveResolved, type MintResolved, type PoolInfo } from "../accounts/resolver";
+import { type CoinAccounts, eventMatchesCoin } from "../history/coin";
 import type { LaunchLabMigration, RaydiumEventAccounts } from "../ingest/raydium";
 import type { IngestTx } from "../ingest/types";
 import { perf } from "../perf";
-import { LruMap } from "../util/lru";
+import { rowToTrade, type TradeRow } from "../storage/reader";
+import { BoundedSet, LruMap } from "../util/lru";
 import { RateCounter, SampleRing } from "../util/stats";
 import { CandleBook, type CandleTrade, type CandleUpdate, cmpKey, type OrderKey } from "./candles";
 import { HolderBook, type MetricsConfig, type SnapshotEntry } from "./holders";
@@ -66,6 +85,7 @@ import { knownQuoteDecimals, normalizeQuoteMint, quoteSolRate, ui } from "./quot
 import {
   buildTradeContext,
   type CurveReserves,
+  circulatingBound,
   knownQuoteTokenProgram,
   type LaunchLabRecord,
   newTokenRecord,
@@ -100,6 +120,12 @@ export interface StorageSink {
   deleteTrades(ids: string[]): void;
   candle(mint: string, tf: Timeframe, c: Candle): void;
   token(rec: TokenRecord, summary: TokenSummary): void;
+}
+
+/** What a backfill already holds for a coin: content-key counts (MarketState.contentKey) and their signatures. */
+export interface HistoryIndex {
+  counts: Map<string, number>;
+  sigs: Set<string>;
 }
 
 export interface MarketDeps {
@@ -219,6 +245,8 @@ export class MarketState {
   /** CPMM swaps waiting for their pool to be classified as a graduation pool. */
   private readonly pendingCpmm = new Map<string, PendingRaydiumEvent<CpmmSwapEvent>[]>();
   private pendingTotal = 0;
+  /** Set while collectHistory runs: trades are collected for a backfill instead of applied live. */
+  private hist: { coin: CoinAccounts; entries: TradeEntry[]; skipped: number } | null = null;
   /** Non-SOL, non-USDC quote mints whose decimals were requested from the resolver. */
   private readonly quoteRequests = new Set<string>();
   private readonly quoteMintInfo = new Map<
@@ -506,28 +534,30 @@ export class MarketState {
       rec.curveKey = ctx.key;
       rec.curveSlot = ctx.tx.slot;
     }
-    if (!rec.holders) {
-      rec.holders = this.newHolderBook(ctx.tx.slot);
-      rec.holders.exclude(ev.bondingCurve);
-    }
-    rec.holders.addDev(ev.creator);
     if (ctx.tx.accountKeys) rec.proTraders ??= new Set();
-    this.stats.launches++;
-    this.deps.onLaunch?.(rec);
-    const latency = ctx.tx.receivedAt - ts;
-    this.launchLatency.add(latency);
-    this.changes.feed.push({
-      kind: "launch",
-      mint: ev.mint,
-      symbol: ev.symbol,
-      name: ev.name,
-      signature: ctx.tx.signature,
-      slot: ctx.tx.slot,
-      blockTime: ts,
-      receivedAt: ctx.tx.receivedAt,
-      latencyMs: latency,
-      venue: "pump",
-    });
+    if (!this.hist) {
+      if (!rec.holders) {
+        rec.holders = this.newHolderBook(ctx.tx.slot);
+        rec.holders.exclude(ev.bondingCurve);
+      }
+      rec.holders.addDev(ev.creator);
+      this.stats.launches++;
+      this.deps.onLaunch?.(rec);
+      const latency = ctx.tx.receivedAt - ts;
+      this.launchLatency.add(latency);
+      this.changes.feed.push({
+        kind: "launch",
+        mint: ev.mint,
+        symbol: ev.symbol,
+        name: ev.name,
+        signature: ctx.tx.signature,
+        slot: ctx.tx.slot,
+        blockTime: ts,
+        receivedAt: ctx.tx.receivedAt,
+        latencyMs: latency,
+        venue: "pump",
+      });
+    }
     if (rec.uri && rec.metadataState === "none") {
       rec.metadataState = "requested";
       this.deps.requestMetadata?.(rec.mint, rec.uri);
@@ -619,7 +649,7 @@ export class MarketState {
       }
       this.changes.tradeCtx.add(rec.mint);
     }
-    this.stats.curveTrades++;
+    if (!this.hist) this.stats.curveTrades++;
     this.recordTrade(rec, ctx, {
       venue: "pump",
       isBuy: ev.isBuy,
@@ -643,9 +673,11 @@ export class MarketState {
     if (!rec.complete) {
       rec.complete = true;
       rec.completedAt = Number(ev.timestamp) * 1000;
-      this.stats.completes++;
-      this.changes.feed.push(this.feedItem("complete", rec, ctx, rec.completedAt));
-    }
+      if (!this.hist) {
+        this.stats.completes++;
+        this.changes.feed.push(this.feedItem("complete", rec, ctx, rec.completedAt));
+      }
+    } else if (this.hist && rec.completedAt === null) rec.completedAt = Number(ev.timestamp) * 1000;
     this.touch(rec);
     this.persist(rec, true);
     return rec.mint;
@@ -670,13 +702,15 @@ export class MarketState {
       rec.poolSlot = ctx.tx.slot;
     }
     this.deps.resolver.learnPool({ pool: ev.pool, baseMint: ev.mint, quoteMint, isCanonical: true, index: 0, baseDecimals: rec.decimals });
-    this.stats.migrations++;
-    this.changes.feed.push(this.feedItem("migration", rec, ctx, ts));
+    if (!this.hist) {
+      this.stats.migrations++;
+      this.changes.feed.push(this.feedItem("migration", rec, ctx, ts));
+    }
     this.touch(rec);
     this.changes.tradeCtx.add(rec.mint);
     this.persist(rec, true);
     if (rec.createdAt === null) this.requestBootstrap(rec, false);
-    this.deps.onMigrate?.(rec);
+    if (!this.hist) this.deps.onMigrate?.(rec);
     return rec.mint;
   }
 
@@ -727,7 +761,9 @@ export class MarketState {
   private onPoolTrade(ev: AmmSwapEvent, ctx: EvCtx): string | null {
     const info = this.deps.resolver.pools.get(ev.pool);
     if (!AccountResolver.ready(info)) {
-      this.parkPoolEvent(ev, ctx);
+      // history: the backfill waits for the pool before it starts; never park old events for live application
+      if (this.hist) this.hist.skipped++;
+      else this.parkPoolEvent(ev, ctx);
       return null;
     }
     return this.applyPoolTrade(ev, ctx, info);
@@ -848,7 +884,7 @@ export class MarketState {
     }
     const eff = poolAfter.quoteVault + poolAfter.virtualQuote;
     const poolQuoteDecimals = info.quoteDecimals ?? rec.quoteDecimals; // known: the pool passed ready()
-    this.stats.poolTrades++;
+    if (!this.hist) this.stats.poolTrades++;
     this.recordTrade(rec, ctx, {
       venue: "pumpswap",
       isBuy,
@@ -895,6 +931,11 @@ export class MarketState {
     const supplyUi = ui(rec.supply, rec.decimals);
     const amountSol = rate !== null ? ui(t.quoteAmount, t.quoteDecimals) * rate : null;
     const mcSol = priceSol !== null ? priceSol * supplyUi : null;
+
+    if (this.hist) {
+      this.collectHistoryTrade(rec, ctx, t, { priceSol, amountSol, mcSol, solUsd });
+      return;
+    }
 
     // holders + audit classification. A trade without a wallet (Raydium, logs only) leaves the holder book
     // incomplete: it becomes unknown rather than wrong.
@@ -988,6 +1029,295 @@ export class MarketState {
     this.persist(rec, false);
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // history backfill (history/service.ts)
+  // ---------------------------------------------------------------------------------------------
+
+  /** History mode: the trade recordTrade would build, collected for mergeHistory; nothing live happens. */
+  private collectHistoryTrade(
+    rec: TokenRecord,
+    ctx: EvCtx,
+    t: Parameters<MarketState["recordTrade"]>[2],
+    v: { priceSol: number | null; amountSol: number | null; mcSol: number | null; solUsd: number | null },
+  ): void {
+    const hist = this.hist as NonNullable<MarketState["hist"]>;
+    if (ctx.paidFeeWallets && t.trader) {
+      rec.proTraders ??= new Set();
+      if (ctx.paidFeeWallets.some((w) => w !== t.trader)) rec.proTraders.add(t.trader);
+    }
+    const trade: Trade = {
+      id: `${ctx.tx.signature}:${ctx.evIndex}`,
+      signature: ctx.tx.signature,
+      slot: ctx.tx.slot,
+      txIndex: null,
+      mint: rec.mint,
+      venue: t.venue,
+      side: t.isBuy ? "buy" : "sell",
+      trader: t.trader,
+      quoteAmount: t.quoteAmount.toString(),
+      tokenAmount: t.tokenAmount.toString(),
+      amountSol: v.amountSol,
+      amountUsd:
+        t.quoteMint === USDC_MINT ? ui(t.quoteAmount, t.quoteDecimals) : v.amountSol !== null && v.solUsd ? v.amountSol * v.solUsd : null,
+      priceSol: v.priceSol,
+      mcSol: v.mcSol,
+      blockTime: t.tsMs,
+      receivedAt: ctx.tx.receivedAt,
+      tags: [],
+    };
+    hist.entries.push({
+      trade,
+      key: ctx.key,
+      tsMs: t.tsMs,
+      volumeSol: v.amountSol ?? 0,
+      isBuy: t.isBuy,
+      holderDelta: 0n,
+      curveAfter: t.curveAfter,
+      poolAfter: t.poolAfter,
+      priceSol: v.priceSol ?? 0,
+      solUsd: v.solUsd,
+    });
+  }
+
+  /**
+   * Runs one coin's fetched transactions (oldest or newest first, any order) through the event handlers in
+   * history mode: creation / completion / migration facts land on the record (older keys never overwrite newer
+   * reserves), trades are returned as entries for mergeHistory. Only the coin's events are applied (a bundle
+   * buying several coins in one transaction leaves the others alone). `seq` orders transactions inside a slot;
+   * negative values sort before live arrivals of the same slot, so a backfilled transaction never takes over
+   * the live reserves of its slot.
+   */
+  collectHistory(coin: CoinAccounts, txs: readonly { tx: IngestTx; seq: number }[]): { entries: TradeEntry[]; skipped: number } {
+    this.hist = { coin, entries: [], skipped: 0 };
+    try {
+      for (const { tx, seq } of txs) {
+        for (const pm of tx.poolMints) this.deps.resolver.learnPool({ ...pm });
+        const txBuyers = new Map<string, Set<string>>();
+        tx.events.forEach((ev, i) => {
+          let buyer: string | null = null;
+          if (ev.kind === "pumpTrade" && ev.isBuy && ev.mint === coin.mint) buyer = ev.user;
+          if (ev.kind === "launchlabTrade" && ev.isBuy) {
+            const acc = tx.raydium?.accounts[i];
+            if (acc?.kind === "launchlabSwap" && acc.baseMint === coin.mint) buyer = acc.payer;
+          }
+          if (buyer) {
+            const set = txBuyers.get(coin.mint) ?? new Set<string>();
+            set.add(buyer);
+            txBuyers.set(coin.mint, set);
+          }
+        });
+        const paidFeeWallets = tx.accountKeys ? this.paidFeeWallets(tx) : null;
+        tx.events.forEach((ev, i) => {
+          if (!eventMatchesCoin(ev, tx.raydium?.accounts[i], coin)) return;
+          this.applyEvent(ev, { tx, key: [tx.slot, seq, i], evIndex: i, txBuyers, paidFeeWallets });
+        });
+        (tx.raydium?.migrations ?? []).forEach((m, k) => {
+          if (m.baseMint !== coin.mint) return;
+          const i = tx.events.length + k;
+          this.onLaunchLabMigrate(m, { tx, key: [tx.slot, seq, i], evIndex: i, txBuyers, paidFeeWallets });
+        });
+      }
+      return { entries: this.hist.entries, skipped: this.hist.skipped };
+    } finally {
+      this.hist = null;
+    }
+  }
+
+  /** Content identity of a trade: survives event-index differences between a logs record and a full transaction. */
+  static contentKey(t: Pick<Trade, "signature" | "side" | "tokenAmount">): string {
+    return `${t.signature}|${t.side}|${t.tokenAmount}`;
+  }
+
+  /**
+   * Merges collected history entries into the coin: a trade already held (its content key is in `known`, which
+   * counts the stored and in-memory trades and is updated here, or its transaction was applied live after
+   * `known` was built and the ring holds it) is skipped; new ones are stored, marked seen (a late live copy is
+   * then a duplicate), inserted into the trade ring and the rolling windows, and checked against the ATH.
+   * Returns the new trades (tagged) and the hour buckets they fall in (candles to rebuild).
+   */
+  mergeHistory(mint: string, entries: readonly TradeEntry[], known: HistoryIndex): { added: Trade[]; hours: number[] } {
+    const rec = this.tokens.get(mint);
+    if (!rec) return { added: [], hours: [] };
+    const ids = new Set(rec.trades.map((e) => e.trade.id));
+    const added: TradeEntry[] = [];
+    const hours = new Set<number>();
+    for (const e of entries) {
+      const k = MarketState.contentKey(e.trade);
+      const n = known.counts.get(k) ?? 0;
+      if (n > 0) {
+        known.counts.set(k, n - 1);
+        continue;
+      }
+      // Applied live after `known` was built (not by a backfill): held already, never count it twice.
+      const sig = e.trade.signature;
+      if (!known.sigs.has(sig) && !this.historySeen.has(sig) && this.seen.get(sig) !== undefined) continue;
+      let entry = e;
+      if (ids.has(entry.trade.id)) entry = { ...e, trade: { ...e.trade, id: `${e.trade.id}:h` } };
+      if (ids.has(entry.trade.id)) continue;
+      ids.add(entry.trade.id);
+      added.push(entry);
+    }
+    if (!added.length) return { added: [], hours: [] };
+    const now = this.now();
+    for (const e of added) {
+      e.trade.tags = this.tagsFor(rec, e.trade.trader);
+      this.deps.storage?.trade(e.trade, e.key[2]);
+      if (this.seen.get(e.trade.signature) === undefined) this.seen.set(e.trade.signature, e.trade.slot);
+      this.historySeen.add(e.trade.signature);
+      if (now - e.tsMs < 86_400_000) rec.windows.add(e.tsMs, e.volumeSol, e.isBuy);
+      if (e.trade.mcSol !== null && e.trade.mcSol > rec.athMcSol) rec.athMcSol = e.trade.mcSol;
+      if (rec.lastTradeAt === null || e.tsMs > rec.lastTradeAt) rec.lastTradeAt = e.tsMs;
+      if (rec.lastSlot === null || e.trade.slot > rec.lastSlot) rec.lastSlot = e.trade.slot;
+      hours.add(Math.floor(e.tsMs / 3_600_000) * 3_600_000);
+      // keep the ring ordered by key; it holds the newest `recentCap`
+      const r = rec.trades;
+      let i = r.length;
+      while (i > 0 && cmpKey((r[i - 1] as TradeEntry).key, e.key) > 0) i--;
+      if (i > 0 || r.length < this.recentCap) r.splice(i, 0, e);
+      if (r.length > this.recentCap) r.splice(0, r.length - this.recentCap);
+    }
+    this.touch(rec);
+    this.changes.tradeCtx.add(mint);
+    this.persist(rec, true);
+    return { added: added.map((e) => e.trade), hours: [...hours].sort((a, b) => a - b) };
+  }
+
+  /** Signatures a backfill stored (see mergeHistory). */
+  private readonly historySeen = new BoundedSet<string>(200_000);
+
+  private tagsFor(rec: TokenRecord, trader: string): TradeTag[] {
+    const tags: TradeTag[] = rec.holders ? rec.holders.tagsOf(trader) : rec.creator === trader ? ["dev"] : [];
+    if (rec.proTraders?.has(trader)) tags.push("pro");
+    return tags;
+  }
+
+  /**
+   * Rebuilds the candles of whole hour windows from every stored trade in them (all timeframes divide an hour,
+   * so no bucket straddles two windows), plus in-memory trades not stored yet. Writes the rebuilt buckets and
+   * returns them per timeframe, oldest first.
+   */
+  rebuildCandleWindows(
+    mint: string,
+    windows: readonly { from: number; to: number; rows: readonly TradeRow[] }[],
+  ): Map<Timeframe, Candle[]> {
+    const out = new Map<Timeframe, Candle[]>();
+    const rec = this.tokens.get(mint);
+    for (const w of windows) {
+      const byId = new Map<string, CandleTrade>();
+      for (const r of w.rows) {
+        if (r.price_sol === null || !(r.price_sol > 0)) continue;
+        byId.set(r.id, {
+          tsMs: r.block_time,
+          price: r.price_sol,
+          volume: r.amount_sol ?? 0,
+          key: [r.slot, r.tx_index ?? 0, r.ev_index],
+          solUsd: null,
+        });
+      }
+      for (const e of rec?.trades ?? []) {
+        if (e.tsMs < w.from || e.tsMs >= w.to || !(e.priceSol > 0)) continue;
+        byId.set(e.trade.id, { tsMs: e.tsMs, price: e.priceSol, volume: e.volumeSol, key: e.key, solUsd: e.solUsd });
+      }
+      for (const [tf, list] of this.candles.rebuildWindow(mint, w.from, w.to, [...byId.values()])) {
+        for (const c of list) this.deps.storage?.candle(mint, tf, c);
+        const acc = out.get(tf);
+        if (acc) acc.push(...list);
+        else out.set(tf, [...list]);
+      }
+    }
+    for (const list of out.values()) list.sort((a, b) => a.t - b.t);
+    return out;
+  }
+
+  /**
+   * Rebuilds the holder book from the coin's complete trade list (from its creation on): balances, dev wallets,
+   * snipers and bundlers as if every trade had been seen live. Needs a wallet on every trade (logs-only Raydium
+   * trades have none). Returns false when it could not.
+   */
+  rebuildHolders(mint: string, rows: readonly TradeRow[]): boolean {
+    const rec = this.tokens.get(mint);
+    if (!rec || rec.createdSlot === null || !rows.length || rows.some((r) => !r.trader)) return false;
+    const h = this.newHolderBook(rec.createdSlot);
+    h.exclude(rec.bondingCurve);
+    h.exclude(rec.pool);
+    if (rec.launchpad === "launchlab") {
+      h.exclude(RAYDIUM_LAUNCHLAB_AUTHORITY);
+      h.exclude(RAYDIUM_CPMM_AUTHORITY);
+    }
+    h.addDev(rec.creatorAtCreate);
+    h.addDev(rec.creator);
+    const buyersOf = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (r.side !== 0) continue;
+      const set = buyersOf.get(r.signature) ?? new Set<string>();
+      set.add(r.trader);
+      buyersOf.set(r.signature, set);
+    }
+    const sorted = [...rows].sort((a, b) => a.slot - b.slot || (a.tx_index ?? 0) - (b.tx_index ?? 0) || a.ev_index - b.ev_index);
+    for (const r of sorted) {
+      const amount = BigInt(r.token_amount);
+      h.applyDelta(r.trader, r.side === 0 ? amount : -amount);
+      if (r.side === 0) h.classifyBuy(r.trader, r.slot, buyersOf.get(r.signature) ?? new Set(), BigInt(r.quote_amount));
+    }
+    // keep a chain reconciliation's provenance off: the book is trade-based again
+    rec.holders = h;
+    for (const e of rec.trades) {
+      const amount = BigInt(e.trade.tokenAmount);
+      e.holderDelta = e.isBuy ? amount : -amount;
+      e.trade = { ...e.trade, tags: this.tagsFor(rec, e.trade.trader) };
+    }
+    this.touch(rec);
+    this.persist(rec, true);
+    return true;
+  }
+
+  /** The coin's holder book holds more than its circulating supply (it missed sells or transfers out). */
+  holdersOvercounted(mint: string): boolean {
+    const rec = this.tokens.get(mint);
+    return rec?.holders?.metrics(rec.supply, circulatingBound(rec)).overcounted ?? false;
+  }
+
+  /** Whether a transaction was applied (live or by a backfill) recently. */
+  hasSeen(signature: string): boolean {
+    return this.seen.get(signature) !== undefined;
+  }
+
+  /** The coin's record, created empty when unknown (a backfill of a coin never seen live fills it). */
+  ensureToken(mint: string, init: Partial<TokenRecord> = {}): TokenRecord {
+    const known = this.tokens.get(mint);
+    if (known) return known;
+    const rec = this.getOrCreate(mint, init);
+    if (rec.launchpad === "pump") this.requestBootstrap(rec, true);
+    this.touch(rec);
+    return rec;
+  }
+
+  /** Trade-history coverage of a coin (history/service.ts): carried on its summary. */
+  setHistory(mint: string, h: TokenHistory): void {
+    const rec = this.tokens.get(mint);
+    if (!rec) return;
+    rec.history = h;
+    this.touch(rec);
+  }
+
+  /** A stored trade row as a ring entry (no reserves: rollbacks fall back to the previous live entry). */
+  static entryFromRow(r: TradeRow): TradeEntry {
+    const trade = rowToTrade(r);
+    const amount = BigInt(r.token_amount);
+    return {
+      trade,
+      key: [r.slot, r.tx_index ?? 0, r.ev_index],
+      tsMs: r.block_time,
+      volumeSol: r.amount_sol ?? 0,
+      isBuy: r.side === 0,
+      holderDelta: r.side === 0 ? amount : -amount,
+      curveAfter: null,
+      poolAfter: null,
+      priceSol: r.price_sol ?? 0,
+      solUsd: null,
+    };
+  }
+
   private feedItem(kind: FeedItem["kind"], rec: TokenRecord, ctx: EvCtx, blockTime: number): FeedItem {
     return {
       kind,
@@ -1028,6 +1358,10 @@ export class MarketState {
   }
 
   private parkRaydium<E>(map: Map<string, PendingRaydiumEvent<E>[]>, pool: string, ev: E, ctx: EvCtx, onFirst: () => void): void {
+    if (this.hist) {
+      this.hist.skipped++;
+      return;
+    }
     let list = map.get(pool);
     if (!list) {
       list = [];
@@ -1199,31 +1533,33 @@ export class MarketState {
     // A trade that arrived before its create (out of order) already set newer reserves: keep them.
     if (!rec.curveKey && info?.state) rec.curve = this.launchLabCurveOf(info.state);
     if (!rec.creator) this.setLaunchLabCreator(rec, ev.creator);
-    if (!rec.holders) {
-      rec.holders = this.newHolderBook(ctx.tx.slot);
-      // vault owners: the LaunchLab authority on the curve, the CPMM authority after graduation
-      rec.holders.exclude(RAYDIUM_LAUNCHLAB_AUTHORITY);
-      rec.holders.exclude(RAYDIUM_CPMM_AUTHORITY);
-    }
-    rec.holders.addDev(ev.creator);
     if (ctx.tx.accountKeys) rec.proTraders ??= new Set();
-    this.stats.launches++;
-    this.stats.launchLabLaunches++;
-    this.deps.onLaunch?.(rec);
-    const latency = ctx.tx.receivedAt - tsMs;
-    if (known) this.launchLatency.add(latency);
-    this.changes.feed.push({
-      kind: "launch",
-      mint: baseMint,
-      symbol: ev.symbol,
-      name: ev.name,
-      signature: ctx.tx.signature,
-      slot: ctx.tx.slot,
-      blockTime: tsMs,
-      receivedAt: ctx.tx.receivedAt,
-      latencyMs: latency,
-      venue: "launchlab",
-    });
+    if (!this.hist) {
+      if (!rec.holders) {
+        rec.holders = this.newHolderBook(ctx.tx.slot);
+        // vault owners: the LaunchLab authority on the curve, the CPMM authority after graduation
+        rec.holders.exclude(RAYDIUM_LAUNCHLAB_AUTHORITY);
+        rec.holders.exclude(RAYDIUM_CPMM_AUTHORITY);
+      }
+      rec.holders.addDev(ev.creator);
+      this.stats.launches++;
+      this.stats.launchLabLaunches++;
+      this.deps.onLaunch?.(rec);
+      const latency = ctx.tx.receivedAt - tsMs;
+      if (known) this.launchLatency.add(latency);
+      this.changes.feed.push({
+        kind: "launch",
+        mint: baseMint,
+        symbol: ev.symbol,
+        name: ev.name,
+        signature: ctx.tx.signature,
+        slot: ctx.tx.slot,
+        blockTime: tsMs,
+        receivedAt: ctx.tx.receivedAt,
+        latencyMs: latency,
+        venue: "launchlab",
+      });
+    }
     if (rec.uri && rec.metadataState === "none") {
       rec.metadataState = "requested";
       this.deps.requestMetadata?.(rec.mint, rec.uri);
@@ -1303,9 +1639,11 @@ export class MarketState {
         rec.complete = true;
         rec.completedAt = tsMs;
         completedNow = true;
-        this.stats.completes++;
-        this.stats.launchLabCompletes++;
-        this.changes.feed.push(this.feedItem("complete", rec, ctx, tsMs));
+        if (!this.hist) {
+          this.stats.completes++;
+          this.stats.launchLabCompletes++;
+          this.changes.feed.push(this.feedItem("complete", rec, ctx, tsMs));
+        }
         this.deriveGraduation(rec);
       }
       this.changes.tradeCtx.add(rec.mint);
@@ -1314,7 +1652,7 @@ export class MarketState {
     const fees = ev.protocolFee + ev.platformFee + ev.creatorFee + ev.shareFee;
     const quoteAmount = ev.isBuy ? max0(ev.amountIn - fees) : ev.amountOut + fees;
     const tokenAmount = this.userTokenAmount(rec.transferFeeConfig, ctx.tx.slot, ev.isBuy, ev.isBuy ? ev.amountOut : ev.amountIn);
-    this.stats.launchLabTrades++;
+    if (!this.hist) this.stats.launchLabTrades++;
     this.recordTrade(rec, ctx, {
       venue: "launchlab",
       isBuy: ev.isBuy,
@@ -1371,15 +1709,17 @@ export class MarketState {
     rec.pool = cpmmPool;
     if (rec.launchLab) rec.launchLab = { ...rec.launchLab, graduationPool: cpmmPool };
     rec.holders?.exclude(RAYDIUM_CPMM_AUTHORITY);
-    if (at !== null) {
-      this.stats.migrations++;
-      this.stats.launchLabGraduations++;
-    } else this.stats.launchLabGraduatesFound++;
-    if (ctx) this.changes.feed.push(this.feedItem("migration", rec, ctx, at ?? ctx.tx.receivedAt));
+    if (!this.hist) {
+      if (at !== null) {
+        this.stats.migrations++;
+        this.stats.launchLabGraduations++;
+      } else this.stats.launchLabGraduatesFound++;
+      if (ctx) this.changes.feed.push(this.feedItem("migration", rec, ctx, at ?? ctx.tx.receivedAt));
+    }
     this.touch(rec);
     this.changes.tradeCtx.add(rec.mint);
     this.persist(rec, true);
-    this.deps.onMigrate?.(rec);
+    if (!this.hist) this.deps.onMigrate?.(rec);
   }
 
   /**
@@ -1407,6 +1747,11 @@ export class MarketState {
     const outputMint = a?.outputMint ?? ev.outputMint;
     const base = reg?.baseMintOf(ev.pool) ?? this.graduatedInto(ev.pool, inputMint, outputMint);
     if (base) return this.applyCpmmSwap(ev, ctx, base, inputMint, outputMint, a);
+    if (this.hist) {
+      if (this.hist.coin.cpmmPool === ev.pool) return this.applyCpmmSwap(ev, ctx, this.hist.coin.mint, inputMint, outputMint, a);
+      this.hist.skipped++;
+      return null;
+    }
     if (!reg || isDefault(inputMint) || isDefault(outputMint) || reg.isRejected(ev.pool)) {
       this.stats.cpmmIgnored++;
       return null;
@@ -1508,7 +1853,7 @@ export class MarketState {
       ? max0(ev.inputAmount - ev.tradeFee - (ev.creatorFeeOnInput ? ev.creatorFee : 0n))
       : ev.outputAmount + (ev.creatorFeeOnInput ? 0n : ev.creatorFee);
     const tokenAmount = isBuy ? max0(ev.outputAmount - ev.outputTransferFee) : ev.inputAmount + ev.inputTransferFee;
-    this.stats.cpmmTrades++;
+    if (!this.hist) this.stats.cpmmTrades++;
     this.recordTrade(rec, ctx, {
       venue: "cpmm",
       isBuy,

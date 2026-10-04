@@ -6,7 +6,7 @@
 import type { TokenRecord } from "../market/token";
 import { newTokenRecord } from "../market/token";
 
-const SKIP = new Set(["windows", "holders", "trades", "proTraders", "lastPersistAt", "bootstrapRequested"]);
+const SKIP = new Set(["windows", "holders", "trades", "proTraders", "lastPersistAt", "bootstrapRequested", "history"]);
 
 export function bigintReplacer(_k: string, v: unknown): unknown {
   return typeof v === "bigint" ? { $big: v.toString() } : v;
@@ -34,7 +34,7 @@ export function serializeRecord(rec: TokenRecord): string {
 
 export function deserializeRecord(json: string, now: number): { rec: TokenRecord; hadHolders: boolean } {
   const raw = JSON.parse(json, bigintReviver) as Record<string, unknown>;
-  const { hasHolders, hasPros, proTraderList, ...fields } = raw;
+  const { hasHolders, hasPros, proTraderList, history: _history, ...fields } = raw;
   const rec = newTokenRecord(String(fields.mint), now, fields as Partial<TokenRecord>);
   rec.proTraders = hasPros ? new Set(Array.isArray(proTraderList) ? proTraderList.filter((x) => typeof x === "string") : []) : null;
   return { rec, hadHolders: hasHolders === true };

@@ -8,16 +8,24 @@
  * order, PumpSwap and LaunchLab pools are resolved to mints by an RPC lookup, and holder tracking is
  * trade-based.
  *
- * Raydium events also lack the trading wallet, and LaunchLab graduations (`migrate_to_cpswap`) emit no
- * event at all. With `raydiumTx` set, Raydium notifications (LaunchLab events, graduations, and the CPMM
- * swaps `wants` accepts; LaunchLab first) are re-read with `getTransaction` at `confirmed` under a calls-per-second cap
- * (the public RPC allows 40 calls / 10 s per method), and the full transaction (accounts, wallet, token
- * balances) replaces the logs-only record. A transaction not found after a few tries, or one that does not
- * fit the queue, falls back to its logs-only record (graduations then become a `hint`).
+ * Transaction re-reads (`raydiumTx`, RPC_LOGS_TX_FETCH_RPS): some notifications are not enough on their own, and
+ * are re-read with `getTransaction` at `confirmed` under one calls-per-second cap (the public RPC allows 40 calls /
+ * 10 s per method), the full transaction (event-CPI events, accounts, wallet, token balances) replacing the logs:
+ *  - priority 0, data loss: logs the RPC cut short ("Log truncated", or no logs at all), logs with fewer trade
+ *    events than pump / PumpSwap trade instructions or with an undecodable event, LaunchLab events (their
+ *    events lack the mint and the wallet) and LaunchLab graduations (`migrate_to_cpswap`: no event at all);
+ *  - priority 1: Raydium CPMM swaps `wants` accepts (their wallet);
+ *  - priority 2, recovery: notifications the bounded decode queue dropped, re-read by signature.
+ * Higher priorities go first and, when the re-read queue is full, displace the lowest queued job. A job not
+ * found after a few tries, too old, or displaced falls back to its logs-only record (graduations become a
+ * `hint`); a dropped notification that cannot be re-read is reported as a `gap` (sink.gap) for the history
+ * service to repair from chain. Nothing is lost silently: every case is counted in `capture`.
  *
  * Backpressure: the socket handler only parses and enqueues; a drain loop decodes in time-boxed
- * batches so I/O keeps flowing. The queue is bounded; overflow drops the oldest notifications and is
- * reported. Reconnects use exponential backoff; a silent socket is recycled by a watchdog.
+ * batches so I/O keeps flowing. The queue is bounded; overflow drops the oldest notifications (counted, re-read).
+ * Reconnects use exponential backoff; a silent socket is recycled by a watchdog. The slots the socket was down
+ * for are reported as a `gap` once it is back (logsSubscribe does not replay). A logs subscription that stalls
+ * while slot notifications keep flowing (pump silent for `silenceSlots`) is recycled the same way.
  */
 import type { Address } from "@solana/kit";
 import {
@@ -39,7 +47,7 @@ import { type IngestSink, type IngestTx, RingQueue, type Source } from "./types"
 
 const log = logger("rpc-logs");
 
-/** Re-reading Raydium transactions (their events lack mints and wallets; graduations emit no event). */
+/** Transaction re-reads (Raydium accounts, truncated / incomplete logs, dropped notifications): see the header. */
 export interface RaydiumTxFetchOptions {
   /** getTransaction (json, maxSupportedTransactionVersion 1, confirmed); null when not found (yet). */
   fetch(signature: string): Promise<RpcJsonTx | null>;
@@ -47,6 +55,8 @@ export interface RaydiumTxFetchOptions {
   perSec: number;
   /** Max queued transactions; beyond it they keep their logs-only record. Default 500. */
   maxQueue?: number;
+  /** Re-read notifications the decode queue dropped (default true). */
+  recover?: boolean;
   /** Wait before the first try (processed -> confirmed). Default 1,200 ms. */
   firstDelayMs?: number;
   retryDelayMs?: number;
@@ -66,21 +76,29 @@ export interface RpcLogsSourceOptions {
   programs: readonly Address[];
   commitment: "processed" | "confirmed";
   queueMax: number;
-  /** Recycle the socket after this long without any message. */
+  /** Recycle the socket after this long without any message (default 10 s; slots alone arrive every ~400 ms). */
   idleTimeoutMs?: number;
   /** Decode budget per drain tick before yielding to I/O. */
   drainBudgetMs?: number;
   WebSocketImpl?: typeof WebSocket;
   raydiumTx?: RaydiumTxFetchOptions | null;
+  /**
+   * Recycle the socket when pump (the busiest program, trading in nearly every slot) produced no notification for
+   * this many slots while slot notifications kept coming: the logs subscription stalled on its own (0 = off).
+   */
+  silenceSlots?: number;
 }
+
+type FetchReason = "raydium" | "truncated" | "incomplete" | "recover";
 
 interface FetchJob {
   p: Pending;
-  /** The logs-only record, emitted when the fetch gives up. */
+  /** The logs-only record, emitted when the fetch gives up (null: nothing decodable, or a recovery). */
   fallback: IngestTx | null;
   migration: boolean;
-  /** LaunchLab events and graduations go before CPMM swaps when the budget is short. */
-  priority: 0 | 1;
+  /** 0 data loss (truncated / incomplete logs, LaunchLab), 1 CPMM wallets, 2 recovery of dropped notifications. */
+  priority: 0 | 1 | 2;
+  reason: FetchReason;
   attempts: number;
   notBefore: number;
 }
@@ -110,6 +128,36 @@ export type RpcLogsProgram = keyof typeof PROGRAM_IDS;
 
 const PROGRAM_NAMES = new Map<string, string>(Object.entries(PROGRAM_IDS).map(([k, v]) => [v, k]));
 const MIGRATE_LOG = "Program log: Instruction: MigrateToCpswap";
+const INVOKE_RE = /^Program (\w{32,44}) invoke \[(\d+)\]$/;
+const EXIT_RE = /^Program (\w{32,44}) (?:success|failed)/;
+const TRADE_IX_RE = /^Program log: Instruction: (?:Buy|Sell)\w*$/;
+
+/**
+ * pump / PumpSwap trade instructions in the logs (each successful one emits exactly one TradeEvent / BuyEvent /
+ * SellEvent): more instructions than decoded trade events means the logs lost an event.
+ */
+export function expectedTradeEvents(logs: readonly string[]): number {
+  const stack: string[] = [];
+  let n = 0;
+  for (const line of logs) {
+    if (!line.startsWith("Program ")) continue;
+    const inv = INVOKE_RE.exec(line);
+    if (inv) {
+      stack.length = Math.max(0, Number(inv[2]) - 1);
+      stack.push(inv[1] as string);
+      continue;
+    }
+    if (EXIT_RE.test(line)) {
+      stack.pop();
+      continue;
+    }
+    const top = stack[stack.length - 1];
+    if ((top === PUMP_PROGRAM_ID || top === PUMP_AMM_PROGRAM_ID) && TRADE_IX_RE.test(line)) n++;
+  }
+  return n;
+}
+
+const isTradeEvent = (e: DecodedEvent) => e.kind === "pumpTrade" || e.kind === "ammBuy" || e.kind === "ammSell";
 const RAYDIUM_KINDS = new Set<string>(["launchlabTrade", "launchlabPoolCreate", "cpmmSwap"]);
 
 /** A LaunchLab `migrate_to_cpswap` in the logs (the instruction line under a LaunchLab invoke). */
@@ -155,7 +203,36 @@ export class RpcLogsSource implements Source {
   private fetchTokens = 1;
   private fetchInFlight = 0;
   private fetchLastRefill = 0;
-  readonly fetchStats = { queued: 0, fetched: 0, notFound: 0, errors: 0, fallbacks: 0, expired: 0, overflow: 0, skipped: 0, maxQueue: 0 };
+  readonly fetchStats = {
+    queued: 0,
+    fetched: 0,
+    notFound: 0,
+    errors: 0,
+    fallbacks: 0,
+    expired: 0,
+    overflow: 0,
+    skipped: 0,
+    maxQueue: 0,
+    /** Lower-priority jobs pushed out of a full queue by higher-priority ones (they fell back). */
+    displaced: 0,
+  };
+  /** Trade-capture accounting (SourceHealth.capture). */
+  readonly capture = {
+    queueDropped: 0,
+    truncated: 0,
+    incomplete: 0,
+    refetched: 0,
+    recovered: 0,
+    partial: 0,
+    lost: 0,
+    gaps: 0,
+    downMs: 0,
+  };
+  private downSince: number | null = null;
+  private slotBeforeDown: number | null = null;
+  /** Last slot pump produced a notification in (silence detection). */
+  private lastPumpSlot: number | null = null;
+  private silenceReported = false;
   readonly stats = {
     connected: false,
     reconnects: 0,
@@ -169,6 +246,8 @@ export class RpcLogsSource implements Source {
     decodedTxs: 0,
     decodeFailures: 0,
     truncatedLogs: 0,
+    /** Sockets recycled because the logs subscription stalled while slots kept coming. */
+    silenceRecycles: 0,
     /** LaunchLab graduations seen in the logs (no event; resolved through a fetch or a hint). */
     migrations: 0,
     lastMessageAt: null as number | null,
@@ -179,14 +258,39 @@ export class RpcLogsSource implements Source {
   };
 
   constructor(private readonly opts: RpcLogsSourceOptions) {
-    this.queue = new RingQueue(opts.queueMax);
+    this.queue = new RingQueue(opts.queueMax, (p) => this.onQueueDrop(p));
+  }
+
+  /** The decode queue dropped a notification: re-read it by signature, or report it lost. */
+  private onQueueDrop(p: Pending): void {
+    this.capture.queueDropped++;
+    const f = this.opts.raydiumTx;
+    if (f && f.perSec > 0 && f.recover !== false) {
+      const job: FetchJob = {
+        p,
+        fallback: null,
+        migration: false,
+        priority: 2,
+        reason: "recover",
+        attempts: 0,
+        notBefore: Date.now() + (f.firstDelayMs ?? 1_200),
+      };
+      if (this.enqueueFetch(job, f)) return;
+    }
+    this.lose(p);
+  }
+
+  private lose(p: Pending): void {
+    this.capture.lost++;
+    this.capture.gaps++;
+    this.sink?.gap?.({ source: this.name, reason: "lost", fromSlot: p.slot, toSlot: p.slot, signature: p.signature });
   }
 
   start(sink: IngestSink): void {
     this.sink = sink;
     this.stopped = false;
     this.connect();
-    this.watchdog = setInterval(() => this.checkIdle(), 5_000);
+    this.watchdog = setInterval(() => this.checkIdle(), 1_000);
     if (this.opts.raydiumTx && this.opts.raydiumTx.perSec > 0) this.fetchTimer = setInterval(() => this.fetchTick(), 50);
   }
 
@@ -209,6 +313,8 @@ export class RpcLogsSource implements Source {
     ws.onopen = () => {
       this.stats.connected = true;
       openedAt = Date.now();
+      this.lastPumpSlot = null;
+      this.silenceReported = false;
       this.stats.lastMessageAt = Date.now();
       log.info(`connected; subscribing to ${this.opts.programs.length} program(s) at ${this.opts.commitment}`);
       for (const [i, p] of this.opts.programs.entries()) {
@@ -240,6 +346,11 @@ export class RpcLogsSource implements Source {
       this.ws = null;
       this.subs.clear();
       if (this.stopped) return;
+      // logsSubscribe does not replay: everything until the next notification is a gap (reported then)
+      if (openedAt !== null && this.downSince === null) {
+        this.downSince = Date.now();
+        this.slotBeforeDown = this.stats.slot;
+      }
       // Only a connection that opened AND stayed up for a minute resets the backoff. (Using the last
       // successful open here made every refused upgrade reset it: reconnect storms every ~400 ms.)
       if (openedAt !== null && Date.now() - openedAt > 60_000) this.backoff.reset();
@@ -251,7 +362,7 @@ export class RpcLogsSource implements Source {
   }
 
   private checkIdle(): void {
-    const idle = this.opts.idleTimeoutMs ?? 30_000;
+    const idle = this.opts.idleTimeoutMs ?? 10_000;
     if (this.ws && this.stats.connected && this.stats.lastMessageAt && Date.now() - this.stats.lastMessageAt > idle) {
       log.warn(`no messages for ${idle} ms; recycling the socket`);
       this.ws.close();
@@ -285,6 +396,11 @@ export class RpcLogsSource implements Source {
       this.stats.perProgram[prog] = (this.stats.perProgram[prog] ?? 0) + 1;
       if (this.stats.tipSlot !== null) this.lag.add(this.stats.tipSlot - context.slot);
       if (this.stats.slot === null || context.slot > this.stats.slot) this.stats.slot = context.slot;
+      if (this.downSince !== null) this.endDown(now, context.slot);
+      if (prog === "pump" && (this.lastPumpSlot === null || context.slot > this.lastPumpSlot)) {
+        this.lastPumpSlot = context.slot;
+        this.silenceReported = false;
+      }
       if (value.err) {
         this.stats.failedTxs++;
         return;
@@ -297,8 +413,10 @@ export class RpcLogsSource implements Source {
         return;
       }
       const logs = value.logs ?? [];
-      // LaunchLab graduations emit no event but must reach the decoder (fetch or hint).
-      if (!logs.some((l) => l.startsWith("Program data:")) && !isLaunchLabMigrationLog(logs)) {
+      // LaunchLab graduations emit no event but must reach the decoder (fetch or hint); so must logs the RPC cut
+      // short (or left out) before any event line: their events are only in the full transaction.
+      const cut = value.logs === null || logs[logs.length - 1] === "Log truncated" || logs.includes("Log truncated");
+      if (!cut && !logs.some((l) => l.startsWith("Program data:")) && !isLaunchLabMigrationLog(logs)) {
         this.stats.withoutEvents++;
         return;
       }
@@ -309,6 +427,7 @@ export class RpcLogsSource implements Source {
     if (m.method === "slotNotification") {
       const slot = (m.params as { result: { slot: number } }).result.slot;
       if (this.stats.tipSlot === null || slot > this.stats.tipSlot) this.stats.tipSlot = slot;
+      this.checkSilence(slot);
       if (!this.slotSeenAt.has(slot)) {
         this.slotSeenAt.set(slot, now);
         if (this.slotSeenAt.size > 256) this.slotSeenAt.delete(this.slotSeenAt.keys().next().value as number);
@@ -342,6 +461,26 @@ export class RpcLogsSource implements Source {
     }
   }
 
+  /** First notification after a reconnect: the slots in between are a gap. */
+  private endDown(now: number, slot: number): void {
+    const since = this.downSince as number;
+    this.downSince = null;
+    this.capture.downMs += now - since;
+    this.capture.gaps++;
+    this.sink?.gap?.({ source: this.name, reason: "reconnect", fromSlot: this.slotBeforeDown, toSlot: slot });
+  }
+
+  /** pump trades in nearly every slot: a long stretch without one while the tip advances is a stalled subscription. */
+  private checkSilence(tip: number): void {
+    const n = this.opts.silenceSlots ?? 0;
+    if (!n || this.silenceReported || !this.stats.connected || this.lastPumpSlot === null) return;
+    if (!this.opts.programs.includes(PUMP_PROGRAM_ID) || tip - this.lastPumpSlot < n) return;
+    this.silenceReported = true;
+    this.stats.silenceRecycles++;
+    log.warn(`no pump notification for ${tip - this.lastPumpSlot} slots while slots advance; recycling the socket`);
+    this.ws?.close();
+  }
+
   private scheduleDrain(): void {
     if (this.draining) return;
     this.draining = true;
@@ -366,11 +505,18 @@ export class RpcLogsSource implements Source {
     const t0 = performance.now();
     const r = decodeLogEvents(p.logs);
     perf.stage("ingest.decode", performance.now() - t0);
-    if (r.truncated) this.stats.truncatedLogs++;
+    const truncated = r.truncated || p.logs.length === 0;
+    if (truncated) {
+      this.stats.truncatedLogs++;
+      this.capture.truncated++;
+    }
     if (r.failures) {
       this.stats.decodeFailures += r.failures;
       for (const message of r.failureMessages) this.sink?.decodeFailure?.({ source: this.name, signature: p.signature, message });
     }
+    // fewer trade events than trade instructions, or an event that did not decode: the logs lost something
+    const incomplete = !truncated && (r.failures > 0 || r.events.filter(isTradeEvent).length < expectedTradeEvents(p.logs));
+    if (incomplete) this.capture.incomplete++;
     const migration = isLaunchLabMigrationLog(p.logs);
     if (migration) this.stats.migrations++;
     const fallback: IngestTx | null = r.events.length
@@ -390,18 +536,62 @@ export class RpcLogsSource implements Source {
         }
       : null;
     const f = this.opts.raydiumTx;
-    if (f && f.perSec > 0 && (migration || r.events.some((e) => RAYDIUM_KINDS.has(e.kind)))) {
+    const notBefore = p.receivedAt + (f?.firstDelayMs ?? 1_200);
+    if (f && f.perSec > 0 && (truncated || incomplete)) {
+      // data loss: always re-read (the logs-only record goes out if the re-read fails)
+      if (
+        this.enqueueFetch(
+          { p, fallback, migration, priority: 0, reason: truncated ? "truncated" : "incomplete", attempts: 0, notBefore },
+          f,
+        )
+      )
+        return;
+      this.capture.partial++;
+    } else if (f && f.perSec > 0 && (migration || r.events.some((e) => RAYDIUM_KINDS.has(e.kind)))) {
       if (f.wants && !f.wants(r.events, migration)) this.fetchStats.skipped++;
-      else if (this.fetchQueue.length >= (f.maxQueue ?? 500)) this.fetchStats.overflow++;
       else {
         const priority = migration || r.events.some((e) => e.kind === "launchlabTrade" || e.kind === "launchlabPoolCreate") ? 0 : 1;
-        this.fetchQueue.push({ p, fallback, migration, priority, attempts: 0, notBefore: p.receivedAt + (f.firstDelayMs ?? 1_200) });
-        this.fetchStats.queued++;
-        if (this.fetchQueue.length > this.fetchStats.maxQueue) this.fetchStats.maxQueue = this.fetchQueue.length;
-        return;
+        if (this.enqueueFetch({ p, fallback, migration, priority, reason: "raydium", attempts: 0, notBefore }, f)) return;
       }
-    }
+    } else if (truncated || incomplete) this.capture.partial++;
     this.emitFallback(p, fallback, migration);
+  }
+
+  /**
+   * Queues a re-read. A full queue makes room by displacing its lowest-priority, newest job when the new one
+   * ranks higher (the displaced job falls back now); otherwise the new job is refused (overflow).
+   */
+  private enqueueFetch(job: FetchJob, f: RaydiumTxFetchOptions): boolean {
+    const max = f.maxQueue ?? 500;
+    if (this.fetchQueue.length >= max) {
+      let worst = -1;
+      for (let i = 0; i < this.fetchQueue.length; i++) {
+        const j = this.fetchQueue[i] as FetchJob;
+        if (j.priority > job.priority && (worst < 0 || j.priority >= (this.fetchQueue[worst] as FetchJob).priority)) worst = i;
+      }
+      if (worst < 0) {
+        this.fetchStats.overflow++;
+        return false;
+      }
+      const out = this.fetchQueue.splice(worst, 1)[0] as FetchJob;
+      this.fetchStats.displaced++;
+      this.giveUp(out);
+    }
+    this.fetchQueue.push(job);
+    this.fetchStats.queued++;
+    if (this.fetchQueue.length > this.fetchStats.maxQueue) this.fetchStats.maxQueue = this.fetchQueue.length;
+    return true;
+  }
+
+  /** A re-read that will not happen: its logs-only record goes out, a recovery becomes a reported gap. */
+  private giveUp(job: FetchJob): void {
+    this.fetchStats.fallbacks++;
+    if (job.reason === "recover") {
+      this.lose(job.p);
+      return;
+    }
+    if (job.reason === "truncated" || job.reason === "incomplete") this.capture.partial++;
+    this.emitFallback(job.p, job.fallback, job.migration);
   }
 
   private emitFallback(p: Pending, fallback: IngestTx | null, migration: boolean): void {
@@ -425,19 +615,22 @@ export class RpcLogsSource implements Source {
     const maxAge = f.maxAgeMs ?? 20_000;
     for (let i = 0; i < this.fetchQueue.length; ) {
       const job = this.fetchQueue[i] as FetchJob;
-      if (now - job.p.receivedAt <= maxAge) {
+      // recoveries carry no logs-only record to fall back to: they may wait longer
+      if (now - job.p.receivedAt <= (job.reason === "recover" ? maxAge * 6 : maxAge)) {
         i++;
         continue;
       }
       this.fetchQueue.splice(i, 1);
       this.fetchStats.expired++;
-      this.fetchStats.fallbacks++;
-      this.emitFallback(job.p, job.fallback, job.migration);
+      this.giveUp(job);
     }
     if (f.paused?.()) return;
     while (this.fetchTokens >= 1 && this.fetchInFlight < (f.maxConcurrent ?? 4)) {
-      let i = this.fetchQueue.findIndex((j) => j.priority === 0 && j.notBefore <= now);
-      if (i < 0) i = this.fetchQueue.findIndex((j) => j.notBefore <= now);
+      let i = -1;
+      for (let k = 0; k < this.fetchQueue.length; k++) {
+        const j = this.fetchQueue[k] as FetchJob;
+        if (j.notBefore <= now && (i < 0 || j.priority < (this.fetchQueue[i] as FetchJob).priority)) i = k;
+      }
       if (i < 0) return;
       const job = this.fetchQueue.splice(i, 1)[0] as FetchJob;
       this.fetchTokens -= 1;
@@ -464,9 +657,16 @@ export class RpcLogsSource implements Source {
       const built = ingestFromJsonTx({ signature: job.p.signature, tx, receivedAt: job.p.receivedAt, source: this.name, slot: job.p.slot });
       if (built && (built.tx.events.length || built.tx.raydium?.migrations.length)) {
         this.fetchStats.fetched++;
+        if (job.reason !== "raydium") this.capture.refetched++;
+        if (job.reason === "recover") this.capture.recovered++;
         for (const message of built.failures) this.sink?.decodeFailure?.({ source: this.name, signature: job.p.signature, message });
         this.stats.decodedTxs++;
         this.sink?.tx(built.tx);
+        return;
+      }
+      // a recovered transaction that failed or carries no event of ours: nothing was lost
+      if (job.reason === "recover") {
+        this.capture.recovered++;
         return;
       }
     } else if (!failed) this.fetchStats.notFound++;
@@ -475,8 +675,7 @@ export class RpcLogsSource implements Source {
       this.fetchQueue.push(job);
       return;
     }
-    this.fetchStats.fallbacks++;
-    this.emitFallback(job.p, job.fallback, job.migration);
+    this.giveUp(job);
   }
 
   get fetchQueueSize(): number {
@@ -494,6 +693,7 @@ export class RpcLogsSource implements Source {
       lastMessageAt: this.stats.lastMessageAt,
       slot: this.stats.slot,
       dropped: this.queue.dropped,
+      capture: { ...this.capture, downMs: this.capture.downMs + (this.downSince !== null ? Date.now() - this.downSince : 0) },
       notes: [
         `queue ${this.queue.size}/${this.queue.capacity} (max seen ${this.queue.maxSeen})`,
         `slot lag vs tip p50=${p50 ?? "-"} p90=${p90 ?? "-"} max=${max ?? "-"}`,
@@ -504,12 +704,15 @@ export class RpcLogsSource implements Source {
         `slotsUpdates ${this.stats.slotUpdates}`,
         ...(this.opts.raydiumTx && this.opts.raydiumTx.perSec > 0
           ? [
-              `raydium tx fetch: queue ${this.fetchQueue.length} (max ${this.fetchStats.maxQueue}), fetched ${this.fetchStats.fetched}, ` +
+              `tx re-reads: queue ${this.fetchQueue.length} (max ${this.fetchStats.maxQueue}), fetched ${this.fetchStats.fetched}, ` +
                 `not found ${this.fetchStats.notFound}, errors ${this.fetchStats.errors}, logs-only fallbacks ${this.fetchStats.fallbacks} ` +
-                `(${this.fetchStats.expired} waited too long), ` +
+                `(${this.fetchStats.expired} waited too long, ${this.fetchStats.displaced} displaced), ` +
                 `overflow ${this.fetchStats.overflow}, skipped ${this.fetchStats.skipped}; graduations in logs ${this.stats.migrations}`,
             ]
           : []),
+        `capture: ${this.capture.queueDropped} dropped by the queue (${this.capture.recovered} recovered, ${this.capture.lost} lost), ` +
+          `${this.capture.truncated} truncated + ${this.capture.incomplete} incomplete logs (${this.capture.refetched} re-read, ${this.capture.partial} partial), ` +
+          `${this.capture.gaps} gaps reported, down ${Math.round(this.capture.downMs / 1000)} s`,
         ...(this.stats.lastError ? [`last error: ${this.stats.lastError}`] : []),
       ],
     };

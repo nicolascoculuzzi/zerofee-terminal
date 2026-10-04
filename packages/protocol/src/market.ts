@@ -212,7 +212,53 @@ export interface TokenSummary {
   athMcSol: number | null;
   isMayhem: boolean;
   lastTradeAt: number | null;
+  /**
+   * How much of the token's trade history the server holds (every buy and sell since creation, or a known
+   * part of it), and whether a backfill from chain is running. Drives the chart / Trades tab "loading history"
+   * state: wait for `state: "complete"` (or a settled "partial") before treating the chart as the whole history.
+   * Absent from servers that predate it.
+   */
+  history?: TokenHistory;
+  /** `history.state` as a flat field (chart adapters read either). */
+  historyState?: HistoryState;
+  /**
+   * Holder metrics are being computed: `holders`, `top10Pct`, `devPct`, `snipersPct`, `bundlersPct` are null now
+   * because a backfill of the coin's history is running, and they arrive (as a token patch) when it reaches the
+   * creation. false / absent: null metrics stay null (history not observable, or capped). Lets the UI show
+   * "computing" instead of guessing with timers.
+   */
+  holdersPending?: boolean;
   /** Last time any field changed. */
+  updatedAt: number;
+}
+
+/**
+ * Trade-history coverage of one token:
+ *  - "complete"    every trade since creation is stored (seen live from the create, or backfilled from chain);
+ *  - "partial"     part of it: the coin was first seen mid-life and not backfilled (yet), the backfill hit its
+ *                  per-coin cap (`capped`), or the live feed had a gap that a gap-fill has not repaired yet;
+ *  - "backfilling" a backfill from chain is running (`progress` moves; trades and candles arrive as `backfill`
+ *                  corrections, and a final one when it settles);
+ *  - "unknown"     not assessed yet.
+ * The server reads the chain itself for this (getSignaturesForAddress on the bonding curve / pool, then
+ * getTransaction); no third-party indexer decides it.
+ */
+export type HistoryState = "complete" | "partial" | "backfilling" | "unknown";
+
+export interface TokenHistory {
+  state: HistoryState;
+  /** Oldest trade the server holds: slot and block time (ms); null when it holds none. */
+  fromSlot: number | null;
+  fromTime: number | null;
+  /** Trades the server holds for the token (store + memory), when counted (after a backfill). */
+  trades: number | null;
+  /** The creation transaction is covered: trades start at the launch. */
+  fromCreation: boolean;
+  /** A backfill stopped at the per-coin cap (HISTORY_MAX_TX_PER_COIN): older trades exist on chain. */
+  capped: boolean;
+  /** While "backfilling": signatures listed, transactions fetched and trades added so far. */
+  progress: { signatures: number; fetched: number; added: number } | null;
+  /** Last change (ms). */
   updatedAt: number;
 }
 
@@ -281,9 +327,13 @@ export interface Trade {
   tags: TradeTag[];
 }
 
-/** `trades:<mint>` snapshot: most recent trades, newest first. */
+/**
+ * `trades:<mint>` snapshot: most recent trades, newest first (the newest 100; older ones page through
+ * GET /api/trades). `history` says whether older trades exist and whether a backfill is filling them in.
+ */
 export interface TradesSnapshot {
   trades: Trade[];
+  history?: TokenHistory;
 }
 
 /** `trades:<mint>` delta: new trades since the last frame, oldest first (prepend in order). */
@@ -291,7 +341,11 @@ export interface TradesDelta {
   trades: Trade[];
 }
 
-/** `trades:<mint>` correction: trades to drop (dead slot / fork) and trades to insert out of order. */
+/**
+ * `trades:<mint>` correction: trades to drop (dead slot / fork) and trades to insert out of order. With reason
+ * "backfill", `upsert` carries trades a backfill from chain added (up to the newest 200 per frame, newest first);
+ * insert them by (slot, id) and page further back with GET /api/trades.
+ */
 export interface TradesCorrection {
   remove: string[];
   upsert: Trade[];
@@ -316,11 +370,19 @@ export interface Candle {
   solUsd: number | null;
 }
 
+/** Most buckets a `candles:<mint>:<tf>` snapshot carries (older ones: GET /api/candles). */
+export const CANDLES_SNAPSHOT_MAX = 1_000;
+
 export interface CandlesSnapshot {
   /** Supply in UI units: multiply OHLC by it for market-cap candles. */
   supply: number;
-  /** Oldest first. */
+  /**
+   * Oldest first: the token's whole candle history up to the newest CANDLES_SNAPSHOT_MAX buckets (servers before
+   * this field sent the last 300). `more` = older buckets exist: page them with GET /api/candles?to=<oldest t - 1>.
+   */
   candles: Candle[];
+  more?: boolean;
+  history?: TokenHistory;
 }
 
 /** Upserts of the open bucket(s), oldest first. */
@@ -328,7 +390,10 @@ export interface CandlesDelta {
   candles: Candle[];
 }
 
-/** Rewritten historical buckets after late or dead-slot events. */
+/**
+ * Rewritten historical buckets after late or dead-slot events, or (reason "backfill") buckets rebuilt from a
+ * backfilled trade history: upsert them by `t` (n = 0 means drop the bucket).
+ */
 export interface CandlesCorrection {
   candles: Candle[];
 }

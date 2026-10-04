@@ -33,6 +33,22 @@ export interface WriterOptions {
   threadPath?: string | null;
 }
 
+/** token_history row (history/service.ts). */
+export interface TokenHistoryRow {
+  mint: string;
+  state: string;
+  fromSlot: number | null;
+  fromTime: number | null;
+  fromCreation: boolean;
+  capped: boolean;
+  trades: number | null;
+  /** JSON: newest signature covered per walked account (the next gap-fill stops there). */
+  cursors: string | null;
+  /** The token's trades are kept past TRADES_RETENTION_HOURS until then (ms); null = normal retention. */
+  retainUntil: number | null;
+  updatedAt: number;
+}
+
 /** A wallet's first incoming SOL transfer (Helius funded-by); funder null = none found. */
 export interface WalletFunderRow {
   wallet: string;
@@ -63,6 +79,7 @@ export class StorageWriter implements StorageSink {
   private readonly pools = new Map<string, unknown[]>();
   private readonly meta = new Map<string, unknown[]>();
   private readonly funders = new Map<string, unknown[]>();
+  private readonly histories = new Map<string, unknown[]>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   readonly stats = { flushes: 0, rows: 0, errors: 0, lastFlushMs: null as number | null, maxFlushMs: 0, pruned: 0 };
@@ -146,6 +163,7 @@ export class StorageWriter implements StorageSink {
       this.pools.size +
       this.meta.size +
       this.funders.size +
+      this.histories.size +
       (this.inFlight?.rows ?? 0)
     );
   }
@@ -195,6 +213,35 @@ export class StorageWriter implements StorageSink {
     this.meta.set(key, [key, json, ok ? 1 : 0, Date.now()]);
   }
 
+  history(r: TokenHistoryRow): void {
+    this.histories.set(r.mint, [
+      r.mint,
+      r.state,
+      r.fromSlot,
+      r.fromTime,
+      r.fromCreation ? 1 : 0,
+      r.capped ? 1 : 0,
+      r.trades,
+      r.cursors,
+      r.retainUntil,
+      r.updatedAt,
+    ]);
+  }
+
+  /**
+   * Writes everything queued so far and resolves once it is readable (threaded: after the writer thread
+   * committed it). For read-after-write off the hot path (history backfills); bounded by `timeoutMs`.
+   */
+  async drain(timeoutMs = 10_000): Promise<void> {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      if (this.inFlight) await this.wait(this.inFlight.id, Math.max(1, until - Date.now()));
+      if (this.pending === 0 && !this.inFlight) return;
+      this.flush();
+      if (!this.worker || Date.now() >= until) return;
+    }
+  }
+
   /** Moves everything queued into one batch (token rows are serialized here). */
   private takeBatch(): WriteBatch {
     const tokens: unknown[][] = [];
@@ -222,7 +269,9 @@ export class StorageWriter implements StorageSink {
       pools: [...this.pools.values()],
       meta: [...this.meta.values()],
       funders: [...this.funders.values()],
+      histories: [...this.histories.values()],
     };
+    this.histories.clear();
     this.trades = [];
     this.tradeDeletes = [];
     this.candles.clear();

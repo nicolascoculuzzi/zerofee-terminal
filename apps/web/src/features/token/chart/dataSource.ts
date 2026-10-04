@@ -11,9 +11,12 @@ import { type LiveMerge, mergeLive, mergeOlder, mergeSnapshot, normalize } from 
  *
  *   1. `candles:<mint>:<tf>` snapshot (the newest ~300 buckets), then live deltas, batched per frame;
  *   2. older pages on demand (the user scrolls near the left edge, or the snapshot is empty):
- *      today `GET /api/candles?mint&tf&from=0&to=<oldest>` (the newest 2,000 buckets before `to`);
+ *      `GET /api/candles?mint&tf&before=<oldest ms>&limit=2000` (the newest buckets before `before`, with
+ *      `hasMore` and the coin's history coverage);
  *   3. the coin's history state (complete / partial / backfilling) drives a "Loading history" hint and,
- *      while backfilling, a slow re-poll for pages that were not on the server yet.
+ *      while backfilling, a slow re-poll for pages that were not on the server yet. The server reports it
+ *      on `GET /api/history` (polled here while it is not complete: viewing a coin starts its backfill)
+ *      and on every candles page; the token summary's own field is used when an adapter passes it on.
  *
  * Re-snapshots (corrections, a resubscribe after a sequence gap) replace the window they cover and keep
  * the older pages, and the chart keeps the user's scroll position for both.
@@ -58,6 +61,8 @@ export interface FeedCallbacks {
 export interface FeedDeps {
   subscribe(mint: string, tf: Timeframe, onSnapshot: (c: Candle[]) => void, onDelta: (c: Candle[]) => void): () => void;
   fetchOlder(mint: string, tf: Timeframe, beforeSec: number, signal: AbortSignal): Promise<OlderPage>;
+  /** The server's history coverage of the coin (live: GET /api/history); absent = only what the token says. */
+  fetchHistory?(mint: string, signal: AbortSignal): Promise<HistoryState>;
   /** Next animation frame (batches live deltas). */
   frame(fn: () => void): () => void;
   later(fn: () => void, ms: number): () => void;
@@ -68,8 +73,11 @@ export const SNAPSHOT_TIMEOUT_MS = 8000;
 /** While the server backfills, re-ask for an empty older page this often, this many times. */
 export const BACKFILL_POLL_MS = 5000;
 export const BACKFILL_POLLS = 24;
-/** The REST endpoint's page cap (apps/server gateway MAX_CANDLES_REST). */
+/** Buckets per older page (the gateway caps a page at 5,000). */
 const REST_PAGE = 2000;
+/** While the coverage is not complete, re-read it this often, this many times (10 minutes). */
+export const HISTORY_POLL_MS = 5000;
+export const HISTORY_POLLS = 120;
 
 /**
  * One chart's candle stream for one mint and interval. `start()` subscribes; `requestOlder()` loads the
@@ -87,6 +95,8 @@ export class ChartFeed {
   private abort: AbortController | null = null;
   private stopped = false;
   private polls = 0;
+  private historyPolls = 0;
+  private cancelHistoryPoll: (() => void) | null = null;
   private history: HistoryInfo;
 
   constructor(
@@ -114,6 +124,28 @@ export class ChartFeed {
       (c) => this.onSnapshot(c),
       (c) => this.onDelta(c),
     );
+    this.pollHistory();
+  }
+
+  /** Reads the server's coverage now, and again while it is partial / backfilling (bounded). */
+  private pollHistory(): void {
+    const fetchHistory = this.deps.fetchHistory;
+    if (!fetchHistory || this.stopped) return;
+    const abort = new AbortController();
+    fetchHistory(this.mint, abort.signal)
+      .then((state) => {
+        if (this.stopped) return;
+        if (state !== "unknown") this.setHistoryState(state);
+        if (state === "complete" || this.historyPolls >= HISTORY_POLLS) return;
+        this.historyPolls++;
+        this.cancelHistoryPoll = this.deps.later(() => {
+          this.cancelHistoryPoll = null;
+          this.pollHistory();
+        }, HISTORY_POLL_MS);
+      })
+      .catch(() => {
+        /* coverage is a hint: the chart works without it */
+      });
   }
 
   stop(): void {
@@ -123,15 +155,17 @@ export class ChartFeed {
     this.cancelFrame?.();
     this.cancelTimeout?.();
     this.cancelPoll?.();
+    this.cancelHistoryPoll?.();
     this.abort?.abort();
-    this.cancelFrame = this.cancelTimeout = this.cancelPoll = null;
+    this.cancelFrame = this.cancelTimeout = this.cancelPoll = this.cancelHistoryPoll = null;
     this.abort = null;
     this.pending = [];
   }
 
   /** Server-side history state from the token (when the server publishes one). */
   setHistoryState(state: HistoryState): void {
-    if (state === this.history.state) return;
+    // "unknown" only means a payload did not carry the field: it never overrides what the server said
+    if (state === this.history.state || (state === "unknown" && this.history.state !== "unknown")) return;
     const wasBackfilling = this.history.state === "backfilling";
     this.history = { ...this.history, state, hasMore: this.history.hasMore || state === "backfilling" || state === "partial" };
     this.cb.onHistory(this.history);
@@ -186,7 +220,11 @@ export class ChartFeed {
         if (this.stopped || abort.signal.aborted) return;
         const m = mergeOlder(this.bars, page.candles);
         const backfilling = page.history === "backfilling";
-        this.history = { loading: false, hasMore: page.hasMore || backfilling, state: page.history };
+        this.history = {
+          loading: false,
+          hasMore: page.hasMore || backfilling,
+          state: page.history === "unknown" ? this.history.state : page.history,
+        };
         if (m.added > 0) {
           this.bars = m.bars;
           this.cb.onBars(this.bars, { kind: "keep" });
@@ -238,21 +276,33 @@ export function fromWire(c: WireCandle, solUsdNow: number): Candle {
 
 const HISTORY_STATES: readonly HistoryState[] = ["complete", "partial", "backfilling"];
 
-/** Reads a history state from any server payload that carries one (`history` or `historyState`). */
+/**
+ * Reads a history state from any server payload that carries one: `historyState` (string), `history` as a
+ * string, or `history` as the protocol's TokenHistory object (`history.state`).
+ */
 export function historyStateOf(payload: unknown): HistoryState {
   if (!payload || typeof payload !== "object") return "unknown";
   const p = payload as { history?: unknown; historyState?: unknown };
-  const raw = typeof p.history === "string" ? p.history : typeof p.historyState === "string" ? p.historyState : null;
+  const nested = p.history && typeof p.history === "object" ? (p.history as { state?: unknown }).state : undefined;
+  const raw =
+    typeof p.historyState === "string"
+      ? p.historyState
+      : typeof p.history === "string"
+        ? p.history
+        : typeof nested === "string"
+          ? nested
+          : null;
   return raw && (HISTORY_STATES as readonly string[]).includes(raw) ? (raw as HistoryState) : "unknown";
 }
 
 /**
- * Today's REST page: `from=0` makes the gateway return the newest REST_PAGE buckets before `to`, so a
- * short page means the start of the coin's history. Tolerates the paginated shape the history work is
- * adding (`hasMore`, `history`) without depending on it.
+ * One older page: the newest REST_PAGE buckets before `before` (exclusive), oldest first, with `hasMore` and
+ * the coin's coverage. A server without `hasMore` (older builds) answers the same query by `to`, and a short
+ * page then means the start of the history.
  */
 async function fetchOlderLive(mint: string, tf: Timeframe, beforeSec: number, signal: AbortSignal): Promise<OlderPage> {
-  const qs = new URLSearchParams({ mint, tf, from: "0", to: String(beforeSec * 1000 - 1) });
+  const before = beforeSec * 1000;
+  const qs = new URLSearchParams({ mint, tf, from: "0", to: String(before - 1), before: String(before), limit: String(REST_PAGE) });
   const res = await fetch(apiUrl(`/api/candles?${qs}`), { signal, credentials: "same-origin" });
   if (!res.ok) throw new Error(`candles ${res.status}`);
   const body = (await res.json()) as { candles?: WireCandle[]; hasMore?: unknown };
@@ -262,6 +312,13 @@ async function fetchOlderLive(mint: string, tf: Timeframe, beforeSec: number, si
   const history = historyStateOf(body);
   const hasMore = typeof body.hasMore === "boolean" ? body.hasMore : wire.length >= REST_PAGE;
   return { candles, hasMore, history };
+}
+
+/** GET /api/history: the coin's coverage (and, for an incomplete one, the server queues a backfill). */
+async function fetchHistoryLive(mint: string, signal: AbortSignal): Promise<HistoryState> {
+  const res = await fetch(apiUrl(`/api/history?${new URLSearchParams({ mint })}`), { signal, credentials: "same-origin" });
+  if (!res.ok) return "unknown";
+  return historyStateOf(await res.json());
 }
 
 export const defaultDeps: FeedDeps = {
@@ -274,6 +331,7 @@ export const defaultDeps: FeedDeps = {
   // The simulation's snapshot already holds the coin's whole history.
   fetchOlder: (mint, tf, beforeSec, signal) =>
     IS_LIVE ? fetchOlderLive(mint, tf, beforeSec, signal) : Promise.resolve({ candles: [], hasMore: false, history: "complete" }),
+  ...(IS_LIVE ? { fetchHistory: fetchHistoryLive } : {}),
   frame: (fn) => {
     const id = requestAnimationFrame(fn);
     return () => cancelAnimationFrame(id);

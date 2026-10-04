@@ -102,6 +102,19 @@ class Series {
     return last;
   }
 
+  /** Installs rebuilt buckets: every bucket at or after `fromT` is replaced by `rebuilt` (history backfill). */
+  replaceFrom(fromT: number, rebuilt: readonly Agg[]): void {
+    this.replaceRange(fromT, Number.POSITIVE_INFINITY, rebuilt);
+  }
+
+  /** Every bucket in [fromT, toT) is replaced by `rebuilt` (history backfill). */
+  replaceRange(fromT: number, toT: number, rebuilt: readonly Agg[]): void {
+    for (const t of [...this.byT.keys()]) if (t >= fromT && t < toT) this.byT.delete(t);
+    for (const a of rebuilt) this.byT.set(a.t, { ...a });
+    this.maxT = this.byT.size ? Math.max(...this.byT.keys()) : Number.NEGATIVE_INFINITY;
+    this.trim();
+  }
+
   /**
    * Removes trades from a bucket whose full trade list is not in memory: volume and count are exact,
    * open/close move to the nearest surviving in-memory trade, high/low stay (approximation).
@@ -126,6 +139,44 @@ class Series {
     }
     return strip(a);
   }
+}
+
+/**
+ * Every bucket of one timeframe built from a complete, unordered trade list (open / close by ordering key),
+ * oldest first. Pure: the live series are untouched (see CandleBook.rebuildFrom).
+ */
+export function aggregateCandles(tf: Timeframe, trades: readonly CandleTrade[]): Agg[] {
+  const ms = TIMEFRAME_MS[tf];
+  const byT = new Map<number, Agg>();
+  const sorted = trades.filter((tr) => tr.price > 0 && Number.isFinite(tr.price)).sort((x, y) => cmpKey(x.key, y.key));
+  for (const tr of sorted) {
+    const t = Math.floor(tr.tsMs / ms) * ms;
+    const a = byT.get(t);
+    if (!a) {
+      byT.set(t, {
+        t,
+        o: tr.price,
+        h: tr.price,
+        l: tr.price,
+        c: tr.price,
+        v: tr.volume,
+        n: 1,
+        solUsd: tr.solUsd,
+        openKey: tr.key,
+        closeKey: tr.key,
+      });
+      continue;
+    }
+    // sorted by key: every later trade closes the bucket
+    a.c = tr.price;
+    a.closeKey = tr.key;
+    if (tr.solUsd !== null) a.solUsd = tr.solUsd;
+    if (tr.price > a.h) a.h = tr.price;
+    if (tr.price < a.l) a.l = tr.price;
+    a.v += tr.volume;
+    a.n++;
+  }
+  return [...byT.values()].sort((a, b) => a.t - b.t);
 }
 
 export class CandleBook {
@@ -183,6 +234,41 @@ export class CandleBook {
         const c = t >= coverFromMs ? s.rebuild(t, surviving) : s.subtract(t, gone, surviving);
         out.push({ mint, tf, candle: c ?? { t, o: 0, h: 0, l: 0, c: 0, v: 0, n: 0, solUsd: null }, late: true });
       }
+    }
+    return out;
+  }
+
+  /**
+   * Rebuilds every timeframe from a token's trade list, complete from its oldest trade on (history backfill):
+   * buckets from the oldest trade's bucket on are replaced in memory (keeping the newest MEMORY_CAP) and
+   * returned in full, oldest first, for storage and publication. Older buckets are left alone.
+   */
+  rebuildFrom(mint: string, trades: readonly CandleTrade[]): Map<Timeframe, Candle[]> {
+    const out = new Map<Timeframe, Candle[]>();
+    let oldest = Number.POSITIVE_INFINITY;
+    for (const tr of trades) if (tr.price > 0 && tr.tsMs < oldest) oldest = tr.tsMs;
+    if (!Number.isFinite(oldest)) return out;
+    for (const tf of TIMEFRAMES) {
+      const ms = TIMEFRAME_MS[tf];
+      const rebuilt = aggregateCandles(tf, trades);
+      (this.seriesOf(mint, tf, true) as Series).replaceFrom(Math.floor(oldest / ms) * ms, rebuilt);
+      out.set(tf, rebuilt.map(strip));
+    }
+    return out;
+  }
+
+  /**
+   * Rebuilds the buckets of [fromMs, toMs) of every timeframe from the complete trade list of that window
+   * (both bounds aligned to the largest timeframe, so no bucket straddles them). Memory keeps its newest
+   * MEMORY_CAP per series; the returned buckets are complete, oldest first.
+   */
+  rebuildWindow(mint: string, fromMs: number, toMs: number, trades: readonly CandleTrade[]): Map<Timeframe, Candle[]> {
+    const out = new Map<Timeframe, Candle[]>();
+    const inside = trades.filter((tr) => tr.tsMs >= fromMs && tr.tsMs < toMs);
+    for (const tf of TIMEFRAMES) {
+      const rebuilt = aggregateCandles(tf, inside);
+      (this.seriesOf(mint, tf, true) as Series).replaceRange(fromMs, toMs, rebuilt);
+      out.set(tf, rebuilt.map(strip));
     }
     return out;
   }

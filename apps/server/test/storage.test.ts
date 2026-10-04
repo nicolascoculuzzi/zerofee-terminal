@@ -30,7 +30,7 @@ describe("schema", () => {
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[]).map(
       (r) => r.name,
     );
-    expect(tables).toEqual(["candles", "metadata_cache", "pools", "tokens", "trades", "wallet_funders"]);
+    expect(tables).toEqual(["candles", "metadata_cache", "pools", "token_history", "tokens", "trades", "wallet_funders"]);
   });
 
   test("v2 backfills creator / migrated of rows written before it", () => {

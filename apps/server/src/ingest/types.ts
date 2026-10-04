@@ -69,12 +69,26 @@ export interface IngestHint {
   slot: number;
 }
 
+/**
+ * Part of the feed is known lost: the socket was down (`reconnect`, slots fromSlot..toSlot), a transaction could not
+ * be recovered (`lost`, with its signature), or the busiest program went silent while slots advanced (`silence`).
+ * The history service gap-fills the active coins from chain.
+ */
+export interface IngestGap {
+  source: string;
+  reason: "reconnect" | "lost" | "silence";
+  fromSlot: number | null;
+  toSlot: number | null;
+  signature?: string;
+}
+
 export interface IngestSink {
   tx(tx: IngestTx): void;
   slot?(slot: number, status: SlotStatus): void;
   blockMeta?(meta: BlockMeta): void;
   decodeFailure?(info: { source: string; signature: string | null; message: string }): void;
   hint?(h: IngestHint): void;
+  gap?(g: IngestGap): void;
 }
 
 export interface Source {
@@ -84,7 +98,10 @@ export interface Source {
   health(): SourceHealth;
 }
 
-/** Fixed-capacity FIFO; pushing into a full queue evicts the oldest item (counted as dropped). */
+/**
+ * Fixed-capacity FIFO; pushing into a full queue evicts the oldest item (counted as dropped and handed to
+ * `onDrop`, so nothing is lost silently: the RPC logs source re-reads it by signature).
+ */
 export class RingQueue<T> {
   private readonly buf: (T | undefined)[];
   private head = 0;
@@ -92,15 +109,20 @@ export class RingQueue<T> {
   dropped = 0;
   maxSeen = 0;
 
-  constructor(readonly capacity: number) {
+  constructor(
+    readonly capacity: number,
+    private readonly onDrop?: (item: T) => void,
+  ) {
     this.buf = new Array(capacity);
   }
 
   push(v: T): void {
     if (this.len === this.capacity) {
+      const old = this.buf[this.head] as T;
       this.head = (this.head + 1) % this.capacity;
       this.len--;
       this.dropped++;
+      this.onDrop?.(old);
     }
     this.buf[(this.head + this.len) % this.capacity] = v;
     this.len++;

@@ -18,13 +18,24 @@ export interface WriteBatch {
   pools: unknown[][];
   meta: unknown[][];
   funders: unknown[][];
+  /** token_history rows (history/service.ts). */
+  histories: unknown[][];
 }
 
 export function batchRows(b: WriteBatch): number {
-  return b.trades.length + b.deletes.length + b.candles.length + b.tokens.length + b.pools.length + b.meta.length + b.funders.length;
+  return (
+    b.trades.length +
+    b.deletes.length +
+    b.candles.length +
+    b.tokens.length +
+    b.pools.length +
+    b.meta.length +
+    b.funders.length +
+    b.histories.length
+  );
 }
 
-type StatementName = "trade" | "delTrade" | "candle" | "delCandle" | "token" | "pool" | "meta" | "funder";
+type StatementName = "trade" | "delTrade" | "candle" | "delCandle" | "token" | "pool" | "meta" | "funder" | "history";
 
 export class BatchApplier {
   private readonly st: Record<StatementName, Statement>;
@@ -60,6 +71,13 @@ export class BatchApplier {
          ON CONFLICT(wallet) DO UPDATE SET funder = excluded.funder, funder_name = excluded.funder_name, funder_type = excluded.funder_type,
            amount_lamports = excluded.amount_lamports, funded_at = excluded.funded_at, slot = excluded.slot, fetched_at = excluded.fetched_at`,
       ),
+      history: db.prepare(
+        `INSERT INTO token_history (mint, state, from_slot, from_time, from_creation, capped, trades, cursors, retain_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(mint) DO UPDATE SET state = excluded.state, from_slot = excluded.from_slot, from_time = excluded.from_time,
+           from_creation = excluded.from_creation, capped = excluded.capped, trades = excluded.trades,
+           cursors = COALESCE(excluded.cursors, token_history.cursors),
+           retain_until = MAX(COALESCE(excluded.retain_until, 0), COALESCE(token_history.retain_until, 0)), updated_at = excluded.updated_at`,
+      ),
     };
   }
 
@@ -78,16 +96,21 @@ export class BatchApplier {
       for (const r of b.pools) st.pool.run(...(r as never[]));
       for (const r of b.meta) st.meta.run(...(r as never[]));
       for (const r of b.funders) st.funder.run(...(r as never[]));
+      for (const r of b.histories ?? []) st.history.run(...(r as never[]));
     })();
   }
 
-  /** Deletes trades past retention (bounded) and old short-timeframe candles; returns trades deleted. */
+  /**
+   * Deletes trades past retention (bounded; a backfilled token keeps its whole history until its
+   * token_history.retain_until) and old short-timeframe candles; returns trades deleted.
+   */
   prune(now: number, retentionHours: number, pruneBatch: number): number {
     const cutoff = now - retentionHours * 3_600_000;
-    const r = this.db.run("DELETE FROM trades WHERE rowid IN (SELECT rowid FROM trades WHERE block_time < ? LIMIT ?)", [
-      cutoff,
-      pruneBatch,
-    ] as never);
+    const r = this.db.run(
+      `DELETE FROM trades WHERE rowid IN (SELECT rowid FROM trades WHERE block_time < ?
+         AND mint NOT IN (SELECT mint FROM token_history WHERE retain_until >= ?) LIMIT ?)`,
+      [cutoff, now, pruneBatch] as never,
+    );
     for (const [tf, ms] of Object.entries(CANDLE_RETENTION_MS)) {
       this.db.run("DELETE FROM candles WHERE tf = ? AND t < ?", [tf, now - (ms as number)] as never);
     }
