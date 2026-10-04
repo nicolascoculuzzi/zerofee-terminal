@@ -11,8 +11,8 @@ const APP_VERSION = "0.1.0";
 /** Required attribution for TradingView Lightweight Charts (apps/web/NOTICE). Keep verbatim. */
 const CHART_ATTRIBUTION = "Charts by TradingView Lightweight Charts™, Copyright (c) 2026 TradingView, Inc.";
 
-/** Set VITE_BUILD_HASH at build time (e.g. the short git SHA) to show it here. */
-const BUILD: string = (import.meta.env.VITE_BUILD_HASH as string | undefined) ?? (import.meta.env.DEV ? "development" : "unversioned");
+/** VITE_BUILD_HASH, set at build time to the short git SHA (see src/env.d.ts). */
+const BUILD: string = import.meta.env.VITE_BUILD_HASH || (import.meta.env.DEV ? "development" : "unversioned");
 
 function LicenceText({ summary, text }: { summary: string; text: string }) {
   return (

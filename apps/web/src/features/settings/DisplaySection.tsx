@@ -253,13 +253,6 @@ export function DisplaySection() {
             label="Bonding progress ring"
           />
         </Row>
-        <Row label="Large quick-buy pills" help="Bigger quick-buy pills on token cards.">
-          <Switch
-            checked={display.largeQuickBuy}
-            onChange={(largeQuickBuy) => setDisplay({ largeQuickBuy })}
-            label="Large quick-buy pills"
-          />
-        </Row>
       </Rows>
 
       <SubHeader

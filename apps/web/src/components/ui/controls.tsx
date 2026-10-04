@@ -257,7 +257,12 @@ export function Switch({
   );
 }
 
-/** 14 × 14 box, 2px radius. Checked: accent fill with an ink check. */
+/**
+ * 14 × 14 box, 2px radius. Checked: accent fill with an ink check; indeterminate: a minus.
+ * `hideLabel` drops the visible label (it stays the accessible name) and gives the box a
+ * 22 px hit area (44 px with `touch`), for selection columns in grids. `tabIndex` lets
+ * roving-tabindex grids make only the cursor row's controls tab stops.
+ */
 export function Checkbox({
   checked,
   onChange,
@@ -266,6 +271,9 @@ export function Checkbox({
   indeterminate,
   disabled,
   className,
+  tabIndex,
+  hideLabel,
+  touch,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
@@ -274,20 +282,63 @@ export function Checkbox({
   indeterminate?: boolean;
   disabled?: boolean;
   className?: string;
+  tabIndex?: number;
+  hideLabel?: boolean;
+  touch?: boolean;
 }) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !!indeterminate;
+  }, [indeterminate]);
   const on = checked || indeterminate;
-  return (
-    <label className={cn("flex cursor-pointer items-start gap-2 text-data", disabled && "cursor-not-allowed text-fg-4", className)}>
-      <input type="checkbox" className="peer sr-only" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      <span
-        aria-hidden="true"
+  const box = (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "flex size-3.5 shrink-0 items-center justify-center rounded-xs border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus",
+        !hideLabel && "mt-0.5",
+        on ? "border-accent bg-accent text-ink" : "border-hairline-strong bg-surface-2",
+      )}
+    >
+      {indeterminate ? <Minus className="icon-xs" /> : checked ? <Check className="icon-xs" /> : null}
+    </span>
+  );
+  if (hideLabel) {
+    return (
+      <label
         className={cn(
-          "mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-xs border peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus",
-          on ? "border-accent bg-accent text-ink" : "border-hairline-strong bg-surface-2",
+          "relative flex shrink-0 cursor-pointer items-center justify-center before:absolute before:content-['']",
+          touch ? "size-11" : "size-5 before:-inset-0.5",
+          disabled && "cursor-not-allowed",
+          className,
         )}
       >
-        {indeterminate ? <Minus className="icon-xs" /> : checked ? <Check className="icon-xs" /> : null}
-      </span>
+        <input
+          ref={ref}
+          type="checkbox"
+          className="peer sr-only"
+          checked={checked}
+          disabled={disabled}
+          tabIndex={tabIndex}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        {box}
+        <span className="sr-only">{label}</span>
+      </label>
+    );
+  }
+  return (
+    <label className={cn("flex cursor-pointer items-start gap-2 text-data", disabled && "cursor-not-allowed text-fg-4", className)}>
+      <input
+        ref={ref}
+        type="checkbox"
+        className="peer sr-only"
+        checked={checked}
+        disabled={disabled}
+        tabIndex={tabIndex}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {box}
       <span>
         <span className="text-fg-1">{label}</span>
         {hint && <span className="block text-label text-fg-3">{hint}</span>}
@@ -345,7 +396,19 @@ export function Hotkey({ binding, className }: { binding: string | undefined; cl
 // Copy control (DESIGN.md 4.23): Copy 12px text-3 swaps to Check text-1 for 1,200 ms. No toast.
 // ---------------------------------------------------------------------------
 
-export function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; size?: number; className?: string }) {
+export function CopyButton({
+  text,
+  label = "Copy",
+  className,
+  tabIndex,
+}: {
+  text: string;
+  label?: string;
+  size?: number;
+  className?: string;
+  /** Roving-tabindex grids: only the cursor row's copy button is a tab stop. */
+  tabIndex?: number;
+}) {
   const [done, setDone] = useState(false);
   useEffect(() => {
     if (!done) return;
@@ -355,6 +418,7 @@ export function CopyButton({ text, label = "Copy", className }: { text: string; 
   return (
     <button
       type="button"
+      tabIndex={tabIndex}
       aria-label={done ? "Copied" : label}
       title={done ? "Copied" : label}
       onClick={(e) => {
@@ -363,7 +427,7 @@ export function CopyButton({ text, label = "Copy", className }: { text: string; 
         void copyText(text).then((ok) => setDone(ok));
       }}
       className={cn(
-        "inline-flex size-5 shrink-0 items-center justify-center rounded-xs transition-colors",
+        "focus-inset relative inline-flex size-5 shrink-0 items-center justify-center rounded-xs transition-colors before:absolute before:-inset-0.5 before:content-['']",
         done ? "text-fg-1" : "text-fg-3 hover:text-fg-1",
         className,
       )}

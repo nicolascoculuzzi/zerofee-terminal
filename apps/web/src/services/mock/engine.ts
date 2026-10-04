@@ -2280,7 +2280,8 @@ export class SimEngine {
   /** SOL per token at which an order's trigger fires (the live price for migration and live triggers). */
   private triggerPriceSol(trigger: Order["trigger"], t: SimToken): number {
     if (trigger.value !== null && trigger.metric === "price") return trigger.value;
-    if (trigger.value !== null && trigger.metric === "mc" && t.supply > 0 && this.solUsd > 0) return trigger.value / (t.supply * this.solUsd);
+    if (trigger.value !== null && trigger.metric === "mc" && t.supply > 0 && this.solUsd > 0)
+      return trigger.value / (t.supply * this.solUsd);
     return this.priceOf(t);
   }
 
@@ -2288,7 +2289,11 @@ export class SimEngine {
    * The pre-signed min-out grid: two minimum outputs (half and all of the slippage) times three
    * tip levels. Buys guarantee tokens, sells guarantee SOL, both at the trigger price.
    */
-  private buildGrid(o: { wallet: string; mint: string | null; side: "buy" | "sell"; size: Order["size"]; trigger: Order["trigger"] }, slippagePct: number, tipSol: number): OrderVariant[] {
+  private buildGrid(
+    o: { wallet: string; mint: string | null; side: "buy" | "sell"; size: Order["size"]; trigger: Order["trigger"] },
+    slippagePct: number,
+    tipSol: number,
+  ): OrderVariant[] {
     const t = o.mint ? this.tokens.get(o.mint) : undefined;
     if (!t) return [];
     const price = this.triggerPriceSol(o.trigger, t);
@@ -2504,7 +2509,10 @@ export class SimEngine {
       o,
       "submitted",
       `Trigger hit; submitting the variant just below the live quote via ${LANE_NAME[o.order.landing]}.`,
-      this.event("attempt", n > 0 ? `Variant ${pick} of ${n} via ${LANE_NAME[o.order.landing]}` : `Signed live, sent via ${LANE_NAME[o.order.landing]}`),
+      this.event(
+        "attempt",
+        n > 0 ? `Variant ${pick} of ${n} via ${LANE_NAME[o.order.landing]}` : `Signed live, sent via ${LANE_NAME[o.order.landing]}`,
+      ),
     );
     setTimeout(
       () => {

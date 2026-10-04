@@ -300,8 +300,8 @@ function DrawerBody({
                   </tbody>
                 </table>
                 <p className="max-w-[72ch] text-label text-fg-3">
-                  When the trigger fires the server submits the variant just below the live quote; it can't change the size, minimum
-                  output, fees or destination.
+                  When the trigger fires the server submits the variant just below the live quote; it can't change the size, minimum output,
+                  fees or destination.
                 </p>
               </>
             ) : (

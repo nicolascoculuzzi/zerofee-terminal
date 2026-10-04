@@ -9,14 +9,15 @@ import type { Launchpad } from "../../protocol";
  * characters in Plex 600 on one of 8 muted fills picked by hash(mint). No gradients, no art.
  * Initials on muted squares after Xero: https://mobbin.com/screens/44ed8739-8ccb-4d6f-a532-7a31b1fa5c5f
  */
-export type AvatarSize = "2xs" | "xs" | "sm" | "md" | "lg" | "xl" | "card";
+export type AvatarSize = "2xs" | "xs" | "sm" | "md" | "row" | "lg" | "xl" | "card";
 
-/** 16, 20, 28, 32, 40, 48 px, or the Pulse card size (40 compact / 48 comfortable). */
+/** 16, 20, 28, 32, 36 (phone list rows), 40, 48 px, or the Pulse card size (40 compact / 48 comfortable). */
 const BOX: Record<AvatarSize, string> = {
   "2xs": "size-4",
   xs: "size-5",
   sm: "size-7",
   md: "size-8",
+  row: "size-9",
   lg: "size-10",
   xl: "size-12",
   card: "size-card-avatar",
@@ -28,6 +29,7 @@ const TEXT: Record<AvatarSize, string> = {
   xs: "text-micro",
   sm: "text-label",
   md: "text-body",
+  row: "text-body",
   lg: "text-title",
   xl: "text-display-2",
   card: "text-title in-data-[density=comfortable]:text-display-2",
@@ -149,10 +151,13 @@ export const TokenAvatar = memo(function TokenAvatar({
   );
 });
 
+/** A tag that is a single emoji (the user picked it, or an import carried it). */
+const EMOJI = /^\p{Extended_Pictographic}(\u{FE0F}|\u{200D}\p{Extended_Pictographic})*$/u;
+
 /**
- * Wallet avatar (DESIGN.md 4.22): a circle of 16, 20 or 24 px. A tag the user chose (one or two
- * characters, possibly an emoji from an import) sits centred; otherwise a 2-letter monogram from
- * the label or address, on the same muted palette.
+ * Wallet avatar (DESIGN.md 4.22): a circle of 16, 20 or 24 px. A user-chosen emoji sits centred
+ * at 70% of the box; otherwise a 2-letter monogram (the tag's letters, else the label's, else the
+ * address's first two characters) on the same muted palette as token monograms.
  */
 export const WalletAvatar = memo(function WalletAvatar({
   seed,
@@ -167,18 +172,24 @@ export const WalletAvatar = memo(function WalletAvatar({
   size?: 16 | 20 | 24;
   className?: string;
 }) {
-  const letters = Array.from(label.replace(/[^\p{L}\p{N}]/gu, "")).slice(0, size === 16 ? 1 : 2);
-  const text = tag?.trim() || letters.join("").toUpperCase() || "?";
+  const t = tag?.trim() ?? "";
+  const emoji = t !== "" && EMOJI.test(t);
+  const letters = (s: string) =>
+    Array.from(s.replace(/[^\p{L}\p{N}]/gu, ""))
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+  const text = emoji ? t : letters(t) || letters(label) || letters(seed) || "?";
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full font-semibold text-fg-1",
-        "text-micro",
+        "flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold text-fg-1",
         size === 16 ? "size-4" : size === 20 ? "size-5" : "size-6",
+        !emoji && "text-micro tracking-normal",
         className,
       )}
-      style={{ background: monoFill(seed) }}
+      style={{ background: monoFill(seed), fontSize: emoji ? Math.round(size * 0.7) : undefined }}
     >
       {text}
     </span>

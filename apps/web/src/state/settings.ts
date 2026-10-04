@@ -58,9 +58,7 @@ export interface DisplaySettings {
   /** Review sheet before trades on touch devices (DESIGN.md 5.8). */
   confirmOnTouch: boolean;
   metricColors: boolean;
-  compactCards: boolean;
   showProgressRing: boolean;
-  largeQuickBuy: boolean;
   toastPosition: ToastPosition;
   /** Pulse list coalescing rate, 4–10 Hz (SPEC "Streaming"). */
   pulseHz: number;
@@ -219,9 +217,7 @@ export const useSettings = create<SettingsState>()(
         riskThresholds: RISK_DEFAULTS,
         confirmOnTouch: true,
         metricColors: true,
-        compactCards: false,
         showProgressRing: true,
-        largeQuickBuy: false,
         toastPosition: "bottom-right",
         pulseHz: 6,
         soundVolume: 0.5,
@@ -350,6 +346,7 @@ export const useSettings = create<SettingsState>()(
           ...p,
           presets: { ...current.presets, ...(p.presets ?? {}) },
           hotkeys: { ...current.hotkeys, ...(p.hotkeys ?? {}) },
+          // Keys dropped since (compactCards, largeQuickBuy) are ignored by everything that reads display.
           display: { ...current.display, ...(p.display ?? {}) },
           pulseLayout: {
             ...current.pulseLayout,

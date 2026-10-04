@@ -3,7 +3,7 @@ import { memo, type ReactNode, useCallback, useMemo, useRef, useState } from "re
 import { Age } from "../../components/ui/Age";
 import { Button, IconButton } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/bits";
-import { Hotkey } from "../../components/ui/controls";
+import { Checkbox, CopyButton, Hotkey } from "../../components/ui/controls";
 import { Num } from "../../components/ui/Num";
 import { MenuItem, MenuSeparator, Popover } from "../../components/ui/Popover";
 import { WalletAvatar } from "../../components/ui/TokenAvatar";
@@ -16,7 +16,6 @@ import { useToasts } from "../../state/toasts";
 import { MAX_TRACKED_WALLETS, type TrackedWallet, useTrackers } from "../../state/trackers";
 import { MenuList } from "./ExportMenu";
 import { normalizeQuery, walletMatches } from "./feedFilters";
-import { GridCheckbox, GridCopy } from "./gridControls";
 import { MOBILE_ROW_PX, useHoverFocusPause, useIsMobile, useStableOrder } from "./hooks";
 import { type SortDir, useTrackerPrefs, type WalletSortKey } from "./prefs";
 import { Cell, CursorBar, HeaderCell, HeaderRow, rowTone, SortHeaderCell } from "./table";
@@ -187,7 +186,13 @@ const WalletRow = memo(function WalletRow({ wallet, lastTradeAt, selected, activ
     >
       <CursorBar show={active} />
       <Cell className={cn("shrink-0", COL.check)}>
-        <GridCheckbox checked={selected} onChange={(on) => onSelect(wallet.address, on)} label={`Select ${wallet.name}`} tabIndex={tab} />
+        <Checkbox
+          hideLabel
+          checked={selected}
+          onChange={(on) => onSelect(wallet.address, on)}
+          label={`Select ${wallet.name}`}
+          tabIndex={tab}
+        />
       </Cell>
       <Cell className={cn("items-center gap-1", COL.name)} title={wallet.name}>
         <WalletAvatar seed={wallet.address} label={wallet.name} tag={wallet.emoji} size={16} />
@@ -197,7 +202,7 @@ const WalletRow = memo(function WalletRow({ wallet, lastTradeAt, selected, activ
         <span className="font-mono text-fg-2" title={wallet.address}>
           {shortAddr(wallet.address)}
         </span>
-        <GridCopy text={wallet.address} label={`Copy ${wallet.name}'s address (C)`} tabIndex={tab} />
+        <CopyButton text={wallet.address} label={`Copy ${wallet.name}'s address (C)`} tabIndex={tab} />
       </Cell>
       <Cell className={cn("shrink-0", COL.alerts)}>
         <AlertsToggle wallet={wallet} tabIndex={tab} />
@@ -219,7 +224,7 @@ const WalletRow = memo(function WalletRow({ wallet, lastTradeAt, selected, activ
 const MobileWalletRow = memo(function MobileWalletRow({ wallet, lastTradeAt, selected, onSelect, onShowTrades }: Omit<RowProps, "active">) {
   return (
     <div className={cn("relative flex h-full items-center gap-2 pr-1 pl-3", selected && "bg-surface-3")}>
-      <GridCheckbox touch checked={selected} onChange={(on) => onSelect(wallet.address, on)} label={`Select ${wallet.name}`} />
+      <Checkbox hideLabel touch checked={selected} onChange={(on) => onSelect(wallet.address, on)} label={`Select ${wallet.name}`} />
       <WalletAvatar seed={wallet.address} label={wallet.name} tag={wallet.emoji} size={24} />
       <Cell className="min-w-0 flex-1 flex-col gap-1">
         <span className="truncate text-amount font-medium text-fg-1">{wallet.name}</span>
@@ -321,7 +326,8 @@ export function WalletManager({
   const selectionBar = (
     <HeaderRow className={cn(ROW, "max-md:h-11 max-md:pl-3")}>
       <HeaderCell raw className={cn(COL.check, "max-md:w-11")}>
-        <GridCheckbox
+        <Checkbox
+          hideLabel
           touch={mobile}
           checked={allVisible}
           indeterminate={!allVisible && liveSelected.size > 0}
@@ -372,7 +378,7 @@ export function WalletManager({
     ) : (
       <HeaderRow className={ROW}>
         <HeaderCell raw className={COL.check}>
-          <GridCheckbox checked={false} onChange={selectAll} label={`Select all ${fmtInt(rows.length)} wallets`} />
+          <Checkbox hideLabel checked={false} onChange={selectAll} label={`Select all ${fmtInt(rows.length)} wallets`} />
         </HeaderCell>
         <SortHeaderCell k="name" label="Wallet" sort={sort} onSort={setSort} defaultDir={DEFAULT_DIR.name} className={COL.name} />
         <HeaderCell className={COL.addr}>Address</HeaderCell>
