@@ -88,31 +88,43 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
 
   return (
     <>
-      <div className="grid h-[calc(64px+env(safe-area-inset-bottom))] shrink-0 grid-cols-[72px_minmax(0,1fr)_88px] items-start gap-2 border-t border-hairline bg-surface-1 px-3 pt-2.5 pb-[env(safe-area-inset-bottom)]">
-        <button
-          type="button"
-          onClick={() => setSheet("amount")}
-          aria-label={`Buy amount ${fmtSolShort(quickBuy)} SOL, change`}
-          className="flex h-11 items-center justify-center gap-1 rounded-sm border border-hairline-strong bg-surface-2 text-body font-semibold text-fg-1 transition-colors hover:bg-surface-3 active:bg-surface-3"
-        >
-          <span className="zf-num">{fmtSolShort(quickBuy)}</span>
-          <ChevronDown className="icon-xs text-fg-3" />
-        </button>
-        <Button
-          variant={locked ? "secondary" : "buy"}
-          size="xl"
-          disabled={!feedOk}
-          icon={locked ? <Lock /> : undefined}
-          onClick={onBuy}
-          className="min-w-0"
-        >
-          <span className="truncate">
-            {!feedOk ? "Feed offline" : locked ? "Unlock to trade" : `Buy ${token.symbol} ${fmtSolShort(quickBuy)}`}
-          </span>
-        </Button>
-        <Button variant="sell-tint" size="xl" disabled={holding <= 0 || !feedOk} onClick={() => setSheet("sell")}>
-          Sell
-        </Button>
+      {/* Under 360 px the side buttons narrow and the middle label shortens instead of truncating. */}
+      <div className="@container shrink-0 border-t border-hairline bg-surface-1">
+        <div className="grid h-[calc(64px+env(safe-area-inset-bottom))] grid-cols-[72px_minmax(0,1fr)_88px] items-start gap-2 px-3 pt-2.5 pb-[env(safe-area-inset-bottom)] @max-[359px]:grid-cols-[60px_minmax(0,1fr)_64px] @max-[359px]:px-2">
+          <button
+            type="button"
+            onClick={() => setSheet("amount")}
+            aria-label={`Buy amount ${fmtSolShort(quickBuy)} SOL, change`}
+            className="flex h-11 items-center justify-center gap-1 rounded-sm border border-hairline-strong bg-surface-2 text-body font-semibold text-fg-1 transition-colors hover:bg-surface-3 active:bg-surface-3"
+          >
+            <span className="zf-num">{fmtSolShort(quickBuy)}</span>
+            <ChevronDown className="icon-xs text-fg-3" />
+          </button>
+          <Button
+            variant={locked ? "secondary" : "buy"}
+            size="xl"
+            disabled={!feedOk}
+            icon={locked ? <Lock /> : undefined}
+            onClick={onBuy}
+            className="min-w-0"
+          >
+            <span className="truncate @max-[359px]:hidden">
+              {!feedOk ? "Feed offline" : locked ? "Unlock to trade" : `Buy ${token.symbol} ${fmtSolShort(quickBuy)}`}
+            </span>
+            <span className="hidden whitespace-nowrap @max-[359px]:inline">
+              {!feedOk ? "Offline" : locked ? "Unlock" : `Buy ${fmtSolShort(quickBuy)}`}
+            </span>
+          </Button>
+          <Button
+            variant="sell-tint"
+            size="xl"
+            disabled={holding <= 0 || !feedOk}
+            onClick={() => setSheet("sell")}
+            className="@max-[359px]:px-2"
+          >
+            Sell
+          </Button>
+        </div>
       </div>
 
       <BottomSheet open={sheet === "amount"} onClose={() => setSheet(null)} title="Buy amount">

@@ -193,10 +193,16 @@ function WalletMenu({ compact }: { compact?: boolean }) {
         aria-label="Trading wallet"
         aria-expanded={open}
       >
-        {locked ? <Lock className="icon-xs text-fg-3" /> : <LockOpen className="icon-xs text-fg-2" />}
+        {locked ? (
+          <Lock className={cn("icon-xs text-fg-3", compact && "max-[339px]:hidden")} />
+        ) : (
+          <LockOpen className={cn("icon-xs text-fg-2", compact && "max-[339px]:hidden")} />
+        )}
         <span className="hidden max-w-24 truncate text-fg-3 2xl:inline">{active?.label ?? "Wallet"}</span>
-        <span className="zf-num min-w-[7ch] text-right font-semibold text-fg-1">{fmtSol(balance)}</span>
-        <span className="zf-unit -ml-1.5">{" "}SOL</span>
+        <span className={cn("zf-num min-w-[7ch] text-right font-semibold text-fg-1", compact && "max-[339px]:min-w-0")}>
+          {fmtSol(balance)}
+        </span>
+        <span className={cn("zf-unit -ml-1.5", compact && "max-[339px]:hidden")}>{" "}SOL</span>
         <ChevronDown className="icon-xs text-fg-3" />
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} align="end" width={300}>
@@ -325,7 +331,7 @@ function MobileHeader() {
   const openSettings = useUi((s) => s.openSettings);
   if (pathname.startsWith("/t/")) return null;
   return (
-    <header className="flex h-[calc(44px+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-hairline bg-surface-1 px-3 pt-[env(safe-area-inset-top)] md:hidden">
+    <header className="flex h-[calc(44px+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-hairline bg-surface-1 px-3 pt-[env(safe-area-inset-top)] max-[339px]:gap-1 max-[339px]:px-2 md:hidden">
       <Link to="/pulse" aria-label="zerofee home" className="-ml-3 flex size-11 shrink-0 items-center justify-center">
         <Logo compact />
       </Link>

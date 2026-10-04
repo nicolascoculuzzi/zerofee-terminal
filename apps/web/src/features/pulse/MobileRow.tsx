@@ -73,7 +73,8 @@ export const MobileRow = memo(function MobileRow(props: MobileRowProps) {
         </span>
         <Age ts={view.createdAt} className="shrink-0 text-data" />
         {view.v !== DASH && (
-          <span className="zf-num flex min-w-0 items-center truncate text-data text-fg-3">
+          // Volume is the first thing to go when the row is narrow (under 320 px): never a cut value.
+          <span className="zf-num flex min-w-0 items-center text-data whitespace-nowrap text-fg-3 max-[319px]:hidden">
             V&nbsp;{view.sol && <SolGlyph className="mr-px" />}
             {view.v}
           </span>

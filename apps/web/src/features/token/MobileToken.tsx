@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, Share2, Star, Zap } from "lucide-react";
+import { ArrowLeftRight, Check, ChevronLeft, Share2, Star, Zap } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "../../components/ui/Button";
@@ -82,23 +82,34 @@ function RiskStrip({ risk }: { risk: TokenRisk | null }) {
   const thresholds = useSettings((s) => s.display.riskThresholds);
   const colored = useSettings((s) => s.display.metricColors);
   return (
-    <div className="grid h-12 grid-cols-5 divide-x divide-hairline border-b border-hairline bg-surface-1">
-      {RISK_CHIPS.map(({ key }) => {
-        const chip = riskChip(key, risk, thresholds);
-        const Icon = RISK_ICON[key];
-        const tone = chip.devSold ? "text-fg-2" : chip.text === "0%" ? "text-fg-3" : colored ? TONE_TEXT[chip.tone] : "text-fg-2";
-        return (
-          <div key={key} role="img" aria-label={chip.aria} className="flex min-w-0 flex-col justify-center gap-0.5 px-2.5">
-            <span className="flex h-4 items-center gap-1">
-              <Icon aria-hidden="true" className={cn("icon-xs", chip.unknown ? "text-fg-4" : "text-fg-3")} />
-              {!chip.unknown && (
-                <span className={cn("zf-num truncate text-data font-semibold", tone)}>{chip.devSold ? "Sold" : chip.text}</span>
-              )}
-            </span>
-            <span className={cn("truncate text-micro font-medium", chip.unknown ? "text-fg-4" : "text-fg-3")}>{RISK_NAME[key]}</span>
-          </div>
-        );
-      })}
+    // Under 360 px of strip the names drop (the aria-label keeps them) and each glyph sits over its value:
+    // values never truncate.
+    <div className="@container border-b border-hairline bg-surface-1">
+      <div className="grid h-12 grid-cols-5 divide-x divide-hairline">
+        {RISK_CHIPS.map(({ key }) => {
+          const chip = riskChip(key, risk, thresholds);
+          const Icon = RISK_ICON[key];
+          const tone = chip.devSold ? "text-fg-2" : chip.text === "0%" ? "text-fg-3" : colored ? TONE_TEXT[chip.tone] : "text-fg-2";
+          return (
+            <div
+              key={key}
+              role="img"
+              aria-label={chip.aria}
+              className="flex min-w-0 flex-col justify-center gap-0.5 px-2.5 @max-[359px]:items-center @max-[359px]:px-1"
+            >
+              <span className="flex h-4 items-center gap-1 @max-[359px]:h-auto @max-[359px]:flex-col @max-[359px]:gap-0.5">
+                <Icon aria-hidden="true" className={cn("icon-xs shrink-0", chip.unknown ? "text-fg-4" : "text-fg-3")} />
+                {!chip.unknown && (
+                  <span className={cn("zf-num text-data font-semibold whitespace-nowrap", tone)}>{chip.devSold ? "Sold" : chip.text}</span>
+                )}
+              </span>
+              <span className={cn("truncate text-micro font-medium @max-[359px]:hidden", chip.unknown ? "text-fg-4" : "text-fg-3")}>
+                {RISK_NAME[key]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -318,26 +329,38 @@ export function MobileToken({ detail }: { detail: TokenDetail }) {
           </Suspense>
         </div>
 
-        <div className="flex h-11 items-center gap-3 border-b border-hairline bg-surface-1 px-3">
-          <Segmented<Timeframe>
-            size="side"
-            value={MOBILE_TFS.includes(tf) ? tf : "1m"}
-            onChange={setTf}
-            options={MOBILE_TFS.map((t) => ({ value: t, label: t }))}
-            label="Timeframe"
-            className={cn("flex-1", TOUCH_SEGMENTS)}
-          />
-          <Segmented<ChartMode>
-            size="side"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "mc", label: "MC" },
-              { value: "price", label: "Price" },
-            ]}
-            label="Chart value"
-            className={cn("shrink-0", TOUCH_SEGMENTS)}
-          />
+        {/* Under 400 px the MC | Price pair collapses into one toggle so the band never clips. */}
+        <div className="@container border-b border-hairline bg-surface-1">
+          <div className="flex h-11 items-center gap-3 px-3 @max-[399px]:gap-2">
+            <Segmented<Timeframe>
+              size="side"
+              value={MOBILE_TFS.includes(tf) ? tf : "1m"}
+              onChange={setTf}
+              options={MOBILE_TFS.map((t) => ({ value: t, label: t }))}
+              label="Timeframe"
+              className={cn("min-w-0 flex-1", TOUCH_SEGMENTS)}
+            />
+            <Segmented<ChartMode>
+              size="side"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: "mc", label: "MC" },
+                { value: "price", label: "Price" },
+              ]}
+              label="Chart value"
+              className={cn("shrink-0 @max-[399px]:hidden", TOUCH_SEGMENTS)}
+            />
+            <button
+              type="button"
+              onClick={() => setMode(mode === "mc" ? "price" : "mc")}
+              aria-label={`Chart shows ${mode === "mc" ? "market cap" : "price"}; switch to ${mode === "mc" ? "price" : "market cap"}`}
+              className="relative hidden h-7 shrink-0 items-center gap-1 rounded-sm border border-hairline-strong px-2 text-data font-medium text-fg-1 transition-colors after:absolute after:inset-x-0 after:-inset-y-[9px] after:content-[''] hover:bg-surface-3 @max-[399px]:inline-flex"
+            >
+              {mode === "mc" ? "MC" : "Price"}
+              <ArrowLeftRight className="icon-xs text-fg-3" />
+            </button>
+          </div>
         </div>
 
         <RiskStrip risk={token.risk} />
