@@ -91,7 +91,11 @@ describe("history over the protocol", () => {
     });
     for (const topic of [`token:${mint}`, `trades:${mint}`, `candles:${mint}:1m`]) ws.send(JSON.stringify({ type: "subscribe", topic }));
     const tokenSnap = await waitFor(() => msgs.find((m) => m.topic === `token:${mint}` && m.type === "snapshot"));
-    expect(["partial", "backfilling"]).toContain(tokenSnap.data.history.state);
+    // a viewer opened it: the backfill is announced at once, and holder metrics are "computing", not unknown
+    expect(tokenSnap.data.history.state).toBe("backfilling");
+    expect(tokenSnap.data.historyState).toBe("backfilling");
+    expect(tokenSnap.data.holders).toBeNull();
+    expect(tokenSnap.data.holdersPending).toBe(true);
     const tradesSnap = await waitFor(() => msgs.find((m) => m.topic === `trades:${mint}` && m.type === "snapshot"));
     expect(tradesSnap.data.trades).toHaveLength(1);
     expect(tradesSnap.data.history).toBeDefined();
@@ -160,6 +164,11 @@ describe("history over the protocol", () => {
     const legacy = (await (await fetch(`${base}/api/candles?mint=${mint}&tf=1m&from=0&to=${first - 1}`)).json()) as CandlesResponse;
     expect(legacy.candles[legacy.candles.length - 1]?.t).toBe(prev.candles[4]?.t ?? -1);
 
+    const tok = (await (await fetch(`${base}/api/tokens/${mint}`)).json()) as {
+      token: { holders: number | null; holdersPending?: boolean };
+    };
+    expect(tok.token.holdersPending).toBe(false);
+    expect(tok.token.holders).toBe(7);
     const h = (await (await fetch(`${base}/api/health`)).json()) as HealthResponse;
     expect(h.history).toMatchObject({ enabled: true, completed: 1, tradesAdded: 59 });
     const hist = (await (await fetch(`${base}/api/history?mint=${mint}`)).json()) as { history: { state: string; trades: number } };

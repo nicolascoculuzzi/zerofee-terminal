@@ -46,8 +46,9 @@ function Cell({
   className?: string;
 }) {
   return (
+    // Fixed rows (12 px label, 20 px value) so every label and value shares one baseline across the strip.
     <div className={cn("flex shrink-0 flex-col justify-center gap-0.5 border-l border-hairline px-3", className)}>
-      <span className="text-micro leading-3 font-medium whitespace-nowrap text-fg-3">
+      <span className="flex h-3 items-center text-micro leading-3 font-medium whitespace-nowrap text-fg-3">
         {tip ? (
           <Tooltip
             content={
@@ -63,7 +64,7 @@ function Cell({
           <MetricLabel metric={metric}>{label}</MetricLabel>
         )}
       </span>
-      <span className="flex h-4 items-center text-data whitespace-nowrap text-fg-1">{children}</span>
+      <span className="flex h-5 items-center text-data whitespace-nowrap text-fg-1">{children}</span>
     </div>
   );
 }
@@ -90,11 +91,13 @@ export function StatsStrip({ token, className }: { token: TokenSummary; classNam
   const mcFlash = useTickFlash(mcValue);
   const priceFlash = useTickFlash(token.priceSol);
   const { h1, h24 } = useWindowChanges(token.mint, token.priceSol);
-  const migrated = token.migratedAt !== null;
   return (
     <div className={cn("flex min-w-0 items-stretch overflow-hidden", className)}>
       <Cell metric="marketCap" className="border-l-0 pl-0 lg:border-l lg:pl-3">
-        <span key={mcFlash.key} className={cn("zf-num inline-block min-w-[6ch] text-display-2 font-semibold text-fg-1", mcFlash.className)}>
+        <span
+          key={mcFlash.key}
+          className={cn("zf-num inline-block min-w-[6ch] text-display-2 leading-5 font-semibold text-fg-1", mcFlash.className)}
+        >
           {quote === "USD" ? fmtUsd(mcValue) : fmtSol(mcValue)}
           {quote === "SOL" && <span className="zf-unit">{" SOL"}</span>}
         </span>
@@ -152,19 +155,41 @@ export function StatsStrip({ token, className }: { token: TokenSummary; classNam
           <span className="zf-num inline-block min-w-[4ch]">{fmtCount(token.holders)}</span>
         </Cell>
       )}
-      <Cell metric="progress" label={migrated ? "Pool" : "BC"}>
-        {migrated ? (
-          <span className="text-fg-2">Migrated</span>
-        ) : (
-          <span className="flex items-center gap-2">
-            <span className="zf-num inline-block min-w-[4ch]">{fmtProgress(token.bondingProgress)}</span>
-            <span className="h-0.5 w-8 bg-surface-3" aria-hidden="true">
-              <span className="block h-full bg-fg-2" style={{ width: `${Math.min(100, token.bondingProgress * 100)}%` }} />
-            </span>
-          </span>
-        )}
-      </Cell>
+      <ProgressCell token={token} />
     </div>
+  );
+}
+
+/**
+ * Bonding curve (DESIGN.md 5.2 "BC 87%"): the share on the value line with a 2 px flat bar under it
+ * (no gradient); "Migrating" once the curve completes, and the pool once migrated.
+ */
+function ProgressCell({ token }: { token: TokenSummary }) {
+  if (token.migratedAt !== null) {
+    return (
+      <Cell metric="progress" label="Pool">
+        <span className="text-fg-2">Migrated</span>
+      </Cell>
+    );
+  }
+  const p = Number.isFinite(token.bondingProgress) ? Math.max(0, Math.min(1, token.bondingProgress)) : 0;
+  return (
+    <Cell metric="progress" label="Bonding curve">
+      {/* The share sits on the strip's value line; the 2 px bar hangs just under it, so baselines stay aligned. */}
+      <span className="relative flex h-full w-20 items-center">
+        <span className="zf-num">{fmtProgress(token.bondingProgress)}</span>
+        <span
+          role="progressbar"
+          aria-label="Bonding curve progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(p * 100)}
+          className="absolute inset-x-0 -bottom-0.5 block h-0.5 overflow-hidden bg-surface-3"
+        >
+          <span className="block h-full bg-fg-1" style={{ width: `${p * 100}%` }} />
+        </span>
+      </span>
+    </Cell>
   );
 }
 

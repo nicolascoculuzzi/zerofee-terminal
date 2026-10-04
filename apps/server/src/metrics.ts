@@ -20,6 +20,7 @@ import { join } from "node:path";
 import type { HistoryHealth } from "@zerofee/protocol";
 import type { ServerConfig } from "./config";
 import type { ChainPublisher } from "./feeds/chain";
+import type { MetadataFetcher } from "./feeds/metadata";
 import type { SolUsdFeed } from "./feeds/solUsd";
 import type { Gateway } from "./gateway/server";
 import type { TxHandler } from "./gateway/tx";
@@ -27,7 +28,9 @@ import type { Source } from "./ingest/types";
 import type { PulseBoard } from "./market/pulse";
 import type { MarketState } from "./market/state";
 import type { ImageProxy } from "./media";
+import type { WorkPool } from "./media/pool";
 import type { StorageWriter } from "./storage/writer";
+import type { LoopLagMonitor } from "./util/loopLag";
 import type { RpcClient } from "./util/rpc";
 import { RateCounter } from "./util/stats";
 
@@ -65,7 +68,14 @@ export interface MetricsDeps {
   /** App-level halt (POST /api/halt, Phase 5), OR-ed with the edge HALT_TX flag. */
   halted?(): boolean;
   /** Token image proxy (GET /api/img). */
-  media?: Pick<ImageProxy, "stats" | "latency" | "health" | "diskBytes" | "memoryBytes">;
+  media?: Pick<ImageProxy, "stats" | "latency" | "health" | "diskBytes" | "memoryBytes"> &
+    Partial<Pick<ImageProxy, "pacer" | "jobCounts" | "timeToImage">>;
+  /** Token metadata fetcher (retries, permanent failures, pending URIs). */
+  metadata?: Pick<MetadataFetcher, "stats" | "pendingCount" | "queued">;
+  /** Worker processes for image decoding / encoding and metadata parsing. */
+  workPool?: Pick<WorkPool, "stats" | "running" | "queued" | "timing">;
+  /** Event-loop lag of the main thread. */
+  loopLag?: Pick<LoopLagMonitor, "stats">;
   /** Trade-history backfill (src/history). */
   history?: () => HistoryHealth;
 }
@@ -216,7 +226,104 @@ export class Metrics implements MetricsEndpoint {
       [{ kind: "resized" }, s.resized],
       [{ kind: "passthrough" }, s.passthrough],
     ]);
-    e.add("zerofee_img_prefetched_total", "counter", "Images fetched ahead of the first request (new launches).", s.prefetched);
+    e.add(
+      "zerofee_img_prefetched_total",
+      "counter",
+      "Images fetched ahead of the first request (new launches, restored tokens).",
+      s.prefetched,
+    );
+    e.add(
+      "zerofee_img_shed_total",
+      "counter",
+      "Prefetch / background image work dropped or postponed because the work pool was saturated.",
+      s.shed,
+    );
+    e.add(
+      "zerofee_img_not_found_total",
+      "counter",
+      "GET /api/img 404s by the state told to the client (pending: retry later; failed / none: keep the monogram).",
+      Object.entries(s.notFoundByState).map(([state, n]): Row => [{ state }, n]),
+    );
+    e.add("zerofee_img_jobs_total", "counter", "Image fetch jobs by outcome (retried: a transient failure scheduled a retry).", [
+      [{ outcome: "started" }, s.jobs.started],
+      [{ outcome: "ok" }, s.jobs.ok],
+      [{ outcome: "retried" }, s.jobs.retried],
+      [{ outcome: "failed_permanent" }, s.jobs.failedPermanent],
+      [{ outcome: "gave_up" }, s.jobs.gaveUp],
+    ]);
+    e.add(
+      "zerofee_img_upstream_failures_by_host_total",
+      "counter",
+      "Failed upstream image attempts by host and reason.",
+      Object.entries(s.hostFailures).map(([k, n]): Row => {
+        const [host = "", reason = ""] = k.split(" ");
+        return [{ host, reason }, n];
+      }),
+    );
+    e.add(
+      "zerofee_img_bad_magic_total",
+      "counter",
+      "Upstream bodies refused for their magic bytes, by what they were (html, json, bmp, ico, empty ...).",
+      Object.entries(s.badMagic).map(([kind, n]): Row => [{ kind }, n]),
+    );
+    e.add(
+      "zerofee_img_source_formats_total",
+      "counter",
+      "Accepted upstream images by format.",
+      Object.entries(s.formats).map(([format, n]): Row => [{ format }, n]),
+    );
+    if (p.jobCounts) {
+      const j = p.jobCounts();
+      e.add("zerofee_img_jobs", "gauge", "Image fetch jobs by state (queued per priority: 0 visible, 1 launch, 2 background).", [
+        [{ state: "queued", priority: "0" }, j.queued[0]],
+        [{ state: "queued", priority: "1" }, j.queued[1]],
+        [{ state: "queued", priority: "2" }, j.queued[2]],
+        [{ state: "running" }, j.running],
+        [{ state: "backoff" }, j.backoff],
+        [{ state: "failed" }, j.failed],
+      ]);
+    }
+    if (p.timeToImage) {
+      const rows: Row[] = [];
+      p.timeToImage.forEach((ring, prio) => {
+        const [q50, q90] = ring.percentiles([50, 90]);
+        rows.push([{ priority: String(prio), quantile: "0.5" }, sec(q50)], [{ priority: String(prio), quantile: "0.9" }, sec(q90)]);
+      });
+      e.add("zerofee_img_time_to_image_seconds", "gauge", "Image job created -> image ready, by priority.", rows);
+    }
+    if (p.pacer) {
+      const hosts = p.pacer.snapshot();
+      e.add(
+        "zerofee_upstream_host_requests_total",
+        "counter",
+        "Requests started per upstream host (images and metadata, paced).",
+        hosts.map((h): Row => [{ host: h.host }, h.started]),
+      );
+      e.add(
+        "zerofee_upstream_host_throttled_total",
+        "counter",
+        "429 / 503 answers per upstream host.",
+        hosts.map((h): Row => [{ host: h.host }, h.throttled]),
+      );
+      e.add(
+        "zerofee_upstream_host_queued",
+        "gauge",
+        "Requests waiting for a slot per upstream host.",
+        hosts.map((h): Row => [{ host: h.host }, h.queued]),
+      );
+      e.add(
+        "zerofee_upstream_host_rate",
+        "gauge",
+        "Current paced request rate per upstream host (req/s; halves on 429, recovers slowly).",
+        hosts.map((h): Row => [{ host: h.host }, h.rate]),
+      );
+      e.add(
+        "zerofee_upstream_host_paused_seconds",
+        "gauge",
+        "Remaining pause per upstream host after a 429 (Retry-After or back-off).",
+        hosts.map((h): Row => [{ host: h.host }, h.pausedMs / 1000]),
+      );
+    }
     e.add("zerofee_img_bytes_out_total", "counter", "Image bytes sent.", s.bytesOut);
     e.add("zerofee_img_cache_bytes", "gauge", "Image cache size by tier.", [
       [{ tier: "memory" }, p.memoryBytes],
@@ -497,6 +604,53 @@ export class Metrics implements MetricsEndpoint {
 
     // --- GET /api/img ----------------------------------------------------------------------------
     if (d.media) this.renderMedia(e, d.media);
+    if (d.metadata) {
+      const ms = d.metadata.stats;
+      e.add("zerofee_metadata_fetches_total", "counter", "Token metadata fetches by outcome.", [
+        [{ outcome: "fetched" }, ms.fetched],
+        [{ outcome: "cache_hit" }, ms.cacheHits],
+        [{ outcome: "retried" }, ms.retries],
+        [{ outcome: "failed_permanent" }, ms.permanent],
+        [{ outcome: "gave_up" }, ms.gaveUp],
+        [{ outcome: "unsafe" }, ms.unsafe],
+      ]);
+      e.add(
+        "zerofee_metadata_failures_total",
+        "counter",
+        "Failed metadata fetch rounds by reason.",
+        Object.entries(ms.reasons).map(([reason, n]): Row => [{ reason }, n]),
+      );
+      e.add("zerofee_metadata_pending", "gauge", "Metadata URIs queued, in flight or waiting for a retry.", d.metadata.pendingCount);
+    }
+    if (d.workPool) {
+      const wp = d.workPool;
+      e.add("zerofee_img_pool_jobs", "gauge", "Image / metadata worker jobs by state.", [
+        [{ state: "running" }, wp.running],
+        [{ state: "queued" }, wp.queued],
+      ]);
+      e.add("zerofee_img_pool_jobs_total", "counter", "Image / metadata worker jobs by outcome.", [
+        [{ outcome: "done" }, wp.stats.done],
+        [{ outcome: "failed" }, wp.stats.failed],
+        [{ outcome: "dropped" }, wp.stats.dropped],
+        [{ outcome: "crashed" }, wp.stats.crashed],
+      ]);
+      const [w50, w99] = wp.timing.wait.percentiles([50, 99]);
+      const [r50, r99] = wp.timing.run.percentiles([50, 99]);
+      e.add("zerofee_img_pool_seconds", "gauge", "Worker job queue wait and run time percentiles.", [
+        [{ phase: "wait", quantile: "0.5" }, sec(w50)],
+        [{ phase: "wait", quantile: "0.99" }, sec(w99)],
+        [{ phase: "run", quantile: "0.5" }, sec(r50)],
+        [{ phase: "run", quantile: "0.99" }, sec(r99)],
+      ]);
+    }
+    if (d.loopLag) {
+      const l = d.loopLag.stats();
+      e.add("zerofee_event_loop_lag_seconds", "gauge", "Event-loop lag of the main thread (50 ms timer lateness, last ~5 min).", [
+        [{ quantile: "0.5" }, sec(l.p50)],
+        [{ quantile: "0.99" }, sec(l.p99)],
+        [{ quantile: "1" }, sec(l.max)],
+      ]);
+    }
 
     // --- storage, RPC, market ---------------------------------------------------------------------
     const w = d.writer.stats;

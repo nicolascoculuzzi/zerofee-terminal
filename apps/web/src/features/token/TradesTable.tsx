@@ -1,7 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Trade as WireTrade } from "@zerofee/protocol";
 import { Columns3, Pause, Play, X } from "lucide-react";
-import { type KeyboardEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, memo, type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Age } from "../../components/ui/Age";
 import { IconButton } from "../../components/ui/Button";
 import { EmptyState, ExplorerLink, Tag } from "../../components/ui/bits";
@@ -21,7 +21,20 @@ import { useToken } from "../../state/token";
 import { type TrackedWallet, useTrackedMap } from "../../state/trackers";
 import { sizeBarPct } from "../trade/tradeMath";
 import { useQuote } from "./money";
-import { ALIGN, type Col, ch, fit, flex, NewRowsBar, SkeletonRows, TableHeader, template, useLiveOrder, usePauseOnHover } from "./table";
+import {
+  ALIGN,
+  type Col,
+  ch,
+  fit,
+  flex,
+  NewRowsBar,
+  SkeletonRows,
+  TableHeader,
+  TableStrip,
+  template,
+  useLiveOrder,
+  usePauseOnHover,
+} from "./table";
 import { useTokenUi } from "./tokenUi";
 
 /*
@@ -30,7 +43,11 @@ import { useTokenUi } from "./tokenUi";
  * size bar behind each row, ages from the one shared clock, new rows flashing for 600 ms (6.6).
  * Hover, focus, scrolling away or Pause freeze the tape behind an "↑ N new" bar (6.7). Side
  * colour on the figure that matters after Binance https://mobbin.com/screens/8d1b7823-6418-44c5-b3d5-ab69b3bfd6e3;
- * the type filter in the header after Uniswap https://mobbin.com/screens/9a89244a-9b7b-49c1-9d6c-28cd7abdfa3f
+ * the type filter in the header after Uniswap https://mobbin.com/screens/9a89244a-9b7b-49c1-9d6c-28cd7abdfa3f;
+ * a faint right-anchored size bar that never competes with the digits, after Coinbase Advanced's
+ * order book https://mobbin.com/screens/f8afc154-e5c8-4587-ab43-93c4799a979a and OKX's
+ * https://mobbin.com/screens/fe41c6f7-54b0-4cb8-b281-5b0cf1d9428c. Rows by the dev, by you and by
+ * tracked wallets carry a 2 px left edge and a 4-5% tint in their tag colour, never a coloured wall.
  */
 
 type MakerKind = "all" | "you" | "dev" | "tracked";
@@ -38,28 +55,55 @@ type ColKey = "age" | "side" | "mc" | "price" | "sol" | "tokens" | "usd" | "trad
 
 const SHOWN_TAGS: WalletTag[] = ["sniper", "insider", "bundler", "kol", "whale", "pro"];
 
+/** Whose row it is, for the Axiom-style edge and tint (YOU wins over DEV over tracked). */
+type RowMark = "you" | "dev" | "tracked" | null;
+
+const MARK_EDGE: Record<Exclude<RowMark, null>, string> = {
+  you: "bg-fg-2",
+  dev: "bg-warn",
+  tracked: "bg-info",
+};
+/* Local arbitrary tints (no global token): faint enough that the size bar and side colour still read. */
+const MARK_TINT: Record<Exclude<RowMark, null>, string> = {
+  you: "bg-[color-mix(in_srgb,var(--zf-text-1)_4%,transparent)]",
+  dev: "bg-[color-mix(in_srgb,var(--zf-warn)_5%,transparent)]",
+  tracked: "bg-[color-mix(in_srgb,var(--zf-info)_5%,transparent)]",
+};
+
+function rowMark(trade: Trade, tracked: TrackedWallet | undefined): RowMark {
+  if (trade.tags.includes("you")) return "you";
+  if (trade.tags.includes("dev")) return "dev";
+  return tracked ? "tracked" : null;
+}
+
 /** First seen time per trade id, shared by rows so a remount never re-flashes an old row. */
 type Arrivals = Map<string, number>;
 
 function columns(showPrice: boolean, quoteUnit: string): Col<ColKey>[] {
   const cols: Col<ColKey>[] = [
-    { key: "age", label: "Age", width: fit(5, 7), align: "right" },
+    // Tight fixed tracks (4.9) so the numbers read as one tape; the trader column takes the slack.
+    { key: "age", label: "Age", width: ch(5), align: "right" },
     { key: "side", label: "", width: ch(3), align: "center" },
-    { key: "mc", label: quoteUnit === "USD" ? "MC" : "MC SOL", width: fit(8, 13), align: "right" },
-    { key: "price", label: "Price", width: fit(10, 14), align: "right" },
-    { key: "sol", label: "SOL", width: fit(10, 14), align: "right" },
-    { key: "tokens", label: "Tokens", width: fit(8, 12), align: "right" },
-    { key: "usd", label: "USD", width: fit(8, 12), align: "right" },
+    { key: "mc", label: quoteUnit === "USD" ? "MC" : "MC SOL", width: fit(8, 10), align: "right" },
+    { key: "price", label: "Price", width: fit(10, 12), align: "right" },
+    { key: "sol", label: "SOL", width: fit(10, 11), align: "right" },
+    { key: "tokens", label: "Tokens", width: fit(8, 10), align: "right" },
+    { key: "usd", label: "USD", width: fit(8, 10), align: "right" },
     { key: "trader", label: "Trader", width: flex(18) },
     { key: "tx", label: "", width: ch(3), align: "center" },
   ];
   return showPrice ? cols : cols.filter((c) => c.key !== "price");
 }
 
+/**
+ * Trader: the name (tracked) or short mono address always starts at the same x, then the identity
+ * tag (YOU, DEV, TRK) and at most one behaviour tag, so the column reads as one rhythm.
+ */
 function TraderCell({ trade, tracked, onPick }: { trade: Trade; tracked: TrackedWallet | undefined; onPick: (a: string) => void }) {
   const you = trade.tags.includes("you");
   const dev = trade.tags.includes("dev");
-  const tags = SHOWN_TAGS.filter((t) => trade.tags.includes(t)).slice(0, 2);
+  const identity: WalletTag | null = you ? "you" : dev ? "dev" : tracked ? "tracked" : null;
+  const tags = SHOWN_TAGS.filter((t) => trade.tags.includes(t)).slice(0, identity ? 1 : 2);
   return (
     <span className="flex min-w-0 items-center gap-1">
       <Tooltip content={<span className="font-mono break-all">{trade.maker}</span>}>
@@ -69,21 +113,17 @@ function TraderCell({ trade, tracked, onPick }: { trade: Trade; tracked: Tracked
           className="focus-inset flex min-w-0 items-center gap-1 rounded-xs text-fg-2 transition-colors hover:text-fg-1"
           aria-label={`Show trades by ${tracked?.name ?? (you ? "you" : dev ? "the dev" : trade.maker)}`}
         >
-          {you ? (
-            <Tag tag="you" />
-          ) : dev ? (
-            <Tag tag="dev" />
-          ) : tracked ? (
+          {tracked ? (
             <>
               <WalletAvatar seed={tracked.address} label={tracked.name} tag={tracked.emoji} size={16} />
               <span className="max-w-[16ch] truncate text-fg-1">{tracked.name}</span>
             </>
           ) : (
-            <span className="truncate font-mono">{shortAddr(trade.maker)}</span>
+            <span className={cn("truncate font-mono", (you || dev) && "text-fg-1")}>{shortAddr(trade.maker)}</span>
           )}
         </button>
       </Tooltip>
-      {tracked && <Tag tag="tracked" />}
+      {identity && <Tag tag={identity} />}
       {tags.map((t) => (
         <Tag key={t} tag={t} />
       ))}
@@ -116,10 +156,10 @@ const TradeRow = memo(function TradeRow({
   onPick: (a: string) => void;
 }) {
   const buy = trade.side === "buy";
+  const mark = rowMark(trade, tracked);
   // Decided once at mount: rows scrolled back into view never flash again.
   const [fresh] = useState(() => Date.now() - arrivedAt < 600);
-  // The SOL/USD rate at the trade when both prices are known, else the live one. Unknown (null) SOL
-  // values stay unknown: the cells read "–", never 0.
+  // The SOL/USD rate at the trade when both prices are known, else the live one.
   const fxAtTrade = trade.priceSol !== null && trade.priceUsd !== null && trade.priceSol > 0 ? trade.priceUsd / trade.priceSol : solUsd;
   const cell = (key: ColKey) => {
     switch (key) {
@@ -136,22 +176,24 @@ const TradeRow = memo(function TradeRow({
             {buy ? "B" : "S"}
           </span>
         );
-      case "mc":
-        return (
-          <span className="zf-num num-dense text-fg-1">
-            {quote === "USD" ? fmtUsd(trade.marketCapUsd) : fmtSol(trade.priceSol === null ? null : trade.priceSol * supply)}
-          </span>
-        );
-      case "price":
-        return (
-          <Num kind="price" dense usd={quote === "USD"} value={quote === "USD" ? trade.priceUsd : trade.priceSol} className="text-fg-2" />
-        );
+      // Unknown values (null, from a partial live fill) leave the cell empty: the fixed tracks keep
+      // the columns aligned and the tape never turns into a wall of dashes. Unknown is never 0.
+      case "mc": {
+        const mc = quote === "USD" ? trade.marketCapUsd : trade.priceSol === null ? null : trade.priceSol * supply;
+        return mc === null ? null : <span className="zf-num num-dense text-fg-1">{quote === "USD" ? fmtUsd(mc) : fmtSol(mc)}</span>;
+      }
+      case "price": {
+        const price = quote === "USD" ? trade.priceUsd : trade.priceSol;
+        return price === null ? null : <Num kind="price" dense usd={quote === "USD"} value={price} className="text-fg-2" />;
+      }
       case "sol":
-        return <Num kind="solTape" dense value={trade.solAmount} className={buy ? "text-buy" : "text-sell"} />;
+        return trade.solAmount === null ? null : (
+          <Num kind="solTape" dense value={trade.solAmount} className={buy ? "text-buy" : "text-sell"} />
+        );
       case "tokens":
         return <span className="zf-num num-dense text-fg-2">{fmtTokens(trade.tokenAmount)}</span>;
       case "usd":
-        return <span className="zf-num num-dense text-fg-2">{fmtUsd(trade.solAmount === null ? null : trade.solAmount * fxAtTrade)}</span>;
+        return trade.solAmount === null ? null : <span className="zf-num num-dense text-fg-2">{fmtUsd(trade.solAmount * fxAtTrade)}</span>;
       case "trader":
         return <TraderCell trade={trade} tracked={tracked} onPick={onPick} />;
       case "tx":
@@ -167,18 +209,25 @@ const TradeRow = memo(function TradeRow({
       aria-selected={cursor}
       title={fmtClock(trade.ts)}
       className={cn(
-        "relative grid h-full items-center hover:bg-surface-2",
+        "relative grid h-full items-center",
+        mark && MARK_TINT[mark],
+        "hover:bg-surface-2",
         fresh && (buy ? "zf-flash-buy" : "zf-flash-sell"),
         cursor && "bg-surface-2",
       )}
       style={{ gridTemplateColumns: template(cols) }}
     >
-      {cursor && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" />}
+      {/* Size bar (4.9): right-anchored, log-scaled, at 70% of the bar token so digits stay on top. */}
       <span
         aria-hidden="true"
-        className={cn("absolute inset-y-0 right-0", buy ? "bg-bar-buy" : "bg-bar-sell")}
+        className={cn("absolute inset-y-0 right-0 opacity-70", buy ? "bg-bar-buy" : "bg-bar-sell")}
         style={{ width: `${sizeBarPct(trade.solAmount)}%` }}
       />
+      {cursor ? (
+        <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" />
+      ) : (
+        mark && <span aria-hidden="true" className={cn("absolute inset-y-px left-0 w-0.5 opacity-80", MARK_EDGE[mark])} />
+      )}
       {cols.map((c) => (
         // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for the virtualised tape (DESIGN.md 7)
         // biome-ignore lint/a11y/useFocusableInteractive: cells are read through the row cursor, not tab stops
@@ -190,20 +239,65 @@ const TradeRow = memo(function TradeRow({
   );
 });
 
+/**
+ * Footer row under the tape, for pagination of older trades (DESIGN.md 4.18): one dense row in the
+ * tape's own rhythm. `sentinelRef` goes on the row so an IntersectionObserver can ask for the next
+ * page when it scrolls into view. Presentation only: fetching lives with the caller.
+ */
+export function TapeFooter({
+  state,
+  onRetry,
+  sentinelRef,
+}: {
+  state: "idle" | "loading" | "end" | "error";
+  onRetry?: () => void;
+  sentinelRef?: Ref<HTMLDivElement>;
+}) {
+  return (
+    <div
+      ref={sentinelRef}
+      data-tape-footer={state}
+      aria-live="polite"
+      className="flex h-row-dense items-center gap-2 px-2 text-label text-fg-3"
+    >
+      {state === "loading" && (
+        <>
+          <span aria-hidden="true" className="h-2 w-16 rounded-xs bg-surface-3" />
+          Loading older trades
+        </>
+      )}
+      {state === "end" && <span className="text-fg-4">Start of trade history</span>}
+      {state === "error" && (
+        <>
+          Couldn't load older trades
+          {onRetry && (
+            <button type="button" onClick={onRetry} className="focus-inset rounded-xs text-fg-2 transition-colors hover:text-fg-1">
+              Retry
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** Trades per older page (the gateway allows up to 1,000). */
 const OLDER_PAGE = 200;
-/** After the oldest stored trade, look again at most this often (a backfill may have added older ones). */
+/** After the oldest stored trade, look again at most this often (a backfill may have stored older ones since). */
 const OLDER_RETRY_MS = 10_000;
+
+type OlderState = "idle" | "loading" | "end" | "error";
 
 /**
  * Every stored buy and sell of the coin below the live tape: pages of GET /api/trades (newest first, cursor
- * `next`), loaded once when the token opens and then as the tape scrolls to its end. Live mode only (the
- * simulation's tape is the whole history). Rows already in the live tape are skipped.
+ * `next`; the server backfills a coin first seen mid-life from chain), loaded once when the token opens and
+ * then whenever the footer scrolls into view. Live mode only (the simulation's tape is the whole history).
+ * Rows already in the live tape are skipped.
  */
 function useOlderTrades(mint: string | null, live: readonly Trade[], supply: number, solUsd: number) {
   const decimals = useToken((s) => s.detail?.summary.decimals ?? 6);
   const [older, setOlder] = useState<Trade[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [state, setState] = useState<OlderState>("idle");
   const cursor = useRef<{ next: string | null; done: boolean; at: number; busy: boolean }>({ next: null, done: false, at: 0, busy: false });
   const liveRef = useRef(live);
   liveRef.current = live;
@@ -214,6 +308,7 @@ function useOlderTrades(mint: string | null, live: readonly Trade[], supply: num
     void mint;
     cursor.current = { next: null, done: false, at: 0, busy: false };
     setOlder([]);
+    setState("idle");
   }, [mint]);
 
   const loadMore = useCallback(() => {
@@ -224,7 +319,7 @@ function useOlderTrades(mint: string | null, live: readonly Trade[], supply: num
     const before = c.done ? (all[all.length - 1]?.signature ?? null) : c.next;
     c.busy = true;
     c.at = Date.now();
-    setLoading(true);
+    setState("loading");
     const qs = new URLSearchParams({ mint, limit: String(OLDER_PAGE) });
     if (before) qs.set("before", before);
     fetch(apiUrl(`/api/trades?${qs}`), { credentials: "same-origin" })
@@ -238,13 +333,13 @@ function useOlderTrades(mint: string | null, live: readonly Trade[], supply: num
         c.next = body.next ?? null;
         c.done = !body.next;
         if (page.length) setOlder((prev) => [...prev, ...page]);
+        setState(c.done ? "end" : "idle");
       })
       .catch(() => {
-        /* scrolling to the end again retries */
+        if (cursor.current === c) setState("error");
       })
       .finally(() => {
         c.busy = false;
-        if (cursor.current === c) setLoading(false);
       });
   }, [mint, decimals, solUsd, supply]);
 
@@ -255,10 +350,20 @@ function useOlderTrades(mint: string | null, live: readonly Trade[], supply: num
 
   const liveIds = useMemo(() => new Set(live.map((t) => t.id)), [live]);
   const rest = useMemo(() => older.filter((t) => !liveIds.has(t.id)), [older, liveIds]);
-  return { older: rest, loading, loadMore };
+  return { older: rest, state, loadMore };
 }
 
-export function TradesTable({ supply }: { supply: number }) {
+export function TradesTable({
+  supply,
+  footer,
+}: {
+  supply: number;
+  /**
+   * Rendered under the last row inside the scroll container for older pages. Default (live mode): the tape's
+   * own <TapeFooter> over GET /api/trades.
+   */
+  footer?: ReactNode;
+}) {
   const trades = useToken((s) => s.trades);
   const mint = useToken((s) => s.mint);
   const tracked = useTrackedMap();
@@ -283,7 +388,6 @@ export function TradesTable({ supply }: { supply: number }) {
   const pause = usePauseOnHover(paused);
   const cols = useMemo(() => columns(showPrice, quote), [showPrice, quote]);
 
-  const olderTrades = useOlderTrades(mint, trades, supply, solUsd);
   const keep = useCallback(
     (t: Trade) => {
       // An unknown size (null) fails a minimum: unknown is not zero.
@@ -300,12 +404,44 @@ export function TradesTable({ supply }: { supply: number }) {
     },
     [minSol, maker, candle, kind, tracked],
   );
-  const filteredOlder = useMemo(() => olderTrades.older.filter(keep), [olderTrades.older, keep]);
   const filtered = useMemo(() => trades.filter(keep), [trades, keep]);
+  const olderTrades = useOlderTrades(mint, trades, supply, solUsd);
+  const filteredOlder = useMemo(() => olderTrades.older.filter(keep), [olderTrades.older, keep]);
   const live = useLiveOrder(filtered, (t) => t.id, { frozen: pause.frozen });
   const queued = live.queued;
   // older pages sit below the live tape and are never queued behind the pause
   const rows = useMemo(() => (filteredOlder.length ? [...live.rows, ...filteredOlder] : live.rows), [live.rows, filteredOlder]);
+
+  // the footer asks for the next page when it scrolls into view (and again while it stays in view)
+  const loadMore = olderTrades.loadMore;
+  const olderState = olderTrades.state;
+  const sentinelEl = useRef<HTMLDivElement | null>(null);
+  const observer = useRef<IntersectionObserver | null>(null);
+  const sentinel = useCallback(
+    (el: HTMLDivElement | null) => {
+      observer.current?.disconnect();
+      observer.current = null;
+      sentinelEl.current = el;
+      if (!el || !IS_LIVE || typeof IntersectionObserver === "undefined") return;
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) loadMore();
+        },
+        { root: scrollRef.current, rootMargin: "400px 0px" },
+      );
+      io.observe(el);
+      observer.current = io;
+    },
+    [loadMore],
+  );
+  useEffect(() => () => observer.current?.disconnect(), []);
+  useEffect(() => {
+    const el = sentinelEl.current;
+    const root = scrollRef.current;
+    if (olderState !== "idle" || !el || !root) return;
+    if (el.getBoundingClientRect().top - root.getBoundingClientRect().bottom < 400) loadMore();
+  }, [olderState, loadMore]);
+  const tapeFooter = footer ?? (IS_LIVE ? <TapeFooter state={olderState} onRetry={loadMore} sentinelRef={sentinel} /> : null);
 
   // Insertion times: rows present at first render count as old; a row inserted later flashes
   // once (DESIGN.md 6.6), including a batch released after a pause, unless it is an old trade
@@ -359,7 +495,7 @@ export function TradesTable({ supply }: { supply: number }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-7 shrink-0 items-center gap-2 overflow-hidden border-b border-hairline px-2">
+      <TableStrip className="gap-2">
         <Segmented<MakerKind>
           size="xs"
           value={kind}
@@ -375,10 +511,11 @@ export function TradesTable({ supply }: { supply: number }) {
         <NumberInput
           value={minSol}
           onChange={setMinSol}
-          placeholder="Min SOL"
+          placeholder="Min"
+          suffix="SOL"
           min={0}
           step={0.1}
-          className="w-16 shrink-0"
+          className="h-5 w-[72px] shrink-0 px-1.5"
           ariaLabel="Minimum trade size in SOL"
         />
         {maker && (
@@ -405,9 +542,12 @@ export function TradesTable({ supply }: { supply: number }) {
             <X className="icon-xs text-fg-3" />
           </button>
         )}
-        <span className="zf-num ml-auto shrink-0 text-label text-fg-3">
-          {fmtCount(filtered.length + filteredOlder.length)} shown{olderTrades.loading ? " · loading older" : ""}
-        </span>
+        <span className="ml-auto" />
+        {filtered.length !== trades.length && (
+          <span className="zf-num shrink-0 text-label text-fg-3">
+            <span className="text-fg-2">{fmtCount(filtered.length)}</span> of {fmtCount(trades.length)}
+          </span>
+        )}
         <IconButton ref={colsAnchor} size="xs" label="Columns" active={colsOpen} onClick={() => setColsOpen((o) => !o)}>
           <Columns3 />
         </IconButton>
@@ -420,7 +560,7 @@ export function TradesTable({ supply }: { supply: number }) {
         <IconButton size="xs" label={paused ? "Resume tape" : "Pause tape"} active={paused} onClick={() => setPaused((p) => !p)}>
           {paused ? <Play /> : <Pause />}
         </IconButton>
-      </div>
+      </TableStrip>
       <div className="relative min-h-0 flex-1">
         <NewRowsBar count={queued} onApply={applyQueued} className="top-[var(--zf-header-row)]" />
         {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for the virtualised tape (DESIGN.md 7) */}
@@ -431,11 +571,7 @@ export function TradesTable({ supply }: { supply: number }) {
           aria-label="Trades"
           aria-rowcount={rows.length + 1}
           onKeyDown={onKey}
-          onScroll={(e) => {
-            pause.onScroll(e);
-            const el = e.currentTarget;
-            if (el.scrollTop + el.clientHeight >= el.scrollHeight - rowH * 20) olderTrades.loadMore();
-          }}
+          onScroll={pause.onScroll}
           {...pause.bind}
           className="focus-inset h-full overflow-auto text-data"
         >
@@ -484,6 +620,7 @@ export function TradesTable({ supply }: { supply: number }) {
                 })}
               </div>
             )}
+            {rows.length > 0 && tapeFooter}
           </div>
         </div>
       </div>
@@ -517,10 +654,12 @@ export function MobileTradesList({ supply }: { supply: number }) {
               {buy ? "B" : "S"}
             </span>
             <Num kind="solTape" value={t.solAmount} unit="SOL" className={cn("relative min-w-[11ch]", buy ? "text-buy" : "text-sell")} />
-            <span className="zf-num relative text-fg-2">
-              {quote === "USD" ? fmtUsd(t.marketCapUsd) : fmtSol(t.priceSol === null ? null : t.priceSol * supply)}
-              <span className="zf-unit">{quote === "USD" ? " MC" : " SOL MC"}</span>
-            </span>
+            {(quote === "USD" ? t.marketCapUsd : t.priceSol) !== null && (
+              <span className="zf-num relative text-fg-2">
+                {quote === "USD" ? fmtUsd(t.marketCapUsd) : fmtSol(t.priceSol === null ? null : t.priceSol * supply)}
+                <span className="zf-unit">{quote === "USD" ? " MC" : " SOL MC"}</span>
+              </span>
+            )}
             <span className="relative ml-auto truncate font-mono text-label text-fg-3">
               {t.tags.includes("you") ? "YOU" : t.tags.includes("dev") ? "DEV" : shortAddr(t.maker)}
             </span>

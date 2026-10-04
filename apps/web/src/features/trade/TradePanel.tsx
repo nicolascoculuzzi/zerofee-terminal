@@ -65,7 +65,7 @@ function OrderTypeTabs({ value, onChange }: { value: OrderType; onChange: (t: Or
     }
   };
   return (
-    <div role="tablist" aria-label="Order type" onKeyDown={onKey} className="flex h-7 items-stretch gap-1 border-b border-hairline">
+    <div role="tablist" aria-label="Order type" onKeyDown={onKey} className="flex h-8 items-stretch gap-4 border-b border-hairline">
       {ORDER_TYPES.map((t, i) => {
         const active = t.id === value;
         const key = bindings[t.action]?.[0];
@@ -82,12 +82,81 @@ function OrderTypeTabs({ value, onChange }: { value: OrderType; onChange: (t: Or
             title={key ? `${t.label} (${compactLabel(key)})` : t.label}
             onClick={() => onChange(t.id)}
             className={cn(
-              "focus-inset relative px-2 text-data font-medium transition-colors",
+              "focus-inset relative px-0.5 text-data font-medium transition-colors",
               active ? "text-fg-1" : "text-fg-3 hover:text-fg-2",
             )}
           >
             {t.label}
             {active && <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Buy | Sell (DESIGN.md 4.8 side variant), full width at 32 px: the active half takes its side's
+ * tint with coloured text, the other stays quiet in text-3. One hairline-strong container, 2 px
+ * inset. A radiogroup: Left/Right/Home/End move and select. Full-width side halves with the
+ * active one tinted after Kraken Pro https://mobbin.com/screens/7cef61a7-167f-4abd-ab8a-effc2538da6f
+ * and Coinbase Advanced https://mobbin.com/screens/f8afc154-e5c8-4587-ab43-93c4799a979a
+ */
+function SideToggle({
+  value,
+  onChange,
+  buyTitle,
+  sellTitle,
+}: {
+  value: TradeSide;
+  onChange: (s: TradeSide) => void;
+  buyTitle: string;
+  sellTitle: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const sides: { id: TradeSide; label: string; title: string }[] = [
+    { id: "buy", label: "Buy", title: buyTitle },
+    { id: "sell", label: "Sell", title: sellTitle },
+  ];
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    let next: TradeSide | null = null;
+    if (e.key === "ArrowLeft" || e.key === "Home") next = "buy";
+    else if (e.key === "ArrowRight" || e.key === "End") next = "sell";
+    if (!next) return;
+    e.preventDefault();
+    onChange(next);
+    refs.current[next === "buy" ? 0 : 1]?.focus();
+  };
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Side"
+      onKeyDown={onKey}
+      className="grid h-8 w-full grid-cols-2 gap-0.5 rounded-sm border border-hairline-strong bg-surface-2 p-0.5"
+    >
+      {sides.map((o, i) => {
+        const active = o.id === value;
+        return (
+          // biome-ignore lint/a11y/useSemanticElements: segmented radio built from buttons
+          <button
+            key={o.id}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabIndex={active ? 0 : -1}
+            title={o.title}
+            onClick={() => onChange(o.id)}
+            className={cn(
+              "focus-inset flex items-center justify-center rounded-xs text-data font-semibold transition-colors",
+              !active && "text-fg-3 hover:bg-surface-3 hover:text-fg-1",
+              active && o.id === "buy" && "bg-buy-tint text-buy",
+              active && o.id === "sell" && "bg-sell-tint text-sell",
+            )}
+          >
+            {o.label}
           </button>
         );
       })}
@@ -366,6 +435,7 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
         step={solStep}
         presets={preset.buyAmounts}
         presetLabel={fmtSolShort}
+        tone="buy"
         onSavePresets={(v) => setPreset(presetId, { buyAmounts: v })}
         issue={issue}
         onIssueAction={() => openSettings("trading")}
@@ -398,6 +468,7 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
         max={sellUnit === "pct" ? 100 : undefined}
         presets={sellUnit === "pct" ? preset.sellPcts : preset.instantSellSol}
         presetLabel={(v) => (sellUnit === "pct" ? `${fmtSolShort(v)}%` : fmtSolShort(v))}
+        tone="sell"
         onSavePresets={(v) => setPreset(presetId, sellUnit === "pct" ? { sellPcts: v } : { instantSellSol: v })}
         onEnter={fire}
         ariaLabel={sellUnit === "pct" ? "Share of the holding to sell" : "SOL value to sell"}
@@ -518,17 +589,11 @@ export function TradePanel({ detail, layout = "rail" }: { detail: TokenDetail; l
 
   const head = (
     <>
-      <Segmented<TradeSide>
-        size="side"
-        className="w-full"
+      <SideToggle
         value={side}
         onChange={ui.setSide}
-        tone={(v) => (v === "buy" ? "buy" : "sell")}
-        options={[
-          { value: "buy", label: "Buy", title: `Buy (${compactLabel(buyKey)})` },
-          { value: "sell", label: "Sell", title: `Sell (${compactLabel(sellKey)})` },
-        ]}
-        label="Side"
+        buyTitle={`Buy (${compactLabel(buyKey)})`}
+        sellTitle={`Sell (${compactLabel(sellKey)})`}
       />
       <OrderTypeTabs value={orderType} onChange={ui.setOrderType} />
     </>

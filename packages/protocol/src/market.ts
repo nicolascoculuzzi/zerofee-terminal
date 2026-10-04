@@ -221,6 +221,13 @@ export interface TokenSummary {
   history?: TokenHistory;
   /** `history.state` as a flat field (chart adapters read either). */
   historyState?: HistoryState;
+  /**
+   * Holder metrics are being computed: `holders`, `top10Pct`, `devPct`, `snipersPct`, `bundlersPct` are null now
+   * because a backfill of the coin's history is running, and they arrive (as a token patch) when it reaches the
+   * creation. false / absent: null metrics stay null (history not observable, or capped). Lets the UI show
+   * "computing" instead of guessing with timers.
+   */
+  holdersPending?: boolean;
   /** Last time any field changed. */
   updatedAt: number;
 }

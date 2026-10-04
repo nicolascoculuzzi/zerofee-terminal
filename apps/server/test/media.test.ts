@@ -280,11 +280,21 @@ describe("image type checks", () => {
   });
 
   test("upstream Content-Type allowlist", () => {
-    for (const ok of ["image/png", "image/jpeg; charset=binary", "IMAGE/WEBP", "image/gif", "application/octet-stream", null, ""]) {
+    for (const ok of [
+      "image/png",
+      "image/jpeg; charset=binary",
+      "IMAGE/WEBP",
+      "image/gif",
+      "image/avif",
+      "image/heic",
+      "application/octet-stream",
+      null,
+      "",
+    ]) {
       expect(checkContentType(ok)).toBe("accept");
     }
     expect(checkContentType("image/svg+xml")).toBe("svg");
-    for (const bad of ["text/html", "application/json", "image/avif", "image/heic", "text/xml", "application/xhtml+xml"]) {
+    for (const bad of ["text/html", "application/json", "image/tiff", "text/xml", "application/xhtml+xml"]) {
       expect(checkContentType(bad)).toBe("content_type");
     }
   });

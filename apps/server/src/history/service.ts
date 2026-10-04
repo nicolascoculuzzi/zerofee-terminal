@@ -254,6 +254,10 @@ export class HistoryService {
       lastProgressAt: 0,
       quiet: reason === "refresh" && h?.state === "complete",
     });
+    // a viewer is waiting: say "backfilling" now (the job starts within a step or two)
+    if (priority === 0 && h && h.state !== "complete" && h.state !== "backfilling") {
+      this.setHistory(mint, { ...h, state: "backfilling", progress: { signatures: 0, fetched: 0, added: 0 }, updatedAt: this.now() });
+    }
   }
 
   /** Drops the newest not-started job of a worse priority to make room. */

@@ -14,6 +14,12 @@
  * --rpc URL (default RPC_URL or the public endpoint), --api URL (also count /api/trades pages), --json <file>,
  * --backfill (in-process: also backfill the audited coins and re-check them against the chain).
  *
+ *   Backfill only (no live feed): backfill each --mint from chain through the history service (a pump coin the
+ *   server never saw is discovered from its curve PDA), then compare the stored trades' signatures with every
+ *   successful signature on the coin's curve / pool (getSignaturesForAddress: cheap pages), classifying any
+ *   mismatch with getTransaction:
+ *     bun run apps/server/scripts/capture-audit.ts --backfill-only --mint <address> [--mint ...]
+ *
  * Ground truth: getSignaturesForAddress on each coin's bonding curve / pool (newest first, down to the window
  * start), getTransaction for every successful signature in the window, decoded with the same event decoders
  * (Anchor event-CPI, tag e445a52e51cb9a1d). A trade counts as captured when the store holds a trade of the same
@@ -59,7 +65,8 @@ const JSON_OUT = opt("json");
 const BACKFILL = flag("backfill");
 const MINTS = opts("mint");
 
-if (!INPROCESS && !DB_PATH) {
+const BACKFILL_ONLY = flag("backfill-only");
+if (!INPROCESS && !DB_PATH && !BACKFILL_ONLY) {
   console.error("usage: capture-audit.ts --db <market.db> | --inprocess [--minutes 8]");
   process.exit(2);
 }
@@ -532,4 +539,95 @@ async function backfillCheck(app: App, reader: RpcHistoryReader, picks: CoinPick
   return out;
 }
 
-await main();
+async function backfillOnly(): Promise<void> {
+  setLogLevel("info");
+  const cfg = loadConfig({
+    ...process.env,
+    SERVER_PORT: "0",
+    DB_PATH: ":memory:",
+    DRY_RUN: "true",
+    PUMPPORTAL_ENABLED: "false",
+    HISTORY_BACKGROUND: "false",
+    LOG_LEVEL: "info",
+  });
+  const app = createApp(cfg, { source: null, db: openDb(":memory:"), enrich: false, pollers: false });
+  const history = app.history;
+  if (!history) throw new Error("history disabled");
+  const reader = new RpcHistoryReader({
+    rpc: new RpcClient({ url: RPC_URL, maxConcurrent: 2, timeoutMs: 20_000 }),
+    perSec: RPS,
+    maxRetries: 12,
+  });
+  const results: unknown[] = [];
+  for (const mint of MINTS) {
+    const t0 = Date.now();
+    history.request(mint, 0);
+    await Bun.sleep(1_000);
+    let lastLog = 0;
+    while (history.busy(mint) && Date.now() - t0 < 90 * 60_000) {
+      if (Date.now() - lastLog > 30_000) {
+        lastLog = Date.now();
+        log(`${short(mint)}: ${JSON.stringify(history.state(mint))}`);
+      }
+      await Bun.sleep(2_000);
+    }
+    app.writer.flush();
+    const h = history.state(mint);
+    const rec = app.market.tokens.get(mint);
+    const stored = app.reader.tradeSignatures(mint);
+    const db = (app.reader as unknown as { db: Database }).db;
+    const tradeRows = (db.query("SELECT COUNT(*) AS n FROM trades WHERE mint = ?").get(mint) as { n: number }).n;
+    const accounts = [rec?.bondingCurve, rec?.pool].filter((a): a is string => !!a);
+    const ok = new Set<string>();
+    let failed = 0;
+    for (const account of accounts) {
+      let before: string | undefined;
+      for (let page = 0; page < 100; page++) {
+        const sigs = await reader.signatures(account, { before, limit: 1_000 });
+        for (const x of sigs) {
+          if (x.err) failed++;
+          else ok.add(x.signature);
+        }
+        if (sigs.length < 1_000) break;
+        before = sigs[sigs.length - 1]?.signature;
+      }
+    }
+    const missing = [...ok].filter((x) => !stored.has(x));
+    const extra = [...stored].filter((x) => !ok.has(x));
+    // a successful curve / pool transaction without a trade of the coin (create without a buy, admin calls) is fine
+    let missingWithTrades = 0;
+    const coin = { mint, curve: rec?.bondingCurve ?? null, pumpPool: rec?.pool ?? null, launchLabPool: null, cpmmPool: null };
+    const txs = await reader.transactions(missing.slice(0, 200));
+    txs.forEach((tx, i) => {
+      if (!tx) return;
+      const built = ingestFromJsonTx({ signature: missing[i] as string, tx, receivedAt: Date.now(), source: "audit" });
+      if (built && coinTrades(built.tx, coin).length) missingWithTrades++;
+    });
+    const r = {
+      mint,
+      minutes: Math.round((Date.now() - t0) / 6_000) / 10,
+      history: h,
+      storedTrades: tradeRows,
+      storedSignatures: stored.size,
+      chainSuccessfulSignatures: ok.size,
+      chainFailedSignatures: failed,
+      missingFromStore: missing.length,
+      missingWithTradeEvents: missingWithTrades,
+      storedNotOnChain: extra.length,
+      summary: app.market.summary(mint),
+    };
+    log(
+      `${short(mint)}: ${h?.state}${h?.capped ? " (capped)" : ""}, stored ${tradeRows} trades in ${stored.size} txs; chain ${ok.size} successful txs ` +
+        `(${failed} failed); missing ${missing.length} (${missingWithTrades} with trades of the coin); stored but not on the walked accounts ${extra.length}; ` +
+        `holders ${r.summary?.holders}, top10 ${r.summary?.top10Pct}%`,
+    );
+    results.push(r);
+  }
+  if (JSON_OUT)
+    await Bun.write(JSON_OUT, JSON.stringify({ mode: "backfill-only", results, reader: reader.stats, history: history.health() }, null, 2));
+  await app.stop();
+  process.exit(0);
+}
+
+if (BACKFILL_ONLY) await backfillOnly();
+else await main();

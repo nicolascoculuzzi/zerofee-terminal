@@ -4,17 +4,30 @@ import { Age } from "../../components/ui/Age";
 import { IconButton } from "../../components/ui/Button";
 import { EmptyState, MetricLabel, Tag } from "../../components/ui/bits";
 import { CopyButton, Segmented } from "../../components/ui/controls";
+import { Num } from "../../components/ui/Num";
 import { WalletAvatar } from "../../components/ui/TokenAvatar";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
-import { DASH, fmtCount, fmtPct, fmtRiskPct, fmtSignedSol, fmtSol, fmtTokens, shortAddr } from "../../lib/format";
+import { DASH, fmtCount, fmtPct, fmtRiskPct, fmtSignedSol, fmtTokens, shortAddr } from "../../lib/format";
 import { bandsText, type RiskKey, riskTone, TONE_TEXT } from "../../lib/metrics";
 import type { Holder, TokenSummary, TopTrader, WalletTag } from "../../protocol";
 import { getServices } from "../../services";
 import { useSettings } from "../../state/settings";
 import { type TrackedWallet, useTrackedMap, useTrackers } from "../../state/trackers";
 import { Money, quoteUnit, useQuote } from "./money";
-import { type Col, ch, DataTable, flex, NewRowsBar, nextSort, type SortState, useLiveOrder, usePauseOnHover } from "./table";
+import {
+  type Col,
+  ch,
+  DataTable,
+  flex,
+  NewRowsBar,
+  nextSort,
+  type SortState,
+  TableStrip,
+  useLiveOrder,
+  usePauseOnHover,
+  YOU_ROW,
+} from "./table";
 import { useTokenUi } from "./tokenUi";
 
 /*
@@ -273,7 +286,7 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-7 shrink-0 items-center gap-3 overflow-hidden border-b border-hairline px-2 text-label whitespace-nowrap text-fg-3">
+      <TableStrip>
         <span>
           <span className="zf-num text-fg-1">{fmtCount(token.holders)}</span> holders
         </span>
@@ -297,7 +310,7 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
           ]}
           label="Holder filter"
         />
-      </div>
+      </TableStrip>
       <div className="relative min-h-0 flex-1">
         <NewRowsBar count={queued} onApply={pause.release} className="top-[var(--zf-header-row)]" />
         <div className="h-full overflow-auto" onScroll={pause.onScroll} {...pause.bind}>
@@ -308,7 +321,7 @@ export function HoldersTable({ holders, token }: { holders: Holder[]; token: Tok
             rows={rows}
             rowKey={(v) => v.h.address}
             cell={(v, key) => holderCell(v, key, token, tracked.get(v.h.address))}
-            rowClassName={(v) => v.h.tags.includes("you") && "bg-surface-3"}
+            rowClassName={(v) => v.h.tags.includes("you") && YOU_ROW}
             sort={sort}
             onSort={(k) => setSort((s) => nextSort(s, k))}
           />
@@ -391,14 +404,11 @@ export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
         return <span className="zf-num text-fg-3">{i + 1}</span>;
       case "wallet":
         return <WalletCell address={v.t.address} tags={v.t.tags} tracked={tracked.get(v.t.address)} />;
+      // Exactly 3 decimals with trailing zeros dimmed, like the tape, so the points line up.
       case "bought":
-        return <span className="zf-num text-buy">{fmtSol(v.t.boughtSol)}</span>;
+        return <Num kind="solTape" value={v.t.boughtSol} className="text-buy" />;
       case "sold":
-        return v.t.soldSol > 0 ? (
-          <span className="zf-num text-sell">{fmtSol(v.t.soldSol)}</span>
-        ) : (
-          <span className="zf-num text-fg-4">0</span>
-        );
+        return <Num kind="solTape" value={v.t.soldSol} className={v.t.soldSol > 0 ? "text-sell" : "text-fg-4"} />;
       case "realized":
         return v.realizedSol === null ? <Unknown tip={why} /> : <Money sol={v.realizedSol} kind="signed" />;
       case "unrealized":
@@ -417,30 +427,49 @@ export function TopTradersTable({ traders }: { traders: TopTrader[] }) {
     }
   };
 
+  const holding = traders.filter((t) => t.holdingPct > 0).length;
   return (
-    <div className="relative h-full min-h-0">
-      <NewRowsBar count={queued} onApply={pause.release} className="top-[var(--zf-header-row)]" />
-      <div className="h-full overflow-auto" onScroll={pause.onScroll} {...pause.bind}>
-        <DataTable
-          label="Top traders"
-          minWidth={820}
-          cols={TRADER_COLS}
-          rows={rows}
-          rowKey={(v) => v.t.address}
-          cell={(v, key, i) => content(v, i, key)}
-          rowClassName={(v) => v.t.tags.includes("you") && "bg-surface-3"}
-          sort={sort}
-          onSort={(k) => setSort((s) => nextSort(s, k))}
-        />
-        {rows.length === 0 &&
-          (getServices().features.holders ? (
-            <EmptyState title="No traders yet" body="Wallets show up here after their first trade." />
-          ) : (
-            <EmptyState
-              title="Top traders not available"
-              body="The live feed doesn't publish per-wallet PnL yet. Click a trader in Trades to see their fills."
-            />
-          ))}
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Same 28 px strip as Holders so the two grids share one vertical rhythm. */}
+      {traders.length > 0 && (
+        <TableStrip>
+          <span>
+            <span className="zf-num text-fg-1">{fmtCount(traders.length)}</span> traders
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>
+            <span className="zf-num text-fg-2">{fmtCount(holding)}</span> holding
+          </span>
+          <span>
+            <span className="zf-num text-fg-2">{fmtCount(traders.length - holding)}</span> exited
+          </span>
+          {sort === null && <span className="ml-auto">Ranked by total PnL</span>}
+        </TableStrip>
+      )}
+      <div className="relative min-h-0 flex-1">
+        <NewRowsBar count={queued} onApply={pause.release} className="top-[var(--zf-header-row)]" />
+        <div className="h-full overflow-auto" onScroll={pause.onScroll} {...pause.bind}>
+          <DataTable
+            label="Top traders"
+            minWidth={820}
+            cols={TRADER_COLS}
+            rows={rows}
+            rowKey={(v) => v.t.address}
+            cell={(v, key, i) => content(v, i, key)}
+            rowClassName={(v) => v.t.tags.includes("you") && YOU_ROW}
+            sort={sort}
+            onSort={(k) => setSort((s) => nextSort(s, k))}
+          />
+          {rows.length === 0 &&
+            (getServices().features.holders ? (
+              <EmptyState title="No traders yet" body="Wallets show up here after their first trade." />
+            ) : (
+              <EmptyState
+                title="Top traders not available"
+                body="The live feed doesn't publish per-wallet PnL yet. Click a trader in Trades to see their fills."
+              />
+            ))}
+        </div>
       </div>
     </div>
   );

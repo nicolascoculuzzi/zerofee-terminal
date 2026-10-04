@@ -112,6 +112,11 @@ export interface HealthResponse {
     /** Detection latency of launches (CreateEvent). */
     launchLatency: LatencyStats;
   };
+  /**
+   * How late the server's event loop runs a 50 ms timer (ms, last ~5 min): time spent blocked by work on the
+   * ingest / gateway thread. Image decoding runs in worker processes and should not show up here.
+   */
+  eventLoopLag?: { p50: number | null; p99: number | null; max: number | null; samples: number };
   solUsd: { price: number | null; ageMs: number | null; stale: boolean };
   chain: { slot: number | null; blockhashAgeMs: number | null };
   tokens: { inMemory: number; pulse: { new: number; final: number; migrated: number } };

@@ -36,6 +36,7 @@ export function AmountField({
   ariaLabel,
   className,
   inputId,
+  tone,
 }: {
   label?: string;
   right?: ReactNode;
@@ -53,6 +54,8 @@ export function AmountField({
   ariaLabel: string;
   className?: string;
   inputId?: string;
+  /** Side colour for the selected preset (trade panel); neutral elsewhere. */
+  tone?: "buy" | "sell";
 }) {
   return (
     <div className={cn("space-y-1", className)}>
@@ -88,12 +91,17 @@ export function AmountField({
           )}
         </p>
       )}
-      <PresetChips values={presets} active={value} label={presetLabel} onPick={onChange} onSave={onSavePresets} unit={unit} />
+      <PresetChips values={presets} active={value} label={presetLabel} onPick={onChange} onSave={onSavePresets} unit={unit} tone={tone} />
     </div>
   );
 }
 
-/** Four equal 24 px chips with an edit pencil (DESIGN.md 4.7 "Presets" and "Edit mode"). */
+/**
+ * Four equal presets joined in one 28 px hairline-strong strip with hairline dividers, plus an edit
+ * pencil (DESIGN.md 4.7 "Presets" and "Edit mode"). The preset matching the value fills with the
+ * side tint and side-coloured text (Axiom's panel), or surface-3 and text-1 when neutral. Equal
+ * 25/50/75/100% chips after Gemini https://mobbin.com/screens/04be92d6-0eb8-48bf-859b-15f00f38b00d
+ */
 export function PresetChips({
   values,
   active,
@@ -101,6 +109,7 @@ export function PresetChips({
   onPick,
   onSave,
   unit,
+  tone,
 }: {
   values: number[];
   active: number | null;
@@ -109,6 +118,7 @@ export function PresetChips({
   /** Omit for fixed chips (no edit pencil). */
   onSave?: (values: number[]) => void;
   unit: string;
+  tone?: "buy" | "sell";
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
@@ -143,7 +153,7 @@ export function PresetChips({
 
   return (
     <div className="flex items-center gap-1">
-      <div className="grid min-w-0 flex-1 grid-cols-4 gap-1">
+      <div className="grid h-7 min-w-0 flex-1 grid-cols-4 divide-x divide-hairline overflow-hidden rounded-sm border border-hairline-strong">
         {values.map((v, i) =>
           editing ? (
             <input
@@ -155,7 +165,7 @@ export function PresetChips({
               value={draft[i] ?? ""}
               onChange={(e) => setDraft((d) => d.map((x, j) => (j === i ? e.target.value : x)))}
               onKeyDown={onKey}
-              className="zf-num h-6 min-w-0 rounded-sm border border-hairline-strong bg-surface-2 px-1 text-center text-data font-medium text-fg-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+              className="zf-num focus-inset h-full min-w-0 bg-surface-2 px-1 text-center text-data font-medium text-fg-1"
             />
           ) : (
             <button
@@ -165,8 +175,10 @@ export function PresetChips({
               aria-pressed={active === v}
               onClick={() => onPick(v)}
               className={cn(
-                "zf-num h-6 min-w-0 truncate rounded-sm border bg-surface-2 px-1 text-data font-medium transition-colors",
-                active === v ? "border-fg-2 text-fg-1" : "border-hairline text-fg-2 hover:text-fg-1",
+                "zf-num focus-inset h-full min-w-0 truncate px-1 text-data font-medium transition-colors",
+                active !== v && "text-fg-2 hover:bg-surface-3 hover:text-fg-1",
+                active === v &&
+                  (tone === "buy" ? "bg-buy-tint text-buy" : tone === "sell" ? "bg-sell-tint text-sell" : "bg-surface-3 text-fg-1"),
               )}
             >
               {label(v)}
@@ -180,7 +192,7 @@ export function PresetChips({
           aria-label={editing ? "Save presets" : "Edit presets"}
           title={editing ? "Save presets (Enter)" : "Edit presets"}
           onClick={editing ? save : start}
-          className="flex size-6 shrink-0 items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1"
+          className="flex size-7 shrink-0 items-center justify-center rounded-sm text-fg-3 transition-colors hover:bg-surface-3 hover:text-fg-1"
         >
           {editing ? <Check className="icon-sm" /> : <Pencil className="icon-sm" />}
         </button>

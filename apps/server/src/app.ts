@@ -29,6 +29,9 @@ import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
 import { ImageProxy } from "./media";
+import { HostPacer, PRIORITY, type Priority } from "./media/pacer";
+import { WorkPool } from "./media/pool";
+import { pumpCdnUrl } from "./media/proxy";
 import { Metrics } from "./metrics";
 import { createOrderService, type OrderService, type OrderServiceOverrides } from "./orders";
 import { openDb } from "./storage/db";
@@ -36,6 +39,7 @@ import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
 import { StorageWriter } from "./storage/writer";
 import type { UserLayer } from "./user";
+import { LoopLagMonitor } from "./util/loopLag";
 import { RpcClient } from "./util/rpc";
 import { WalletFeed } from "./wallets/feed";
 
@@ -86,6 +90,9 @@ export interface App {
   orders: (OrderService & { ready: Promise<void> }) | null;
   /** Token image proxy (GET /api/img). */
   media: ImageProxy;
+  metadata: MetadataFetcher;
+  /** Event-loop lag of the ingest / gateway thread. */
+  loopLag: LoopLagMonitor;
   metrics: Metrics;
   /** Trade-history coverage, backfill and gap-fill from chain (null when disabled). */
   history: HistoryService | null;
@@ -158,11 +165,25 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     persistPool: (p) => writer.pool(p),
   });
   resolver.loadPools(reader.pools());
+  const loopLag = new LoopLagMonitor();
+  loopLag.start();
+  // Image and metadata fetches share one pacer (same IPFS gateways) and one pool of niced worker processes
+  // for the CPU work (decode / resize / encode, JSON parsing), so the event loop only routes bytes.
+  const pacer = new HostPacer({ limits: cfg.media.hostLimits, fallback: cfg.media.hostFallback });
+  const workPool = new WorkPool({ workers: cfg.media.workers, nice: cfg.media.workerNice, maxQueue: cfg.media.workQueue });
+  let pulseRef: PulseBoard | null = null;
+  let gatewayRef: Gateway | null = null;
+  /** On screen somewhere: in a Pulse column or behind an open token page. */
+  const priorityOf = (mint: string): Priority | undefined =>
+    pulseRef?.isListed(mint) || gatewayRef?.isWatched(mint) ? PRIORITY.visible : undefined;
   // Token images: the proxy fetches only the image a known token's metadata names (by mint).
   const media = new ImageProxy({
     cfg: cfg.media,
     gateways: cfg.metadataGateways,
     fetchFn: o.fetchFn,
+    pacer,
+    pool: workPool,
+    priorityOf,
     lookup: (mint) => {
       const rec = market?.tokens.get(mint);
       if (rec) return { image: rec.image, pump: rec.launchpad === "pump" };
@@ -170,6 +191,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       return row ? { image: row.summary.image ?? null, pump: row.summary.launchpad === "pump" } : null;
     },
   });
+  /** A pump coin whose metadata can't be had (yet): pump.fun's own CDN image meanwhile. */
+  const fallbackImage = (mint: string) => {
+    const rec = market?.tokens.get(mint);
+    if (rec && rec.launchpad === "pump" && !rec.image && market?.setFallbackImage(mint, pumpCdnUrl(mint))) media.warm(mint);
+  };
   // Raydium LaunchLab / CPMM accounts share the resolver's batches.
   const raydium = new RaydiumRegistry(resolver, {
     launchLabPool: (info) => market?.onLaunchLabPoolReady(info),
@@ -182,16 +208,26 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     gateways: cfg.metadataGateways,
     timeoutMs: cfg.metadataTimeoutMs,
     fetchFn: o.fetchFn,
+    pacer,
+    patienceMs: cfg.media.patienceMs,
+    retryMax: cfg.metadataRetryMax,
+    backgroundRps: cfg.metadataBackgroundRps,
+    priorityOf,
+    wanted: (mint) => market?.tokens.has(mint) ?? false,
+    parse: cfg.media.workers > 0 ? (text, gateways, prio) => workPool.parseMetadata(text, gateways, prio) : undefined,
     store: reader.metadataStore((k, json, ok) => writer.metadata(k, json, ok)),
     onResult: (mint, meta) => {
       market?.setMetadata(mint, meta);
-      if (meta?.image) media.warm(mint); // the first viewer of a new launch gets a cache hit
+      if (meta?.image)
+        media.warm(mint); // the first viewer of a new launch gets a cache hit
+      else if (!meta) fallbackImage(mint);
     },
+    onRetry: (mint) => fallbackImage(mint),
   });
   const m = new MarketState(cfg.metrics, {
     resolver,
     solUsd: () => solUsd?.current() ?? null,
-    requestMetadata: (mint, uri) => metadata.request(mint, uri),
+    requestMetadata: (mint, uri, origin) => metadata.request(mint, uri, origin),
     storage: writer,
     funderOf: (w) => enricher?.funderOf(w) ?? null,
     onLaunch: (rec) => enricher?.onLaunch(rec),
@@ -216,6 +252,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   });
 
   const pulse = new PulseBoard(cfg.pulse);
+  pulseRef = pulse;
+  // Restored tokens' images: refetched in the background (priority 2, IMG_BACKGROUND_RPS), disk hits first.
+  for (const [mint, rec] of m.tokens) if (rec.image) media.warm(mint, PRIORITY.background);
   let gateway: Gateway | null = null;
   if (cfg.enrich.enabled && o.enrich !== false) {
     enricher = new Enricher({
@@ -386,9 +425,13 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
           `${raydium.cpmmPools.size} graduation pools, ${raydium.stats.rejected} CPMM pools rejected, ${raydium.platforms.size} platforms`,
         ...(enricher?.notes() ?? ["enrich: off"]),
         `metadata: ${metadata.stats.requested} requested, ${metadata.stats.cacheHits} cached, ${metadata.stats.fetched} fetched, ` +
-          `${metadata.stats.failed} failed, ${metadata.stats.withImage} with an image; images: ${media.stats.requests} requests, ` +
-          `${media.stats.memoryHits + media.stats.diskHits} hits, ${media.stats.misses} misses, ${media.stats.notFound} not found`,
+          `${metadata.stats.retries} retries, ${metadata.stats.permanent} failed for good, ${metadata.stats.gaveUp} gave up, ` +
+          `${metadata.pendingCount} pending, ${metadata.stats.withImage} with an image`,
+        `images: ${media.stats.requests} requests, ${media.stats.memoryHits + media.stats.diskHits} hits, ${media.stats.misses} misses, ` +
+          `${media.stats.notFound} not found ${JSON.stringify(media.stats.notFoundByState)}; jobs ${JSON.stringify(media.stats.jobs)}, ` +
+          `${JSON.stringify(media.jobCounts())}; pool ${workPool.running} running, ${workPool.queued} queued, ${workPool.stats.dropped} dropped`,
       );
+    const lag = loopLag.stats();
     return {
       ok: !!source && srcHealth[0]?.connected === true,
       version: VERSION,
@@ -409,6 +452,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         latency: { p50, p90, p99, samples: m.latency.count },
         launchLatency: { p50: l50, p90: l90, p99: l99, samples: m.launchLatency.count },
       },
+      eventLoopLag: { p50: lag.p50, p99: lag.p99, max: lag.max, samples: lag.samples },
       ...(history ? { history: history.health() } : {}),
       solUsd: { price: sol?.price ?? null, ageMs: sol ? Date.now() - sol.updatedAt : null, stale: sol?.stale ?? true },
       chain: {
@@ -448,6 +492,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     sources,
     gateway: () => gateway,
     media,
+    metadata,
+    workPool,
+    loopLag,
     // The admin kill switch (POST /api/admin/halt) shows up as zerofee_halted{scope="tx"} too.
     halted: user ? () => user.halt.isHalted() : undefined,
     history: history ? () => (history as HistoryService).health() : undefined,
@@ -477,6 +524,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       : undefined,
     metrics,
   });
+  gatewayRef = gateway;
   if (user && cfg.orders.enabled) {
     const svc = createOrderService({
       cfg,
@@ -571,6 +619,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     user,
     orders,
     media,
+    metadata,
+    loopLag,
     metrics,
     history,
     health,
@@ -590,6 +640,9 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       programAccounts.stop();
       resolver.stop();
       metadata.stop();
+      media.stop();
+      workPool.stop();
+      loopLag.stop();
       await gateway?.stop();
       await user?.stop();
       writer.stop();

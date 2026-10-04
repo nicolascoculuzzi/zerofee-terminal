@@ -356,7 +356,13 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     athMcSol: mcSol !== null ? Math.max(rec.athMcSol, mcSol) : rec.athMcSol > 0 ? rec.athMcSol : null,
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,
-    ...(rec.history ? { history: rec.history, historyState: rec.history.state } : {}),
+    ...(rec.history
+      ? {
+          history: rec.history,
+          historyState: rec.history.state,
+          holdersPending: rec.holders === null && rec.history.state === "backfilling",
+        }
+      : {}),
     updatedAt: rec.updatedAt,
   };
 }

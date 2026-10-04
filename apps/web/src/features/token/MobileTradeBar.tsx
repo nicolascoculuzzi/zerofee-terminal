@@ -17,7 +17,8 @@ import { CostBreakdown } from "../trade/CostBreakdown";
 import { buyCost, buyIssue, sellCost, venueShort } from "../trade/tradeMath";
 
 /*
- * Phone trade bar (DESIGN.md 5.8): sticky above the bottom tabs, 64 px: an amount chip (72 px,
+ * Phone trade bar (DESIGN.md 5.8): the token page's last row (the bottom tabs step aside there),
+ * 64 px plus the bottom safe area: an amount chip (72 px,
  * opens the preset chips), "Buy WIF 0.25" (buy, flexible, 44 px) and "Sell" (sell-tint, 88 px).
  * Sell opens a sheet with 25/50/75/100% chips, Sell initials and the CTA. With "Confirm trades on
  * touch devices" on (default) Buy opens a compact review sheet: the cost summary and one CTA.
@@ -87,12 +88,12 @@ export function MobileTradeBar({ detail }: { detail: TokenDetail }) {
 
   return (
     <>
-      <div className="grid h-16 shrink-0 grid-cols-[72px_minmax(0,1fr)_88px] items-center gap-2 border-t border-hairline bg-surface-1 px-3">
+      <div className="grid h-[calc(64px+env(safe-area-inset-bottom))] shrink-0 grid-cols-[72px_minmax(0,1fr)_88px] items-start gap-2 border-t border-hairline bg-surface-1 px-3 pt-2.5 pb-[env(safe-area-inset-bottom)]">
         <button
           type="button"
           onClick={() => setSheet("amount")}
           aria-label={`Buy amount ${fmtSolShort(quickBuy)} SOL, change`}
-          className="flex h-11 items-center justify-center gap-1 rounded-sm border border-hairline-strong bg-surface-2 text-body font-semibold text-fg-1"
+          className="flex h-11 items-center justify-center gap-1 rounded-sm border border-hairline-strong bg-surface-2 text-body font-semibold text-fg-1 transition-colors hover:bg-surface-3 active:bg-surface-3"
         >
           <span className="zf-num">{fmtSolShort(quickBuy)}</span>
           <ChevronDown className="icon-xs text-fg-3" />
