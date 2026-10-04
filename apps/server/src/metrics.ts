@@ -17,6 +17,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { HistoryHealth } from "@zerofee/protocol";
 import type { ServerConfig } from "./config";
 import type { ChainPublisher } from "./feeds/chain";
 import type { SolUsdFeed } from "./feeds/solUsd";
@@ -65,6 +66,8 @@ export interface MetricsDeps {
   halted?(): boolean;
   /** Token image proxy (GET /api/img). */
   media?: Pick<ImageProxy, "stats" | "latency" | "health" | "diskBytes" | "memoryBytes">;
+  /** Trade-history backfill (src/history). */
+  history?: () => HistoryHealth;
 }
 
 type Labels = Record<string, string>;
@@ -339,6 +342,48 @@ export class Metrics implements MetricsEndpoint {
       "Seconds since the source's last message.",
       by((h) => (h.lastMessageAt === null ? null : Math.max(0, now - h.lastMessageAt) / 1000)),
     );
+    // trade capture: every loss is counted, and either recovered or reported as a gap for the history service
+    const cap = (f: (c: NonNullable<(typeof health)[number]["capture"]>) => number): Row[] =>
+      health.filter((h) => h.capture).map((h): Row => [{ source: h.name }, f(h.capture as NonNullable<typeof h.capture>)]);
+    e.add(
+      "zerofee_capture_queue_dropped_total",
+      "counter",
+      "Notifications the decode queue dropped (each is re-read by signature or counted lost).",
+      cap((c) => c.queueDropped),
+    );
+    e.add("zerofee_capture_recovered_total", "counter", "Dropped notifications re-read and applied.", cap((c) => c.recovered));
+    e.add("zerofee_capture_lost_total", "counter", "Transactions that could not be recovered (reported as gaps).", cap((c) => c.lost));
+    e.add("zerofee_capture_truncated_total", "counter", "Notifications whose logs the RPC cut short.", cap((c) => c.truncated));
+    e.add(
+      "zerofee_capture_incomplete_total",
+      "counter",
+      "Notifications with fewer trade events than trade instructions, or an undecodable event.",
+      cap((c) => c.incomplete),
+    );
+    e.add("zerofee_capture_refetched_total", "counter", "Transactions re-read because their logs were incomplete or dropped.", cap((c) => c.refetched));
+    e.add("zerofee_capture_partial_total", "counter", "Incomplete logs applied as they were (re-read failed).", cap((c) => c.partial));
+    e.add("zerofee_capture_gaps_total", "counter", "Feed gaps reported to the history service.", cap((c) => c.gaps));
+    e.add("zerofee_capture_down_seconds_total", "counter", "Time the source was disconnected.", cap((c) => c.downMs / 1000));
+    const hist = d.history?.();
+    if (hist) {
+      e.add("zerofee_history_queued", "gauge", "Coins waiting for a trade-history backfill, by priority.", [
+        [{ priority: "viewed" }, hist.queued.viewed],
+        [{ priority: "listed" }, hist.queued.listed],
+        [{ priority: "background" }, hist.queued.background],
+      ]);
+      e.add("zerofee_history_backfills_total", "counter", "Finished backfills by outcome.", [
+        [{ outcome: "complete" }, hist.completed],
+        [{ outcome: "partial" }, hist.partial],
+        [{ outcome: "failed" }, hist.failed],
+      ]);
+      e.add("zerofee_history_trades_added_total", "counter", "Trades a backfill or gap-fill added.", hist.tradesAdded);
+      e.add("zerofee_history_rpc_calls_total", "counter", "History reads.", [
+        [{ method: "signatures" }, hist.signatures],
+        [{ method: "transactions" }, hist.transactions],
+      ]);
+      e.add("zerofee_history_rpc_errors_total", "counter", "History reads that failed after retries.", hist.rpcErrors);
+      e.add("zerofee_history_rate_limited_total", "counter", "History reads answered 429.", hist.rateLimited);
+    }
     const c = d.chain.state;
     e.add("zerofee_chain_tip_slot", "gauge", "Highest processed slot announced by the slot stream.", c.slot);
     const primarySlot = health[0]?.slot ?? null;

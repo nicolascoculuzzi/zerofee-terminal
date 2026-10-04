@@ -178,6 +178,11 @@ export class PulseBoard {
     return best.map(([mint]) => mint);
   }
 
+  /** Mints in a published list (no order). */
+  members(col: PulseColumn): string[] {
+    return [...this.published[col].keys()];
+  }
+
   /** Current published list in display order (full summaries as last published). */
   snapshot(col: PulseColumn): TokenSummary[] {
     const pub = this.published[col];

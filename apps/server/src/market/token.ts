@@ -24,6 +24,7 @@ import {
 import {
   imageProxyUrl,
   type Launchpad,
+  type TokenHistory,
   type TokenSocials,
   type TokenSummary,
   type Trade,
@@ -161,6 +162,8 @@ export interface TokenRecord {
   devLaunches: number | null;
   devMigrated: number | null;
   trades: TradeEntry[];
+  /** Trade-history coverage (history/service.ts); null until assessed. Not persisted here (token_history). */
+  history: TokenHistory | null;
   dangers: Token2022Danger[];
   bootstrapRequested: boolean;
   lastPersistAt: number;
@@ -227,6 +230,7 @@ export function newTokenRecord(mint: string, now: number, init: Partial<TokenRec
     devLaunches: null,
     devMigrated: null,
     trades: [],
+    history: null,
     dangers: [],
     bootstrapRequested: false,
     lastPersistAt: 0,
@@ -336,6 +340,7 @@ export function summarize(rec: TokenRecord, view: MarketView): TokenSummary {
     athMcSol: mcSol !== null ? Math.max(rec.athMcSol, mcSol) : rec.athMcSol > 0 ? rec.athMcSol : null,
     isMayhem: rec.isMayhem,
     lastTradeAt: rec.lastTradeAt,
+    ...(rec.history ? { history: rec.history } : {}),
     updatedAt: rec.updatedAt,
   };
 }

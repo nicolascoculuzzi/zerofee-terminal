@@ -1,8 +1,9 @@
 /**
  * The single SQLite writer: queues rows from the market state and flushes them in ONE transaction every
  * ~250 ms (WAL + prepared statements; thousands of rows per flush are cheap). Candle and token updates
- * coalesce by key (latest wins); trades append. A periodic job prunes trades past the retention window
- * and short-timeframe candles.
+ * coalesce by key (latest wins); trades append (INSERT OR IGNORE on the trade id: replays and backfills that
+ * overlap live capture are idempotent). A periodic job prunes trades past the retention window (except tokens
+ * whose backfilled history is retained) and short-timeframe candles.
  */
 import type { Database, Statement } from "bun:sqlite";
 import type { Candle, Timeframe, TokenSummary, Trade } from "@zerofee/protocol";
@@ -27,6 +28,22 @@ export interface WriterOptions {
   pruneBatch?: number;
 }
 
+/** token_history row (history/service.ts). */
+export interface TokenHistoryRow {
+  mint: string;
+  state: string;
+  fromSlot: number | null;
+  fromTime: number | null;
+  fromCreation: boolean;
+  capped: boolean;
+  trades: number | null;
+  /** JSON: newest signature covered per walked account (the next gap-fill stops there). */
+  cursors: string | null;
+  /** The token's trades are kept past TRADES_RETENTION_HOURS until then (ms); null = normal retention. */
+  retainUntil: number | null;
+  updatedAt: number;
+}
+
 /** A wallet's first incoming SOL transfer (Helius funded-by); funder null = none found. */
 export interface WalletFunderRow {
   wallet: string;
@@ -47,10 +64,11 @@ export class StorageWriter implements StorageSink {
   private readonly pools = new Map<string, unknown[]>();
   private readonly meta = new Map<string, unknown[]>();
   private readonly funders = new Map<string, unknown[]>();
+  private readonly histories = new Map<string, unknown[]>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   readonly stats = { flushes: 0, rows: 0, errors: 0, lastFlushMs: null as number | null, maxFlushMs: 0, pruned: 0 };
-  private readonly st: Record<"trade" | "delTrade" | "candle" | "token" | "pool" | "meta" | "funder", Statement>;
+  private readonly st: Record<"trade" | "delTrade" | "candle" | "token" | "pool" | "meta" | "funder" | "history", Statement>;
 
   constructor(
     private readonly db: Database,
@@ -85,6 +103,13 @@ export class StorageWriter implements StorageSink {
          ON CONFLICT(wallet) DO UPDATE SET funder = excluded.funder, funder_name = excluded.funder_name, funder_type = excluded.funder_type,
            amount_lamports = excluded.amount_lamports, funded_at = excluded.funded_at, slot = excluded.slot, fetched_at = excluded.fetched_at`,
       ),
+      history: db.prepare(
+        `INSERT INTO token_history (mint, state, from_slot, from_time, from_creation, capped, trades, cursors, retain_until, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(mint) DO UPDATE SET state = excluded.state, from_slot = excluded.from_slot, from_time = excluded.from_time,
+           from_creation = excluded.from_creation, capped = excluded.capped, trades = excluded.trades,
+           cursors = COALESCE(excluded.cursors, token_history.cursors),
+           retain_until = MAX(COALESCE(excluded.retain_until, 0), COALESCE(token_history.retain_until, 0)), updated_at = excluded.updated_at`,
+      ),
     };
   }
 
@@ -109,7 +134,8 @@ export class StorageWriter implements StorageSink {
       this.tokens.size +
       this.pools.size +
       this.meta.size +
-      this.funders.size
+      this.funders.size +
+      this.histories.size
     );
   }
 
@@ -163,6 +189,21 @@ export class StorageWriter implements StorageSink {
     this.funders.set(r.wallet, [r.wallet, r.funder, r.funderName, r.funderType, r.amountLamports, r.fundedAt, r.slot, r.fetchedAt]);
   }
 
+  history(r: TokenHistoryRow): void {
+    this.histories.set(r.mint, [
+      r.mint,
+      r.state,
+      r.fromSlot,
+      r.fromTime,
+      r.fromCreation ? 1 : 0,
+      r.capped ? 1 : 0,
+      r.trades,
+      r.cursors,
+      r.retainUntil,
+      r.updatedAt,
+    ]);
+  }
+
   pool(info: PoolInfo): void {
     this.pools.set(info.pool, [info.pool, info.baseMint, info.quoteMint, JSON.stringify(info), info.updatedAt]);
   }
@@ -183,6 +224,8 @@ export class StorageWriter implements StorageSink {
     const pools = [...this.pools.values()];
     const meta = [...this.meta.values()];
     const funders = [...this.funders.values()];
+    const histories = [...this.histories.values()];
+    this.histories.clear();
     this.candles.clear();
     this.tokens.clear();
     this.pools.clear();
@@ -201,9 +244,11 @@ export class StorageWriter implements StorageSink {
         for (const r of pools) this.st.pool.run(...(r as never[]));
         for (const r of meta) this.st.meta.run(...(r as never[]));
         for (const r of funders) this.st.funder.run(...(r as never[]));
+        for (const r of histories) this.st.history.run(...(r as never[]));
       })();
       this.stats.flushes++;
-      this.stats.rows += trades.length + deletes.length + candles.length + tokens.length + pools.length + meta.length + funders.length;
+      this.stats.rows +=
+        trades.length + deletes.length + candles.length + tokens.length + pools.length + meta.length + funders.length + histories.length;
       const ms = performance.now() - t0;
       this.stats.lastFlushMs = Math.round(ms * 100) / 100;
       if (ms > this.stats.maxFlushMs) this.stats.maxFlushMs = Math.round(ms);
@@ -216,10 +261,12 @@ export class StorageWriter implements StorageSink {
   prune(now = Date.now()): void {
     try {
       const cutoff = now - this.opts.retentionHours * 3_600_000;
-      const r = this.db.run("DELETE FROM trades WHERE rowid IN (SELECT rowid FROM trades WHERE block_time < ? LIMIT ?)", [
-        cutoff,
-        this.opts.pruneBatch ?? 50_000,
-      ] as never);
+      // Backfilled tokens keep their whole history until their retain_until (token_history).
+      const r = this.db.run(
+        `DELETE FROM trades WHERE rowid IN (SELECT rowid FROM trades WHERE block_time < ?
+           AND mint NOT IN (SELECT mint FROM token_history WHERE retain_until >= ?) LIMIT ?)`,
+        [cutoff, now, this.opts.pruneBatch ?? 50_000] as never,
+      );
       this.stats.pruned += r.changes;
       for (const [tf, ms] of Object.entries(CANDLE_RETENTION_MS)) {
         this.db.run("DELETE FROM candles WHERE tf = ? AND t < ?", [tf, now - (ms as number)] as never);

@@ -5,7 +5,13 @@
  *   GET  /api/health                         HealthResponse
  *   GET  /api/tokens/:mint                   TokenResponse            (404 if unknown)
  *   GET  /api/search?q&limit                 SearchResponse           (name, ticker or contract address; limit 1-50, default 20)
- *   GET  /api/candles?mint&tf&from&to        CandlesResponse          (from/to: epoch ms, optional)
+ *   GET  /api/candles?mint&tf&from&to&limit  CandlesResponse          (from/to: epoch ms, optional; without `from` the whole
+ *                                                                      history, newest `limit` buckets (default and max 5,000);
+ *                                                                      `next` pages older buckets)
+ *   GET  /api/trades?mint&before&limit       TradesPageResponse       (every stored buy and sell, newest first; `before` = the
+ *                                                                      previous page's `next` cursor or a transaction signature;
+ *                                                                      limit 1-1,000, default 200)
+ *   GET  /api/history?mint                   HistoryResponse          (trade-history coverage; also asks for a backfill)
  *   GET  /api/program-accounts               ProgramAccountsResponse  (pump Global / FeeConfig, PumpSwap GlobalConfig / FeeConfig)
  *   GET  /api/lookup-tables?addresses        LookupTablesResponse     (1-8 comma-separated lookup table addresses, read from chain)
  *   GET  /api/img?mint&v&s                   token image (webp / png / jpeg / gif bytes, not JSON): media.ts
@@ -21,7 +27,7 @@
  * authenticated calls (429 "rate_limited").
  */
 
-import type { Candle, TokenSummary, TradeContext } from "./market";
+import type { Candle, TokenHistory, TokenSummary, Trade, TradeContext } from "./market";
 import type { ErrorCode } from "./messages";
 import type { Timeframe } from "./topics";
 
@@ -42,6 +48,32 @@ export interface SourceHealth {
   /** Messages dropped by the source's bounded queue (backpressure). */
   dropped: number;
   notes: string[];
+  /** Trade-capture accounting (absent from servers and sources that predate it). */
+  capture?: CaptureStats;
+}
+
+/**
+ * What the feed lost and what it recovered. Every loss is counted, never silent: notifications the bounded queue
+ * dropped are re-read by signature (`recovered`) or, when that fails, reported as a gap that the history service
+ * repairs per coin from chain (`gaps`).
+ */
+export interface CaptureStats {
+  /** Notifications the bounded decode queue dropped (oldest first). */
+  queueDropped: number;
+  /** Logs the RPC cut short ("Log truncated"), or with fewer events than trade instructions / a decode failure. */
+  truncated: number;
+  incomplete: number;
+  /** Transactions re-read with getTransaction because their logs were incomplete or their notification was dropped. */
+  refetched: number;
+  /** Dropped notifications whose transaction was re-read and applied. */
+  recovered: number;
+  /** Transactions that could not be re-read (gave up, overflow): applied from partial logs or lost to a gap. */
+  partial: number;
+  lost: number;
+  /** Feed gaps reported to the history service (reconnects, losses) and the per-coin gap-fills they triggered. */
+  gaps: number;
+  /** Total time the feed was disconnected (ms). */
+  downMs: number;
 }
 
 export interface LatencyStats {
@@ -82,6 +114,8 @@ export interface HealthResponse {
   tokens: { inMemory: number; pulse: { new: number; final: number; migrated: number } };
   storage: { pendingRows: number; lastFlushMs: number | null; flushes: number; errors: number };
   gateway: { connections: number; subscriptions: number; topics: number };
+  /** Trade-history backfill (absent from servers that predate it). */
+  history?: HistoryHealth;
 }
 
 export interface TokenResponse {
@@ -105,6 +139,46 @@ export interface CandlesResponse {
   supply: number;
   /** Oldest first. */
   candles: Candle[];
+  /**
+   * Older buckets exist below this page: request `to=<next.to>` (same tf) for the next older page; null when the
+   * page reaches the oldest stored bucket. Absent from servers that predate it.
+   */
+  next?: { to: number } | null;
+  /** Trade-history coverage: the chart is the whole history once `state` is "complete". */
+  history?: TokenHistory;
+}
+
+/** GET /api/trades: one page of a token's stored trades (live and backfilled), newest first. */
+export interface TradesPageResponse {
+  mint: string;
+  trades: Trade[];
+  /** Cursor for the next (older) page: pass it as `before`; null at the oldest stored trade. */
+  next: string | null;
+  history: TokenHistory | null;
+}
+
+/** GET /api/history. */
+export interface HistoryResponse {
+  mint: string;
+  history: TokenHistory | null;
+}
+
+/** Backfill service counters (HealthResponse.history). */
+export interface HistoryHealth {
+  enabled: boolean;
+  /** Queued coins by priority: viewed, Final Stretch / Migrated, background. */
+  queued: { viewed: number; listed: number; background: number };
+  running: string | null;
+  completed: number;
+  partial: number;
+  failed: number;
+  signatures: number;
+  transactions: number;
+  tradesAdded: number;
+  rpcErrors: number;
+  rateLimited: number;
+  /** Calls per second budget (HISTORY_RPS). */
+  rps: number;
 }
 
 export interface ProgramAccount {

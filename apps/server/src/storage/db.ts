@@ -1,7 +1,7 @@
 /**
  * SQLite (bun:sqlite) for shared market data: tokens (with their creator, for dev history), trades
- * (rolling retention), candles, the PumpSwap pool registry, the metadata cache and the wallet funding
- * cache. One writer (the batched StorageWriter); WAL lets the REST readers run alongside it. Schema
+ * (rolling retention, except tokens whose history was backfilled), candles, the PumpSwap pool registry, the
+ * metadata cache, the wallet funding cache and per-token trade-history coverage. One writer (the batched StorageWriter); WAL lets the REST readers run alongside it. Schema
  * migrations are plain SQL, applied in order and tracked with PRAGMA user_version.
  */
 import { Database } from "bun:sqlite";
@@ -133,6 +133,24 @@ export const MIGRATIONS: readonly string[] = [
   // v4: a wallet's own fills for the wallet:<address> topic snapshot.
   `
   CREATE INDEX trades_trader_time ON trades(trader, block_time);
+  `,
+  // v5: trade-history coverage per token (history/service.ts) and keyset paging of a token's trades by slot
+  // (GET /api/trades). retain_until exempts a backfilled token's trades from TRADES_RETENTION_HOURS.
+  `
+  CREATE TABLE token_history (
+    mint TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    from_slot INTEGER,
+    from_time INTEGER,
+    from_creation INTEGER NOT NULL DEFAULT 0,
+    capped INTEGER NOT NULL DEFAULT 0,
+    trades INTEGER,
+    cursors TEXT,
+    retain_until INTEGER,
+    updated_at INTEGER NOT NULL
+  ) WITHOUT ROWID;
+  CREATE INDEX token_history_retain ON token_history(retain_until);
+  CREATE INDEX trades_mint_slot ON trades(mint, slot);
   `,
 ];
 

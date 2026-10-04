@@ -11,7 +11,9 @@
  * linux-x64-gnu/musl (not linux-arm64).
  *
  * Reconnect: exponential backoff, resubscribe with `fromSlot` a little before the last slot seen
- * (providers keep ~100-150 slots), replayed duplicates are dropped downstream by (signature, slot).
+ * (providers keep ~100-150 slots), replayed duplicates are dropped downstream by (signature, slot). An outage
+ * longer than `gapAfterMs` may have outrun the provider's replay window: it is reported as a gap (sink.gap) once
+ * the stream is back, and the history service gap-fills the active coins from chain.
  * Keepalive: a ping every 15 s (Cloudflare-fronted endpoints close idle streams); the ping request
  * repeats the filters because every SubscribeRequest replaces the subscription.
  */
@@ -47,6 +49,8 @@ export interface YellowstoneSourceOptions {
   pingIntervalMs?: number;
   /** How many slots before the last seen slot to replay from after a reconnect. */
   replaySlots?: number;
+  /** Outages longer than this are reported as a gap (default 20 s: providers replay ~60 s at best). */
+  gapAfterMs?: number;
   createClient?: (endpoint: string, xToken: string | undefined) => GeyserClientLike;
 }
 
@@ -81,6 +85,9 @@ export class YellowstoneSource implements Source {
   private pingId = 1;
   private lastSlot: number | null = null;
   private readonly blockTimes = new Map<number, number>();
+  private downSince: number | null = null;
+  private slotBeforeDown: number | null = null;
+  readonly capture = { gaps: 0, downMs: 0 };
   readonly stats = {
     connected: false,
     reconnects: 0,
@@ -125,6 +132,10 @@ export class YellowstoneSource implements Source {
       } catch (e) {
         this.stats.lastError = e instanceof Error ? e.message : String(e);
         log.warn(`stream failed: ${this.stats.lastError}`);
+      }
+      if (this.stats.connected && this.downSince === null) {
+        this.downSince = Date.now();
+        this.slotBeforeDown = this.lastSlot;
       }
       this.stats.connected = false;
       if (this.pingTimer) clearInterval(this.pingTimer);
@@ -179,6 +190,7 @@ export class YellowstoneSource implements Source {
     switch (p.kind) {
       case "tx": {
         this.stats.txs++;
+        if (this.downSince !== null) this.endDown(now, p.tx.slot);
         if (this.lastSlot === null || p.tx.slot > this.lastSlot) this.lastSlot = p.tx.slot;
         for (const message of p.failures) {
           this.stats.decodeFailures++;
@@ -216,6 +228,16 @@ export class YellowstoneSource implements Source {
     }
   }
 
+  /** First transaction after a reconnect: a long outage may have outrun the replay window. */
+  private endDown(now: number, slot: number): void {
+    const down = now - (this.downSince as number);
+    this.downSince = null;
+    this.capture.downMs += down;
+    if (down < (this.opts.gapAfterMs ?? 20_000)) return;
+    this.capture.gaps++;
+    this.sink?.gap?.({ source: this.name, reason: "reconnect", fromSlot: this.slotBeforeDown, toSlot: slot });
+  }
+
   health(): SourceHealth {
     return {
       name: this.name,
@@ -225,6 +247,17 @@ export class YellowstoneSource implements Source {
       lastMessageAt: this.stats.lastMessageAt,
       slot: this.lastSlot,
       dropped: 0,
+      capture: {
+        queueDropped: 0,
+        truncated: 0,
+        incomplete: 0,
+        refetched: 0,
+        recovered: 0,
+        partial: 0,
+        lost: 0,
+        gaps: this.capture.gaps,
+        downMs: this.capture.downMs + (this.downSince !== null ? Date.now() - this.downSince : 0),
+      },
       notes: [
         `txs ${this.stats.txs} (failed ${this.stats.failedTxs}, without events ${this.stats.txsWithoutEvents}), decode failures ${this.stats.decodeFailures}`,
         `block metas ${this.stats.blockMetas}, dead slots ${this.stats.deadSlots}, pongs ${this.stats.pongs}`,

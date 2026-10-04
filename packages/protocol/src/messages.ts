@@ -9,7 +9,8 @@
  *  2. Every later `delta` / `correction` on that topic carries S+1, S+2, ... in order.
  *  3. Drop messages with seq <= the last applied seq (stale). On a gap (seq > last + 1) resubscribe
  *     (`unsubscribe` + `subscribe`) to get a fresh snapshot.
- *  4. `correction` rewrites history already sent (late events, dead-slot rollbacks); apply it like a delta.
+ *  4. `correction` rewrites history already sent (late events, dead-slot rollbacks, backfilled history); apply it
+ *     like a delta.
  *
  * Re-sending `subscribe` for a topic you already hold re-sends the snapshot (cheap resync).
  */
@@ -102,7 +103,11 @@ export interface DeltaMessage<T extends Topic = Topic> {
   data: DeltaData<T>;
 }
 
-export type CorrectionReason = "late_event" | "dead_slot";
+/**
+ * late_event: an out-of-order event; dead_slot: a rolled-back slot; backfill: history read back from chain
+ * (older trades / rebuilt candles of a coin first seen mid-life, or a repaired feed gap). Apply all alike.
+ */
+export type CorrectionReason = "late_event" | "dead_slot" | "backfill";
 
 export interface CorrectionMessage<T extends Topic = Topic> {
   type: "correction";

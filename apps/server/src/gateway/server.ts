@@ -7,8 +7,8 @@
  * rolled-back events go out as `correction` messages. Slow clients that exceed the backpressure limit
  * are disconnected (they reconnect and resnapshot).
  *
- * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/program-accounts, /api/lookup-tables,
- * /api/img (media/proxy.ts); POST /api/tx;
+ * REST: GET /api/health, /api/tokens/:mint, /api/search, /api/candles, /api/trades, /api/history, /api/program-accounts,
+ * /api/lookup-tables, /api/img (media/proxy.ts); POST /api/tx;
  * GET /debug; GET /metrics (Prometheus, token or loopback only: src/metrics.ts). Per-IP token-bucket
  * rate limits; an AuthProvider seam for SIWS sessions.
  *
@@ -21,7 +21,9 @@
  */
 
 import {
+  CANDLES_SNAPSHOT_MAX,
   type Candle,
+  type CandlesResponse,
   type ChainDelta,
   type ClientMessage,
   type ErrorCode,
@@ -34,9 +36,13 @@ import {
   parseTopic,
   type SearchResponse,
   TIMEFRAME_MS,
+  TIMEFRAMES,
   type Timeframe,
+  type TokenHistory,
   type TokenSummary,
   type Topic,
+  type Trade,
+  type TradesPageResponse,
   type WalletDelta,
 } from "@zerofee/protocol";
 import type { Server, ServerWebSocket } from "bun";
@@ -125,12 +131,16 @@ export interface GatewayDeps {
   metrics?: MetricsEndpoint;
   /** GET /api/img (src/media/proxy.ts), with its own per-IP limits; absent = 404. */
   media?: { handle(req: Request, url: URL, ip: string): Promise<Response> } | null;
+  /** Trade-history coverage and backfill requests (src/history); absent = no history fields. */
+  history?: { state(mint: string): TokenHistory | null; request(mint: string, priority?: 0 | 1 | 2, reason?: string): void } | null;
 }
 
 const DEBUG_TOPIC = "debug";
 const SNAPSHOT_TRADES = 100;
-const SNAPSHOT_CANDLES = 300;
-const MAX_CANDLES_REST = 2_000;
+const MAX_CANDLES_REST = 5_000;
+const MAX_TRADES_PAGE = 1_000;
+/** Trades per `backfill` correction frame (older ones: GET /api/trades). */
+const BACKFILL_TRADES_FRAME = 200;
 /** Ceiling for any request body (the tracked-wallet import is the largest legitimate one). */
 const MAX_REQUEST_BODY = 4 * 1024 * 1024;
 
@@ -331,6 +341,8 @@ export class Gateway {
         return this.getToken(decodeURIComponent(url.pathname.slice("/api/tokens/".length)));
       if (req.method === "GET" && url.pathname === "/api/search") return this.search(url);
       if (req.method === "GET" && url.pathname === "/api/candles") return this.getCandles(url);
+      if (req.method === "GET" && url.pathname === "/api/trades") return this.getTrades(url);
+      if (req.method === "GET" && url.pathname === "/api/history") return this.getHistory(url);
       if (req.method === "GET" && url.pathname === "/api/program-accounts") {
         const v = this.d.programAccounts?.get();
         return v ? json(v) : apiError(503, "unavailable", "program accounts not loaded yet");
@@ -401,17 +413,82 @@ export class Gateway {
     }
   }
 
+  /**
+   * GET /api/candles?mint&tf&from&to&limit: without `from`, the whole stored history (newest `limit` buckets);
+   * `next.to` pages older buckets. Asks for a backfill when the coin's history is incomplete.
+   */
   private getCandles(url: URL): Response {
     const mint = url.searchParams.get("mint") ?? "";
     const tf = url.searchParams.get("tf") ?? "1m";
     if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
     if (!isTimeframe(tf)) return apiError(400, "bad_request", "tf must be one of 1s,15s,1m,5m,15m,1h");
-    const to = Number(url.searchParams.get("to") ?? Date.now());
-    const from = Number(url.searchParams.get("from") ?? to - TIMEFRAME_MS[tf] * 500);
+    const to = Number(url.searchParams.get("to") ?? Date.now() + 60_000);
+    const from = Number(url.searchParams.get("from") ?? 0);
+    const limit = Math.min(MAX_CANDLES_REST, Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? MAX_CANDLES_REST)) || MAX_CANDLES_REST));
     if (!Number.isFinite(from) || !Number.isFinite(to) || from > to) return apiError(400, "bad_request", "invalid from/to");
-    const candles = this.candles(mint, tf, from, to, MAX_CANDLES_REST);
+    // one extra bucket tells whether an older page exists
+    const page = this.candles(mint, tf, from, to, limit + 1);
+    const more = page.length > limit;
+    const candles = more ? page.slice(-limit) : page;
     const supply = this.d.market.summary(mint)?.supply ?? this.d.reader?.token(mint)?.summary.supply ?? 0;
-    return json({ mint, tf, supply, candles });
+    const history = this.historyOf(mint, true);
+    const body: CandlesResponse = {
+      mint,
+      tf,
+      supply,
+      candles,
+      next: more && candles[0] ? { to: candles[0].t - 1 } : null,
+      ...(history ? { history } : {}),
+    };
+    return json(body);
+  }
+
+  /**
+   * GET /api/trades?mint&before&limit: every stored trade of the coin (live and backfilled), newest first, by
+   * (slot, tx index, id) keyset. `before` = the previous page's `next`, or a transaction signature.
+   */
+  private getTrades(url: URL): Response {
+    const mint = url.searchParams.get("mint") ?? "";
+    if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
+    const limit = Math.min(MAX_TRADES_PAGE, Math.max(1, Math.floor(Number(url.searchParams.get("limit") ?? 200)) || 200));
+    const raw = url.searchParams.get("before");
+    let before: { slot: number; txIndex: number; id: string } | null = null;
+    if (raw) {
+      const m = /^(\d+):(-?\d+):(.+)$/.exec(raw);
+      if (m) before = { slot: Number(m[1]), txIndex: Number(m[2]), id: m[3] as string };
+      else if (isAddressLike(raw) || /^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(raw)) {
+        const at = this.d.reader?.slotOfSignature(raw);
+        if (!at) return apiError(404, "not_found", "unknown signature");
+        // every trade of that transaction and later ones in the slot are excluded
+        before = { slot: at.slot, txIndex: at.txIndex, id: `${raw}:` };
+      } else return apiError(400, "bad_request", "before must be a cursor or a signature");
+    }
+    // unflushed live trades: the store lags the tape by up to one writer flush
+    const page = this.d.reader?.tradesPage(mint, before, limit) ?? { trades: [], next: null };
+    let trades = page.trades;
+    if (!before) {
+      const ids = new Set(trades.map((t) => t.id));
+      const live = this.d.market.recentTrades(mint, limit).filter((t) => !ids.has(t.id));
+      if (live.length) trades = mergeNewestFirst(live, trades).slice(0, limit);
+    }
+    const body: TradesPageResponse = { mint, trades, next: page.next, history: this.historyOf(mint, true) };
+    return json(body);
+  }
+
+  /** GET /api/history?mint: coverage, and a backfill request when it is incomplete. */
+  private getHistory(url: URL): Response {
+    const mint = url.searchParams.get("mint") ?? "";
+    if (!parseTopic(`token:${mint}`)) return apiError(400, "bad_request", "invalid mint");
+    return json({ mint, history: this.historyOf(mint, true) });
+  }
+
+  /** A coin's coverage; `view` = a client is looking at it (a backfill is requested when incomplete). */
+  private historyOf(mint: string, view: boolean): TokenHistory | null {
+    const h = this.d.history;
+    if (!h) return null;
+    const s = h.state(mint);
+    if (view && (!s || s.state === "partial" || s.state === "unknown")) h.request(mint, 0, "view");
+    return h.state(mint) ?? s;
   }
 
   /** DB history merged with the in-memory tail (memory wins: it holds the open bucket). */
@@ -564,6 +641,25 @@ export class Gateway {
     ws.subscribe(internal);
   }
 
+  /**
+   * A backfill round (history/service.ts): its new trades go out on trades:<mint> and its rebuilt candles on every
+   * subscribed candles:<mint>:<tf>, as `backfill` corrections (newest BACKFILL_TRADES_FRAME trades, newest
+   * CANDLES_SNAPSHOT_MAX buckets per timeframe; older ones page through REST). The coverage rides on the token
+   * summary (token:<mint> patches).
+   */
+  publishBackfill(mint: string, added: readonly Trade[], candles: ReadonlyMap<Timeframe, readonly Candle[]>, _history: TokenHistory): void {
+    if (added.length && this.hub.hasSubscribers(`trades:${mint}`)) {
+      const upsert = [...added].sort((a, b) => b.slot - a.slot || (a.id < b.id ? 1 : -1)).slice(0, BACKFILL_TRADES_FRAME);
+      this.hub.publish(`trades:${mint}`, "correction", { remove: [], upsert }, "backfill");
+    }
+    for (const tf of TIMEFRAMES) {
+      const list = candles.get(tf);
+      const topic = `candles:${mint}:${tf}`;
+      if (!list?.length || !this.hub.hasSubscribers(topic)) continue;
+      this.hub.publish(topic, "correction", { candles: list.slice(-CANDLES_SNAPSHOT_MAX) }, "backfill");
+    }
+  }
+
   /** Publishes an orders delta to one user's sockets (armed-orders engine, Phase 5). */
   publishOrders(userId: string, delta: OrdersDelta): boolean {
     return this.hub.publish(ordersTopic(userId), "delta", delta, undefined, "orders");
@@ -580,18 +676,29 @@ export class Gateway {
       case "pulse":
         return { tokens: this.d.pulse.snapshot(p.column) };
       case "token": {
+        this.historyOf(p.mint, true);
         const s = m.summary(p.mint) ?? this.d.reader?.token(p.mint)?.summary ?? null;
         if (s) this.lastToken.set(p.mint, s);
         return s;
       }
       case "trades": {
+        // memory (newest, maybe unflushed) merged with the store (older, backfilled)
         const live = m.recentTrades(p.mint, SNAPSHOT_TRADES);
-        return { trades: live.length ? live : (this.d.reader?.recentTrades(p.mint, SNAPSHOT_TRADES) ?? []) };
+        const stored = live.length >= SNAPSHOT_TRADES ? [] : (this.d.reader?.recentTrades(p.mint, SNAPSHOT_TRADES) ?? []);
+        const ids = new Set(live.map((t) => t.id));
+        const trades = mergeNewestFirst(
+          live,
+          stored.filter((t) => !ids.has(t.id)),
+        ).slice(0, SNAPSHOT_TRADES);
+        const history = this.historyOf(p.mint, true);
+        return { trades, ...(history ? { history } : {}) };
       }
       case "candles": {
-        const to = Date.now();
         const supply = m.summary(p.mint)?.supply ?? this.d.reader?.token(p.mint)?.summary.supply ?? 0;
-        return { supply, candles: this.candles(p.mint, p.tf, to - TIMEFRAME_MS[p.tf] * SNAPSHOT_CANDLES, to + 60_000, SNAPSHOT_CANDLES) };
+        const page = this.candles(p.mint, p.tf, 0, Date.now() + 60_000, CANDLES_SNAPSHOT_MAX + 1);
+        const more = page.length > CANDLES_SNAPSHOT_MAX;
+        const history = this.historyOf(p.mint, true);
+        return { supply, candles: more ? page.slice(-CANDLES_SNAPSHOT_MAX) : page, more, ...(history ? { history } : {}) };
       }
       case "tradectx":
         return m.tradeContext(p.mint);
@@ -710,4 +817,9 @@ export class Gateway {
     }
     this.hub.publish(DEBUG_TOPIC, "delta", { feed: out, stats: this.d.debugStats() });
   }
+}
+
+/** Two newest-first trade lists merged newest first (by slot, then block time). */
+function mergeNewestFirst(a: readonly Trade[], b: readonly Trade[]): Trade[] {
+  return [...a, ...b].sort((x, y) => y.slot - x.slot || y.blockTime - x.blockTime || (x.id < y.id ? 1 : x.id > y.id ? -1 : 0));
 }

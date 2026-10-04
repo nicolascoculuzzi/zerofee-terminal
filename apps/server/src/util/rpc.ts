@@ -122,6 +122,76 @@ export class RpcClient {
     }
   }
 
+  /**
+   * One JSON-RPC batch (an array body) of the same method: results in input order, an RpcError in place of
+   * each failed item. A 429 or a failed request fails the whole batch (thrown). Each item counts as a call.
+   */
+  async callBatch<T>(method: string, paramsList: readonly unknown[][]): Promise<(T | RpcError)[]> {
+    if (!paramsList.length) return [];
+    if (paramsList.length === 1) {
+      try {
+        return [await this.call<T>(method, paramsList[0] as unknown[])];
+      } catch (e) {
+        if (e instanceof RpcError && e.code !== 429 && e.code !== null) return [e];
+        throw e;
+      }
+    }
+    if (this.coolingDown())
+      throw new RpcError(method, 429, `cooling down after rate limit (${this.stats.coolingDownUntil - Date.now()} ms left)`);
+    await this.acquire();
+    this.stats.calls += paramsList.length;
+    const first = this.nextId;
+    this.nextId += paramsList.length;
+    try {
+      const res = await this.fetchFn(this.opts.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(paramsList.map((params, i) => ({ jsonrpc: "2.0", id: first + i, method, params }))),
+        signal: AbortSignal.timeout(this.opts.timeoutMs ?? 10_000),
+      });
+      if (res.status === 429) {
+        this.stats.rateLimited++;
+        this.cooldown(this.opts.cooldownMs ?? 5_000);
+        throw new RpcError(method, 429, "HTTP 429");
+      }
+      const text = await res.text();
+      let body: { id: number; result?: T; error?: { code: number; message: string } }[] | { error?: { code: number; message: string } };
+      try {
+        body = JSON.parse(text);
+      } catch {
+        throw new RpcError(method, res.status, `HTTP ${res.status}: ${text.slice(0, 200)}`);
+      }
+      if (!Array.isArray(body)) {
+        const msg = body.error?.message ?? `HTTP ${res.status}: batch refused`;
+        if (/data allowance/i.test(msg)) {
+          this.stats.dataAllowance++;
+          this.cooldown(this.opts.cooldownMs ?? 30_000);
+        }
+        throw new RpcError(method, body.error?.code ?? res.status, msg);
+      }
+      const byId = new Map(body.map((b) => [b.id, b]));
+      return paramsList.map((_, i) => {
+        const b = byId.get(first + i);
+        if (!b) return new RpcError(method, null, "missing from batch response");
+        if (b.error) {
+          if (/data allowance/i.test(b.error.message)) {
+            this.stats.dataAllowance++;
+            this.cooldown(this.opts.cooldownMs ?? 30_000);
+          }
+          this.stats.errors++;
+          return new RpcError(method, b.error.code, b.error.message);
+        }
+        return b.result as T;
+      });
+    } catch (e) {
+      this.stats.errors++;
+      this.stats.lastError = e instanceof Error ? e.message : String(e);
+      throw e instanceof RpcError ? e : new RpcError(method, null, this.stats.lastError);
+    } finally {
+      this.release();
+    }
+  }
+
   private cooldown(ms: number): void {
     this.stats.coolingDownUntil = Math.max(this.stats.coolingDownUntil, Date.now() + ms);
   }

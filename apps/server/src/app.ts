@@ -18,6 +18,8 @@ import { SolUsdFeed } from "./feeds/solUsd";
 import { AnonymousAuth, type AuthProvider } from "./gateway/auth";
 import { type DebugStats, Gateway } from "./gateway/server";
 import { TxHandler } from "./gateway/tx";
+import { HeliusHistoryReader, type HistoryReader, RpcHistoryReader } from "./history/reader";
+import { type HistoryDeps, HistoryService } from "./history/service";
 import type { RpcJsonTx } from "./ingest/jsonTx";
 import { PumpPortalSource, Reconciler } from "./ingest/pumpPortal";
 import { PROGRAM_IDS, type RaydiumTxFetchOptions, RpcLogsSource } from "./ingest/rpcLogs";
@@ -59,6 +61,10 @@ export interface AppOverrides {
   user?: UserLayer | null;
   /** Armed-orders engine seams (tests: recording lanes, fake chain reads, pinned lookup tables). */
   orders?: OrderServiceOverrides;
+  /** Chain history reads for backfills (tests: a fake); null disables the history service. */
+  historyReader?: HistoryReader | null;
+  /** Decoder for fetched history transactions (tests). */
+  historyDecode?: HistoryDeps["decode"];
 }
 
 export interface App {
@@ -81,13 +87,17 @@ export interface App {
   /** Token image proxy (GET /api/img). */
   media: ImageProxy;
   metrics: Metrics;
+  /** Trade-history coverage, backfill and gap-fill from chain (null when disabled). */
+  history: HistoryService | null;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
 
 export interface SourceDeps {
-  /** The RPC client the logs source re-reads Raydium transactions with (RPC_LOGS_TX_FETCH_RPS). */
+  /** The RPC endpoint the logs source re-reads transactions from (RPC_LOGS_TX_FETCH_RPS), on its own client. */
   rpc?: RpcClient;
+  /** That client itself, when the caller wants to watch its cooldown (history reads yield to it). */
+  txRpc?: RpcClient;
   /** Which Raydium notifications are worth a getTransaction (MarketState.wantsRaydiumTx). */
   wants?: RaydiumTxFetchOptions["wants"];
 }
@@ -102,13 +112,15 @@ export function createSource(cfg: ServerConfig, deps: SourceDeps = {}): Source {
       programs: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID, RAYDIUM_LAUNCHLAB_PROGRAM_ID, RAYDIUM_CPMM_PROGRAM_ID],
     });
   }
-  // Its own client: a getTransaction 429 cools down the Raydium re-reads, not the resolver's account reads.
-  const rpc = deps.rpc ? new RpcClient({ url: deps.rpc.url, maxConcurrent: 2 }) : undefined;
+  // Its own client: a getTransaction 429 cools down the re-reads, not the resolver's account reads.
+  const rpc = deps.txRpc ?? (deps.rpc ? new RpcClient({ url: deps.rpc.url, maxConcurrent: 2 }) : undefined);
   return new RpcLogsSource({
     wsUrl: cfg.rpcWsUrl,
     programs,
     commitment: cfg.rpcLogsCommitment,
     queueMax: cfg.rpcLogsQueueMax,
+    idleTimeoutMs: cfg.rpcLogsIdleMs,
+    silenceSlots: cfg.rpcLogsSilenceSlots,
     raydiumTx:
       rpc && cfg.rpcLogsTxFetchPerSec > 0
         ? {
@@ -231,8 +243,42 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     o.user.halt.onChange((s) => chain.setHalt(s));
   }
   const programAccounts = new ProgramAccountsCache(rpc);
+  const txRpc = new RpcClient({ url: rpc.url, fetchFn: o.fetchFn, maxConcurrent: 2 });
   const source =
-    o.source === undefined ? createSource(cfg, { rpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) }) : o.source;
+    o.source === undefined ? createSource(cfg, { rpc, txRpc, wants: (events, migration) => m.wantsRaydiumTx(events, migration) }) : o.source;
+
+  // Trade history: its own client and budget; on the live endpoint it yields while the live re-reads cool down.
+  let history: HistoryService | null = null;
+  const historyReader: HistoryReader | null =
+    o.historyReader !== undefined
+      ? o.historyReader
+      : cfg.history.enabled
+        ? (() => {
+            const hrpc = new RpcClient({ url: cfg.history.rpcUrl, fetchFn: o.fetchFn, maxConcurrent: 2, timeoutMs: 20_000 });
+            const opts = {
+              rpc: hrpc,
+              perSec: cfg.history.rps,
+              batchSize: cfg.history.batch,
+              paused: cfg.history.rpcUrl === rpc.url ? () => txRpc.coolingDown() || rpc.coolingDown() : undefined,
+            };
+            return cfg.history.helius ? new HeliusHistoryReader({ ...opts, name: "helius" }) : new RpcHistoryReader(opts);
+          })()
+        : null;
+  if (historyReader && cfg.history.enabled) {
+    history = new HistoryService({
+      cfg: cfg.history,
+      market: m,
+      reader: historyReader,
+      store: reader,
+      writer,
+      watched: () => (gateway?.hub ? watchedMints(gateway.hub) : []),
+      listed: () => [...pulse.members("final"), ...pulse.members("migrated")],
+      publish: (mint, added, candles, h) => gateway?.publishBackfill(mint, added, candles, h),
+      poolReady: (pool) => AccountResolver.ready(resolver.pools.get(pool)),
+      requestPool: (pool) => resolver.requestPool(pool),
+      ...(o.historyDecode ? { decode: o.historyDecode } : {}),
+    });
+  }
 
   const reconciler = cfg.pumpPortalEnabled ? new Reconciler() : null;
   const pumpPortal = cfg.pumpPortalEnabled ? new PumpPortalSource({ url: cfg.pumpPortalUrl, apiKey: cfg.pumpPortalApiKey }) : null;
@@ -276,6 +322,10 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     },
     hint: (h) => {
       if (h.kind === "launchlabMigration") m.onLaunchLabMigrationHint();
+    },
+    gap: (g) => {
+      log.warn(`feed gap (${g.source}): ${g.reason}, slots ${g.fromSlot ?? "?"}..${g.toSlot ?? "?"}${g.signature ? ` ${g.signature}` : ""}`);
+      if (cfg.rpcLogsGapFill) history?.onGap(g);
     },
   };
 
@@ -355,6 +405,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         latency: { p50, p90, p99, samples: m.latency.count },
         launchLatency: { p50: l50, p90: l90, p99: l99, samples: m.launchLatency.count },
       },
+      ...(history ? { history: history.health() } : {}),
       solUsd: { price: sol?.price ?? null, ageMs: sol ? Date.now() - sol.updatedAt : null, stale: sol?.stale ?? true },
       chain: {
         slot: chain.state.slot,
@@ -395,6 +446,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     media,
     // The admin kill switch (POST /api/admin/halt) shows up as zerofee_halted{scope="tx"} too.
     halted: user ? () => user.halt.isHalted() : undefined,
+    history: history ? () => (history as HistoryService).health() : undefined,
   });
 
   user?.trackers.attachMarket(m, () => solUsd?.current() ?? null);
@@ -412,6 +464,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     debugStats,
     user,
     media,
+    history,
     onTokensChanged: user
       ? (mints) => {
           user.alerts.onTokensChanged(mints);
@@ -471,6 +524,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     enricher?.start();
   }
   source?.start(sink);
+  history?.start();
   pumpPortal?.start((ev) =>
     reconciler?.seenCross(ev.kind, ev.mint, ev.receivedAt, {
       signature: ev.signature,
@@ -490,7 +544,8 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
         (gateway?.isWatched(mint) ?? false) ||
         (user?.alerts.watches(mint) ?? false) ||
         (user?.trackers.watchesMint(mint) ?? false) ||
-        (orders?.engine.watches(mint) ?? false),
+        (orders?.engine.watches(mint) ?? false) ||
+        (history?.busy(mint) ?? false),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);
@@ -513,9 +568,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     orders,
     media,
     metrics,
+    history,
     health,
     async stop() {
       clearInterval(evictTimer);
+      await history?.stop();
       if (raydiumTimer) clearInterval(raydiumTimer);
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
