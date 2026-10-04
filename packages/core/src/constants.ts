@@ -41,6 +41,85 @@ export const SYSTEM_PROGRAM_ID: Address = address("11111111111111111111111111111
 export const COMPUTE_BUDGET_PROGRAM_ID: Address = address("ComputeBudget111111111111111111111111111111");
 /** Metaplex Token Metadata (legacy `create` coins keep name/symbol/uri here). https://developers.metaplex.com/token-metadata */
 export const MPL_TOKEN_METADATA_PROGRAM_ID: Address = address("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+/** Address Lookup Table program. https://solana.com/developers/guides/advanced/lookup-tables */
+export const ADDRESS_LOOKUP_TABLE_PROGRAM_ID: Address = address("AddressLookupTab1e1111111111111111111111111");
+
+/** RecentBlockhashes sysvar (nonce initialize / advance / withdraw). https://docs.rs/solana-sysvar/latest/solana_sysvar/recent_blockhashes/ */
+export const SYSVAR_RECENT_BLOCKHASHES_ID: Address = address("SysvarRecentB1ockHashes11111111111111111111");
+/** Rent sysvar (nonce initialize / withdraw). https://docs.rs/solana-sysvar/latest/solana_sysvar/rent/ */
+export const SYSVAR_RENT_ID: Address = address("SysvarRent111111111111111111111111111111111");
+/**
+ * Clock sysvar (slot, epoch, unix_timestamp). Read in the same getMultipleAccounts batch as the
+ * venue state: Token-2022 transfer fees depend on the epoch and CPMM pools on open_time.
+ * https://docs.anza.xyz/runtime/sysvars#clock
+ */
+export const SYSVAR_CLOCK_ID: Address = address("SysvarC1ock11111111111111111111111111111111");
+
+// ---------------------------------------------------------------------------------------------
+// Durable nonces and address lookup tables (armed orders)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * System program instruction tags (bincode u32 LE).
+ * https://github.com/anza-xyz/solana-sdk/blob/master/system-interface/src/instruction.rs
+ */
+export const SYSTEM_IX = {
+  createAccount: 0,
+  transfer: 2,
+  createAccountWithSeed: 3,
+  advanceNonceAccount: 4,
+  withdrawNonceAccount: 5,
+  initializeNonceAccount: 6,
+  authorizeNonceAccount: 7,
+} as const;
+
+/**
+ * Nonce account size: bincode `Versions<State>` = u32 version + u32 state + authority (32) +
+ * durable nonce (32) + fee calculator (u64) = 80 bytes. Rent is ALWAYS read with
+ * `getMinimumBalanceForRentExemption(80)` (it dropped in 2026 and differs per cluster).
+ * https://github.com/anza-xyz/solana-sdk/blob/master/nonce/src/state.rs
+ */
+export const NONCE_ACCOUNT_LENGTH = 80;
+/** Max length of a `create_with_seed` seed. https://github.com/anza-xyz/solana-sdk/blob/master/pubkey/src/lib.rs (MAX_SEED_LEN) */
+export const MAX_SEED_LENGTH = 32;
+/**
+ * Seed prefix for nonce slots. Slots are created with `CreateAccountWithSeed` (base = trading
+ * wallet) so the trading wallet stays the ONLY signer, as the signer firewall requires
+ * (packages/signer/src/firewall/rules/system.ts). Ours, not a chain constant.
+ */
+export const NONCE_SLOT_SEED_PREFIX = "zerofee-nonce-";
+/**
+ * Max lamports a nonce slot may be funded with: the signer firewall's default cap
+ * (packages/signer/src/firewall/programs.ts DEFAULT_MAX_NONCE_ACCOUNT_LAMPORTS, 0.002 SOL). Rent
+ * itself is read live; this only rejects a funding the firewall would refuse.
+ */
+export const MAX_NONCE_SLOT_LAMPORTS = 2_000_000n;
+
+/**
+ * Address Lookup Table program instruction tags (bincode u32 LE) and account layout.
+ * https://github.com/anza-xyz/solana-sdk/blob/master/address-lookup-table-interface/src/instruction.rs
+ * https://github.com/anza-xyz/solana-sdk/blob/master/address-lookup-table-interface/src/state.rs
+ */
+export const ALT_IX = {
+  createLookupTable: 0,
+  freezeLookupTable: 1,
+  extendLookupTable: 2,
+  deactivateLookupTable: 3,
+  closeLookupTable: 4,
+} as const;
+/** `LOOKUP_TABLE_META_SIZE`: addresses start at this byte offset. */
+export const LOOKUP_TABLE_META_SIZE = 56;
+/** `LOOKUP_TABLE_MAX_ADDRESSES`. */
+export const LOOKUP_TABLE_MAX_ADDRESSES = 256;
+/**
+ * A deactivated table stays usable until its deactivation slot leaves the 512-entry SlotHashes
+ * sysvar; only then can it be closed. Armed orders that reference a table die when it closes, so
+ * operator tables are never deactivated while referenced.
+ * https://github.com/anza-xyz/agave/blob/master/programs/address-lookup-table/src/processor.rs
+ */
+export const LOOKUP_TABLE_DEACTIVATION_COOLDOWN_SLOTS = 513;
+/** Addresses per ExtendLookupTable instruction that keep the extend tx well under 1,232 bytes (25 x 32 B + overhead). */
+export const LOOKUP_TABLE_EXTEND_CHUNK = 25;
 
 // ---------------------------------------------------------------------------------------------
 // Mints
@@ -116,6 +195,8 @@ export const SEEDS = {
  */
 export const TOKEN_2022_EXTENSIONS = {
   transferFeeConfig: 1,
+  /** On token accounts: transfer fees withheld there (CloseAccount fails while non-zero). */
+  transferFeeAmount: 2,
   mintCloseAuthority: 3,
   defaultAccountState: 6,
   nonTransferable: 9,
@@ -127,6 +208,20 @@ export const TOKEN_2022_EXTENSIONS = {
   scaledUiAmount: 25,
   pausable: 26,
 } as const;
+
+/**
+ * Token-2022 layout and transfer-fee constants (swaps must deduct transfer fees like the token program).
+ * https://github.com/solana-program/token-2022/blob/bb4c841aa81282c961f617f39719faf60049f398/interface/src/extension/mod.rs
+ * https://github.com/solana-program/token-2022/blob/bb4c841aa81282c961f617f39719faf60049f398/interface/src/extension/transfer_fee/mod.rs
+ */
+/** Base SPL account length; Token-2022 mints are padded to it, then 1 account-type byte, then TLV entries. */
+export const TOKEN_2022_BASE_ACCOUNT_LENGTH = 165;
+/** First TLV byte (after the account-type byte at offset 165). TLV entry = u16 type, u16 length, value. */
+export const TOKEN_2022_TLV_START = 166;
+/** `MAX_FEE_BASIS_POINTS` = 100%. */
+export const TOKEN_2022_MAX_FEE_BASIS_POINTS = 10_000n;
+/** Mainnet epochs are a fixed 432,000 slots (no warmup); only a fallback when the Clock sysvar is not loaded. */
+export const MAINNET_SLOTS_PER_EPOCH = 432_000n;
 
 // ---------------------------------------------------------------------------------------------
 // Instruction discriminators (Anchor, 8 bytes). https://github.com/pump-fun/pump-public-docs/blob/main/idl/pump.json
@@ -198,6 +293,14 @@ export const EXPECTED_ACCOUNT_COUNTS = {
   /** AMM buy: 23 IDL + pool-v2 (if coin_creator set) + buyback + buyback ATA (+ cashback UVA ATA). */
   ammBuyBase: 23,
   ammSellBase: 21,
+  /**
+   * LaunchLab swap: 15 IDL accounts + system program + platform fee vault + creator fee vault
+   * (remaining accounts, mandatory since the fee-vault upgrade; +1 share_fee_receiver when
+   * share_fee_rate > 0). launch-cpi context.rs `Swap`; all mainnet swaps observed 2026-10-03 carry 18.
+   */
+  launchLabSwap: 18,
+  /** CPMM swap_base_input / swap_base_output. raydium_cp_swap.json. */
+  cpmmSwap: 13,
 } as const;
 
 /** Error codes worth mapping in the UI. idl/pump.json, idl/pump_amm.json */
@@ -285,6 +388,164 @@ export const PUMP_TOKEN_DECIMALS = 6;
 export const BONDING_CURVE_NEW_SIZE = 151;
 export const POOL_ACCOUNT_NEW_SIZE = 300;
 export const GLOBAL_SIZE = 1087;
+
+// ---------------------------------------------------------------------------------------------
+// Raydium LaunchLab (bonding curves behind BONK.fun / letsbonk, StonkFun, TRiX, Raydium's own
+// launchpad) and Raydium CPMM (where LaunchLab coins graduate). Sources, pinned in idl/RAYDIUM_SOURCE.json:
+//   IDLs:        https://github.com/raydium-io/raydium-idl/tree/e7e0c96fe77bcf6a020b84a44c47a722aac8e359
+//   CPMM source: https://github.com/raydium-io/raydium-cp-swap/tree/b3187ae53a1b95a201f855a59024a12ca8f5b51a
+//   LaunchLab account structs: https://github.com/raydium-io/raydium-cpi/tree/115df2779d53bacc7db9d0be2773a4b48a6d372b/programs/launch-cpi
+//   TS SDK:      https://github.com/raydium-io/raydium-sdk-V2/tree/cc33ec28a8921a35609e83293e9e07ad830b0779 (npm 0.2.73-alpha)
+// "Observed" values were read from live mainnet accounts / transactions on 2026-10-03 (slot ~453.0M).
+// ---------------------------------------------------------------------------------------------
+
+/** LaunchLab program. raydium_launchpad.json `address`; SDK LAUNCHPAD_PROGRAM; launch-cpi declare_id!. */
+export const RAYDIUM_LAUNCHLAB_PROGRAM_ID: Address = address("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj");
+/** CPMM (cp-swap) program. raydium_cp_swap.json `address`; programs/cp-swap/src/lib.rs declare_id!. */
+export const RAYDIUM_CPMM_PROGRAM_ID: Address = address("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
+/** LaunchLab vault authority = PDA ["vault_auth_seed"]. SDK LAUNCHPAD_AUTH (src/common/programId.ts). */
+export const RAYDIUM_LAUNCHLAB_AUTHORITY: Address = address("WLHv2UAZm6z4KyaaELi5pjdbJh6RESMva1Rnn8pJVVh");
+/** LaunchLab event authority = PDA ["__event_authority"] (Anchor event-CPI). Observed in every swap. */
+export const RAYDIUM_LAUNCHLAB_EVENT_AUTHORITY: Address = address("2DPAtwB8L12vrMRExbLuyGnC7n2J5LNoZQSejeQGpwkr");
+/** CPMM vault + LP-mint authority = PDA ["vault_and_lp_mint_auth_seed"]. SDK CREATE_CPMM_POOL_AUTH. */
+export const RAYDIUM_CPMM_AUTHORITY: Address = address("GpMZbSM2GgvTKHJirzeGfMFoaZ8UR2X7F4v8vHTvxFbL");
+/**
+ * LaunchLab GlobalConfig for SOL-quoted constant-product curves, index 0 = PDA
+ * ["global_config", wSOL, u8 0, u16 0]. SDK LAUNCHPAD_CONFIG. Fee rates are read live from it.
+ */
+export const RAYDIUM_LAUNCHLAB_SOL_GLOBAL_CONFIG: Address = address("6s1xP3hpbAfFoNtUNF8mfHsjr2Bd97JxFJRWLbL6aHuX");
+/**
+ * Wallet that signs `migrate_to_cpswap` (GlobalConfig.migrate_to_cpswap_wallet of the SOL config; observed
+ * as signer of migration tx 5sFw84yv…). Graduation is NOT permissionless. Informational: read it live.
+ */
+export const RAYDIUM_LAUNCHLAB_MIGRATE_TO_CPMM_WALLET: Address = address("RAYpQbFNq9i3mu6cKpTKKRwwHFDeK5AuZz8xvxUrCgw");
+
+/**
+ * Known LaunchLab PlatformConfig accounts -> launchpad label (feed / UI only; fee rates and the
+ * graduation AmmConfig are always read from the live account). Observed 2026-10-03 by decoding each
+ * account's `name` field; StonkFun runs several configs. https://solscan.io/account/<address>
+ */
+export const RAYDIUM_LAUNCHLAB_PLATFORMS: Readonly<Record<string, string>> = {
+  FfYek5vEz23cMkWsdJwG2oa6EphsvXSHrGpdALN4g6W1: "letsbonk.fun",
+  BuM6KDpWiTcxvrpXywWFiw45R2RNH8WURdvqoTDV1BW4: "letsbonk.fun",
+  "6BwHHDg3u1854jC8PDLXvR4spTcLNaoBxLJNGC4nTESt": "StonkFun",
+  CUqSiwPs6C4WyntMgaFazLp7wYQfaLp5URbjUP9V7SNi: "StonkFun",
+  "4E876qZTE9FJMrBzgVtBrSrzz2TLivB5Y5QXPjB4gZL7": "StonkFun",
+  FbqEaSHPF3kekscjqzEU5xdDAnWp5vf9w2d2oT5Bxng9: "TRiX",
+  "4Bu96XjU84XjPDSpveTVf6LYGCkfW5FK7SNkREWcEfV4": "Raydium", // SDK LAUNCHPAD_PLATFORM
+};
+
+/** PDA seeds. LaunchLab: SDK src/raydium/launchpad/pda.ts, launch-cpi states.rs; CPMM: cp-swap states/*.rs, SDK cpmm/pda.ts. */
+export const RAYDIUM_SEEDS = {
+  launchLabAuth: "vault_auth_seed",
+  /** ["pool", base_mint, quote_mint] */
+  launchLabPool: "pool",
+  /** ["pool_vault", pool, mint] */
+  launchLabVault: "pool_vault",
+  /** ["global_config", quote_mint, u8 curve_type, u16 index LE] */
+  launchLabGlobalConfig: "global_config",
+  /** ["platform_config", platform_admin] */
+  launchLabPlatformConfig: "platform_config",
+  launchLabPlatformFeeVaultAuth: "platform_fee_vault_auth_seed",
+  launchLabCreatorFeeVaultAuth: "creator_fee_vault_auth_seed",
+  // Platform fee vault = PDA [platform_config, quote_mint]; creator fee vault = PDA [creator, quote_mint] (no string seed).
+  cpmmAuth: "vault_and_lp_mint_auth_seed",
+  /** ["amm_config", u16 index BIG-endian] (create_config.rs `index.to_be_bytes()`) */
+  cpmmAmmConfig: "amm_config",
+  /** ["pool", amm_config, token_0_mint, token_1_mint], token_0 < token_1 bytewise */
+  cpmmPool: "pool",
+  /** ["pool_vault", pool, mint] */
+  cpmmVault: "pool_vault",
+  cpmmLpMint: "pool_lp_mint",
+  /** ["observation", pool] */
+  cpmmObservation: "observation",
+} as const;
+
+/** LaunchLab instruction discriminators. raydium_launchpad.json; SDK src/raydium/launchpad/instrument.ts anchorDataBuf. */
+export const RAYDIUM_LAUNCHLAB_IX = {
+  /** buy_exact_in(amount_in: u64, minimum_amount_out: u64, share_fee_rate: u64) - spend quote */
+  buyExactIn: new Uint8Array([250, 234, 13, 123, 213, 156, 19, 236]),
+  /** buy_exact_out(amount_out: u64, maximum_amount_in: u64, share_fee_rate: u64) */
+  buyExactOut: new Uint8Array([24, 211, 116, 40, 105, 3, 153, 56]),
+  /** sell_exact_in(amount_in: u64, minimum_amount_out: u64, share_fee_rate: u64) - sell base */
+  sellExactIn: new Uint8Array([149, 39, 222, 155, 211, 124, 152, 26]),
+  /** sell_exact_out(amount_out: u64, maximum_amount_in: u64, share_fee_rate: u64) */
+  sellExactOut: new Uint8Array([95, 200, 71, 34, 8, 9, 11, 166]),
+  /** Feed detection only: graduation (signed by the migration wallet) and launches. */
+  migrateToCpswap: new Uint8Array([136, 92, 200, 103, 28, 218, 144, 140]),
+  migrateToAmm: new Uint8Array([207, 82, 192, 145, 254, 207, 145, 223]),
+  initialize: new Uint8Array([175, 175, 109, 31, 13, 152, 155, 237]),
+  initializeV2: new Uint8Array([67, 153, 175, 39, 218, 16, 38, 32]),
+  initializeWithToken2022: new Uint8Array([37, 190, 126, 222, 44, 154, 171, 17]),
+} as const;
+
+/** CPMM instruction discriminators. raydium_cp_swap.json; SDK src/raydium/cpmm/instruction.ts anchorDataBuf. */
+export const RAYDIUM_CPMM_IX = {
+  /** swap_base_input(amount_in: u64, minimum_amount_out: u64) */
+  swapBaseInput: new Uint8Array([143, 190, 90, 218, 196, 30, 51, 222]),
+  /** swap_base_output(max_amount_in: u64, amount_out: u64) */
+  swapBaseOutput: new Uint8Array([55, 217, 98, 86, 163, 74, 180, 173]),
+} as const;
+
+/**
+ * Account discriminators. NOTE the collisions (Anchor hashes the type name only): LaunchLab and CPMM
+ * `PoolState` share bytes, and LaunchLab `GlobalConfig` equals PumpSwap's. Always check the owner program.
+ */
+export const RAYDIUM_ACCOUNT_DISCRIMINATORS = {
+  launchLabPoolState: new Uint8Array([247, 237, 227, 245, 215, 195, 222, 70]),
+  launchLabGlobalConfig: new Uint8Array([149, 8, 156, 202, 160, 252, 176, 217]),
+  launchLabPlatformConfig: new Uint8Array([160, 78, 128, 0, 248, 83, 230, 160]),
+  cpmmPoolState: new Uint8Array([247, 237, 227, 245, 215, 195, 222, 70]),
+  cpmmAmmConfig: new Uint8Array([218, 244, 33, 104, 203, 203, 43, 111]),
+  cpmmObservationState: new Uint8Array([122, 174, 197, 53, 129, 9, 165, 132]),
+} as const;
+
+/**
+ * Event discriminators. LaunchLab `TradeEvent` has the SAME bytes as pump's TradeEvent, so decoders
+ * must dispatch on the emitting program. LaunchLab emits via event-CPI AND `Program data:` logs;
+ * CPMM via `Program data:` logs only (emit!). raydium_launchpad.json / raydium_cp_swap.json `events`.
+ */
+export const RAYDIUM_EVENT_DISCRIMINATORS = {
+  launchLabTrade: new Uint8Array([189, 219, 127, 211, 78, 230, 97, 238]),
+  launchLabPoolCreate: new Uint8Array([151, 215, 226, 9, 118, 161, 115, 174]),
+  cpmmSwap: new Uint8Array([64, 198, 205, 232, 38, 8, 113, 226]),
+  cpmmLpChange: new Uint8Array([121, 163, 205, 201, 57, 218, 117, 60]),
+} as const;
+
+/** All Raydium fee rates are parts per million ("hundredths of a bip"). cp-swap curve/fees.rs; SDK FEE_RATE_DENOMINATOR_VALUE. */
+export const RAYDIUM_FEE_RATE_DENOMINATOR = 1_000_000n;
+
+/** LaunchLab PoolState.status (states.rs PoolStatus). Trading is only possible in `fund`. */
+export const LAUNCHLAB_POOL_STATUS = { fund: 0, migrate: 1, trade: 2 } as const;
+/** LaunchLab GlobalConfig.curve_type. Only constant-product configs exist on mainnet (585/585 on 2026-10-03). */
+export const LAUNCHLAB_CURVE_TYPE = { constantProduct: 0, fixedPrice: 1, linearPrice: 2 } as const;
+/** CPMM PoolState.status bits: set = disabled (states/pool.rs PoolStatusBitIndex). */
+export const CPMM_POOL_STATUS_BIT = { deposit: 1, withdraw: 2, swap: 4 } as const;
+/** CPMM PoolState.creator_fee_on (states/pool.rs CreatorFeeOn). */
+export const CPMM_CREATOR_FEE_ON = { bothToken: 0, onlyToken0: 1, onlyToken1: 2 } as const;
+
+/** Error codes worth mapping in the UI. raydium_launchpad.json `errors`; cp-swap src/error.rs (6000 + index). */
+export const RAYDIUM_LAUNCHLAB_ERRORS: Record<number, string> = {
+  6000: "NotApproved",
+  6002: "InvalidInput",
+  6004: "ExceededSlippage",
+  6005: "PoolFunding",
+  6006: "PoolMigrated (curve complete - trade on CPMM)",
+  6008: "MathOverflow",
+  6017: "NoSupportExtension",
+  6018: "NotEnoughRemainingAccounts (system program + platform/creator fee vaults required)",
+  6019: "TransferFeeCalculateNotMatch",
+};
+export const RAYDIUM_CPMM_ERRORS: Record<number, string> = {
+  6000: "NotApproved (swaps disabled or before open_time)",
+  6005: "ExceededSlippage",
+  6006: "ZeroTradingTokens",
+  6007: "NotSupportMint",
+  6008: "InvalidVault",
+  6010: "TransferFeeCalculateNotMatch",
+  6011: "MathOverflow",
+  6012: "InsufficientVault",
+};
 
 // ---------------------------------------------------------------------------------------------
 // Transaction landing: Helius Sender. https://www.helius.dev/docs/sending-transactions/sender
@@ -390,6 +651,12 @@ export const BLOCKHASH_VALID_BLOCKS = 150;
  * (docs/dev/FORK_TESTING.md): curve buy 118k incl. Token-2022 ATA + volume accumulator init,
  * curve sell 86k, PumpSwap buy 132k incl. wSOL wrap, PumpSwap sell 99.5k. Earlier mainnet
  * simulations measured lower (curve buy 107k, PumpSwap buy 106k), so the forks set the bar.
+ * Raydium has no fork runs yet. Its limits are ~1.4-1.6x the worst case measured by mainnet
+ * simulation on 2026-10-03 (NOTES.md), enough to absorb a fork-vs-simulation gap like PumpSwap's
+ * (+25%): LaunchLab buy 83,401 creating a Token-2022 (transfer-fee) ATA / 66,970 with the ATA;
+ * LaunchLab full-exit sell 66,606 (Token-2022 close); CPMM buy 61,906 creating a Token-2022 ATA;
+ * CPMM sell 43,636. LaunchLab gets extra headroom because the program creates a missing
+ * platform/creator fee vault inside the swap.
  * The FAQ recommends static limits rather than simulate-on-send; priority fee is charged on the limit.
  * https://github.com/pump-fun/pump-public-docs/blob/main/docs/FAQ.md
  */
@@ -398,6 +665,10 @@ export const DEFAULT_CU_LIMITS = {
   pumpSell: 115_000,
   ammBuy: 175_000,
   ammSell: 135_000,
+  launchLabBuy: 120_000,
+  launchLabSell: 100_000,
+  cpmmBuy: 85_000,
+  cpmmSell: 70_000,
 } as const;
 
 /** Default public RPC (dev only - rate limited). */

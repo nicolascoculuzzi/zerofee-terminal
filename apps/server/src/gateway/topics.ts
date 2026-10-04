@@ -48,17 +48,21 @@ export class TopicHub {
     else this.subs.set(topic, n);
   }
 
-  /** Serialized snapshot message at the topic's current seq. */
-  snapshot(topic: string, data: unknown): string {
-    return JSON.stringify({ type: "snapshot", topic, seq: this.seq(topic), data });
+  /**
+   * Serialized snapshot message at the topic's current seq. `wireTopic` is the name the client
+   * subscribed to when it differs from the internal pub/sub topic (per-user topics: `orders`).
+   */
+  snapshot(topic: string, data: unknown, wireTopic: string = topic): string {
+    return JSON.stringify({ type: "snapshot", topic: wireTopic, seq: this.seq(topic), data });
   }
 
   /** Publishes a delta / correction to subscribers; returns false (and does not advance) when nobody listens. */
-  publish(topic: string, type: "delta" | "correction", data: unknown, reason?: CorrectionReason): boolean {
+  publish(topic: string, type: "delta" | "correction", data: unknown, reason?: CorrectionReason, wireTopic: string = topic): boolean {
     if (!this.hasSubscribers(topic)) return false;
     const seq = this.seq(topic) + 1;
     this.seqs.set(topic, seq);
-    const payload = JSON.stringify(type === "correction" ? { type, topic, seq, data, reason } : { type, topic, seq, data });
+    const t = wireTopic;
+    const payload = JSON.stringify(type === "correction" ? { type, topic: t, seq, data, reason } : { type, topic: t, seq, data });
     this.stats.published++;
     this.stats.bytes += payload.length;
     this.publishRaw(topic, payload);

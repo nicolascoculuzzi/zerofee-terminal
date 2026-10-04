@@ -19,7 +19,7 @@ import {
   percentile,
   type TipFloor,
 } from "@zerofee/core";
-import type { ChainDelta, ChainState, SolUsdPrice } from "@zerofee/protocol";
+import type { ChainDelta, ChainState, HaltState, SolUsdPrice } from "@zerofee/protocol";
 import type { BlockMeta, SlotStatus } from "../ingest/types";
 import { logger } from "../log";
 import type { RpcClient } from "../util/rpc";
@@ -47,6 +47,7 @@ export class ChainPublisher {
     priorityFees: null,
     jitoTipFloor: null,
     solUsd: null,
+    halt: { halted: false, reason: null, since: null },
   };
   private readonly metas = new Map<number, BlockMeta>();
   private readonly confirmed = new Set<number>();
@@ -111,6 +112,11 @@ export class ChainPublisher {
   private prune(slot: number): void {
     for (const s of this.metas.keys()) if (s < slot - 300) this.metas.delete(s);
     for (const s of this.confirmed) if (s < slot - 300) this.confirmed.delete(s);
+  }
+
+  /** Kill-switch state (admin halt / resume); published on change, never throttled. */
+  setHalt(halt: HaltState): void {
+    this.set({ halt: { ...halt } });
   }
 
   setSolUsd(p: SolUsdPrice | null): void {
@@ -193,6 +199,6 @@ export class ChainPublisher {
   }
 
   snapshot(): ChainState {
-    return { ...this.state };
+    return { ...this.state, halt: { ...this.state.halt } };
   }
 }

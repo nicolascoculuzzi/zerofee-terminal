@@ -21,7 +21,7 @@ Totals: run 2 matched 551 (late 0), 83 us-only, 40 PumpPortal-only; run 3 matche
 What these numbers mean:
 
 - Every "us only" event is a successful, finalized transaction at the slot we reported: no forks, no failed transactions. The Phase 2 "42 seen only by us" were PumpPortal coverage gaps: its free stream drops creates that set up fee sharing, v1 transactions, that launcher's CPI creates and most non-SOL quotes. Nothing to fix on our side.
-- Every "PumpPortal only" pump event happened while our socket was down or about to drop: run 2 lost 3 sockets (35.7 s down; 29 of 33 events within 3 s of an outage, 4 within 6 s), run 3 lost 2 (93.6 s; 45 of 60 within 3 s, the rest within 30 s, while the endpoint was already delivering notifications 15-20 s late before it dropped the socket). `logsSubscribe` has no replay; Yellowstone resumes from a slot. The LetsBonk launches need a LaunchLab decoder (Phase 7).
+- Every "PumpPortal only" pump event happened while our socket was down or about to drop: run 2 lost 3 sockets (35.7 s down; 29 of 33 events within 3 s of an outage, 4 within 6 s), run 3 lost 2 (93.6 s; 45 of 60 within 3 s, the rest within 30 s, while the endpoint was already delivering notifications 15-20 s late before it dropped the socket). `logsSubscribe` has no replay; Yellowstone resumes from a slot. The LetsBonk launches are LaunchLab pools: core decodes LaunchLab now, but both ingest sources still subscribe to pump and PumpSwap only, and the reconciler matches pump events only.
 - v1 transactions (SIMD-0385) were ~3% of pump creates in run 2. `getTransaction` refuses them unless asked for `maxSupportedTransactionVersion: 1`; `packages/core/scripts/fork/accounts.ts` and `packages/core/e2e/harness.ts` still ask for 0. Our decoders read logs or the Yellowstone message, which carries V1 messages in the same fields.
 
 Our bugs, found and fixed:
@@ -33,6 +33,59 @@ Our bugs, found and fixed:
 Run 2 detection latency, after the fixes: p50 1,159 ms, p90 1,555 ms, p99 1,767 ms (Phase 2: 1,050 / 1,455 / 1,615). Run 3's percentiles include the degraded stretch before its first drop (p90 up to ~20 s while our queue stayed at 14), so they are not comparable; my repo-wide typecheck and tests were also running on the laptop around then.
 
 Enrichment, run 3 on public RPC with no Helius key: 261 DexScreener orders checks plus one profiles poll a minute, 67 paid, 19 profile-feed hits, no HTTP 429 (budget: 60 requests in any 60 s window). At the end the Final Stretch list (66) and Migrated list (14) were fully checked (25 and 0 paid); New Pairs are checked only when active or seen in the profiles feed. `getTokenLargestAccounts` is refused by the public endpoint (`x-ratelimit-method-limit: 0`), so the reconciler backed off (1 min doubling to 8 min) and `holdersSource` stayed `trades`; point `ENRICH_RPC_URL` at a provider RPC or set `HELIUS_API_KEY`. Dev history was computed for every token shown (742 computations, 519 creator lookups): 44 of the 100 New Pairs tokens had a creator who had already launched during the run, 8 with a migrated earlier launch. No Helius key: funded-by is off and `insidersPct` stays null by design. On a freshly started server, Final Stretch tokens predate the process, so their holder metrics are null (history not observed) until a restart's replay or their next lifecycle.
+
+## 2026-10-03: Raydium LaunchLab + CPMM dry runs (public RPC, laptop)
+
+Setup: `https://api.mainnet-beta.solana.com`, `LANDING_MODE=standard`, `DRY_RUN=true`, unsigned simulation (`SIMULATE_AS`, read-only wallets that hold SOL / the token). Slots ~453,034,000–453,036,300. Every simulated LaunchLab `TradeEvent` / CPMM `SwapEvent` matched the local quote exactly (`amount_in` and `amount_out`).
+
+| Run | CU used / limit | Size | Fill vs quote |
+|---|---|---|---|
+| LaunchLab buy 0.01 SOL, StonkFun 9RAPesjv… (Token-2022, 3% transfer fee), base ATA exists | 69,947 | 964 B | exact |
+| same, fresh wallet (creates the Token-2022 ATA) | 83,401 / 120,000 | 964 B | exact |
+| LaunchLab sell 100% of the StonkFun coin (+ Token-2022 CloseAccount) | 66,606 | 939 B | exact |
+| LaunchLab buy 0.01 SOL, BONK.fun 5ojxCYwe… (SPL), base ATA exists / fresh | 66,970 / 74,549 | 932 B | exact |
+| LaunchLab sell 100% of the BONK.fun coin (+ CloseAccount) | 62,121 | 907 B | exact |
+| CPMM buy 0.02 SOL, StonkFun graduate 9RcvjFss… (Token-2022, 3% fee), ATA exists | 49,969 | 855 B | exact |
+| same, 0.01 SOL, fresh wallet | 61,906 / 85,000 | 855 B | exact |
+| CPMM sell 50% of the StonkFun graduate | 43,636 | 823 B | exact |
+| CPMM buy 0.01 SOL, BONK.fun graduate 2gFxXdy5… (SPL), ATA exists / fresh | 45,472 / 54,551 | 823 B | exact |
+| CPMM sell 100% of the BONK.fun graduate (+ CloseAccount) | 40,832 | 798 B | exact |
+
+Latency (one run each): LaunchLab `stateLoaded` 371–458 ms (2 round trips: venue batch + configs), CPMM via a graduated LaunchLab coin 660 ms (3 round trips: venue batch, LaunchLab configs, pool + vaults). `quoted` +2–15 ms, `built` +35–70 ms (priority-fee samples).
+
+Boundary simulations (limit exactly at our quote passes, one unit tighter fails with the program's ExceededSlippage), pinning down semantics the SDK does not settle:
+
+- LaunchLab `buy_exact_in.minimum_amount_out` is compared with what the buyer **receives after the Token-2022 transfer fee** (66,951,189,460 passes, +1 fails 6004).
+- LaunchLab `buy_exact_out.amount_out` is the amount received; our `maximum_amount_in` (7,467,853 for 50,000,000,000 tokens) is exact. The SDK's quote prices the transfer fee twice.
+- CPMM `swap_base_output` on a transfer-fee coin: our `max_amount_in` (9,657,162 for 100,000,000,000 tokens) is exact (−1 fails 6005).
+
+Default CU limits are now LaunchLab 120k buy / 100k sell, CPMM 85k / 70k (~1.4-1.6x the worst case above, which also absorbs a fork-vs-simulation gap like the +25% seen on PumpSwap; LaunchLab has extra headroom because the program creates a missing fee vault inside the swap). Transactions stay well under 1,232 bytes, with room for a durable-nonce advance.
+
+## 2026-10-03: armed-order transaction sizes and nonce/ALT mechanics
+
+**Sizes** (offline, from the mainnet account fixtures; `bun run packages/core/scripts/armed-sizes.ts`). Every armed variant is a v0 message: `AdvanceNonceAccount`, CU limit, CU price, the trade, then the tip(s). The operator lookup table holds only shared accounts (63 with wSOL: program ids except the token programs, Global/config/fee-config/event-authority/volume-accumulator PDAs, every fee/buyback recipient and its wSOL ATA, the RecentBlockhashes sysvar). The signer firewall requires everything else to be a static key: mints, token programs, System, user token accounts, the pool, transfer destinations, tips, the jitodontfront marker and the nonce account.
+
+| Trade (Token-2022 base) | Jito tip + dontfront: with ALT / without | Helius + Jito tips: with ALT / without |
+|---|---|---|
+| pump `buy_exact_quote_in_v2` + ATA | 964 / 1,240 | 1,013 / 1,289 |
+| pump mayhem buy + ATA | 964 / 1,240 | 1,013 / 1,289 |
+| pump `sell_v2` + close (full exit) | 928 / 1,204 | 977 / 1,253 |
+| PumpSwap buy (wrap + ATA) | 971 / 1,247 | 1,020 / 1,296 |
+| PumpSwap sell + close (full exit) | 910 / 1,155 | 959 / 1,204 |
+| PumpSwap cashback buy | 1,004 / 1,280 | 1,053 / 1,329 |
+| PumpSwap cashback sell + close | 976 / 1,221 | 1,025 / 1,270 |
+| Migration snipe (canonical pool buy) | 971 / 1,247 | 1,020 / 1,296 |
+
+Limit 1,232 bytes. Every shape fits with the table (worst case 1,053 B, 179 B of headroom). Without it, every buy overflows; the pump buy at 1,240 B matches the signer's own measurement. Allowing token programs and mints into the table would save about 93 bytes per buy, but the firewall rightly refuses lookups of identities that decide where funds go.
+
+**Local validator** (Agave 4.3.0 `solana-test-validator`, 8 ticks per slot ≈ 83 ms, `bun run test:validator`, 25 s; 68 s with `ZF_VALIDATOR_SLOW=1`):
+
+- A variant signed before its signing-time blockhash expired (>150 blocks) still landed. Siblings on the same nonce and the cancel were then refused at preflight, and no fee was charged.
+- A landed failure cost exactly the base fee plus the priority fee (5,040 lamports at 1,000 µL/CU × 40k CU). The tip transfer reverted and the nonce advanced.
+- A cancel (advance plus CU limit) consumed 300 CU and cost 5,000 lamports.
+- `AdvanceNonceAccount` works with the RecentBlockhashes sysvar loaded from the table (it appears in `loadedAddresses.readonly`). A nonce account loaded from a table is refused, which confirms SIMD-0242.
+- Rent for 80 bytes was 1,447,680 lamports on the local validator (pre-2026 rate) against about 1,056,640 on mainnet. Both are under the firewall's 2,000,000-lamport slot-funding cap, and rent is always read live.
+- A table cannot be closed during its cooldown. It closed about 513 slots after deactivation.
 
 ## 2026-10-03: mainnet-fork e2e (local Agave 4.3.0, mainnet binaries + cloned state)
 

@@ -18,6 +18,33 @@ export interface FirewallCaps {
 /** Address lookup table contents by table address. Untrusted input: see decode.ts. */
 export type AddressLookupTables = ReadonlyMap<string, readonly string[]> | Readonly<Record<string, readonly string[]>>;
 
+/**
+ * What the browser's own quote expects one trade instruction to return, and the user's maximum
+ * slippage. When a request carries expectations, every trade instruction must have exactly one, and
+ * the trade's guaranteed output (a sell's minimum quote out, a buy's minimum or exact tokens out)
+ * must be at least floor(expectedOut x (10,000 - slippageBps) / 10,000), core's applySlippageDown.
+ *
+ * This catches a transaction whose minimum output does not match the quote the user was shown: a
+ * tampered or buggy build path, or bytes assembled by anyone other than the browser's own code.
+ * Expectations are caller-supplied, so they can only add refusals.
+ *
+ * Residual risk: the quote is only as honest as the reserves it was computed from, and those come
+ * from the backend's trade context (curve or pool reserves). A malicious backend can report
+ * reserves under which a bad price looks like the quote, and both the quote and the minimum output
+ * then agree; this check (and the zero floor) cannot see that. Closing it needs an independent read
+ * of the reserves in the browser (e.g. from a second RPC provider) before quoting. In the Worker
+ * stage the app also supplies the slippage, so a compromised app can loosen or omit expectations;
+ * on its own origin the signer can hold the user's max slippage itself.
+ */
+export interface TradeExpectation {
+  /** Position of the trade instruction in the transaction (0-based, "#n" in summaries and violations). */
+  readonly instruction: number;
+  /** Quoted output in base units: tokens for buys, quote received after fees for sells. Positive. */
+  readonly expectedOut: bigint;
+  /** The user's maximum slippage in basis points, 0 to 10,000. */
+  readonly slippageBps: number;
+}
+
 export interface FirewallContext {
   /** The trading wallet that will sign. Must be the fee payer and the only signer. */
   readonly signer: Address;
@@ -34,6 +61,8 @@ export interface FirewallContext {
   readonly addressLookupTables?: AddressLookupTables;
   /** Rules for venue programs (pump.fun, PumpSwap, ...). */
   readonly venueRules?: readonly VenueRule[];
+  /** The caller's own quote per trade instruction (see TradeExpectation). Optional; untrusted; only adds refusals. */
+  readonly expectations?: readonly TradeExpectation[];
 }
 
 /** One account slot of an instruction, with its role in the message. */
@@ -91,8 +120,22 @@ export interface TradeAction {
   readonly minQuoteOut?: bigint;
 }
 
+/**
+ * A venue instruction that grows one of the venue's own accounts, with the trading wallet paying the
+ * rent for the added bytes (PumpSwap extend_account on the trade's canonical pool). The rent is not
+ * refundable and its exact amount is not knowable offline, so it is not part of maxSolOutLamports.
+ */
+export interface AccountExtensionAction {
+  readonly kind: "extend_account";
+  readonly venue: string;
+  readonly account: Address;
+}
+
+/** What a venue rule reports for an instruction it accepts. */
+export type VenueAction = TradeAction | AccountExtensionAction;
+
 export type SummaryAction =
-  | TradeAction
+  | VenueAction
   | { readonly kind: "tip"; readonly to: Address; readonly lamports: bigint }
   | {
       readonly kind: "sol_transfer";
@@ -116,12 +159,12 @@ export type SummaryAction =
   | { readonly kind: "nonce_withdraw"; readonly nonceAccount: Address; readonly to: Address; readonly lamports: bigint }
   | { readonly kind: "nonce_create"; readonly nonceAccount: Address; readonly lamports: bigint };
 
-export type VenueCheck = { ok: true; action: TradeAction } | { ok: false; violations: string[] };
+export type VenueCheck = { ok: true; action: VenueAction } | { ok: false; violations: string[] };
 
 /**
  * Pluggable rule for one venue program. It must refuse every instruction it does not explicitly
  * understand, verify that funds can only flow to and from the signer's own accounts, and report the
- * buy amount; per-trade caps are applied centrally from the reported TradeAction.
+ * buy amount; per-trade caps and the min-out floor are applied centrally from the reported TradeAction.
  */
 export interface VenueRule {
   readonly programId: Address;

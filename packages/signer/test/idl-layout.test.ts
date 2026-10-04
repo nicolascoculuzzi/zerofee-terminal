@@ -6,7 +6,9 @@
 import { describe, expect, test } from "bun:test";
 import { type Address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
 import { toHex } from "../src/bytes";
+import { SYSTEM_PROGRAM } from "../src/firewall/programs";
 import {
+  PUMP_AMM_EXTEND_ACCOUNT,
   PUMP_AMM_INSTRUCTION_NAMES,
   PUMP_AMM_INSTRUCTIONS,
   PUMP_CURVE_INSTRUCTIONS,
@@ -102,7 +104,23 @@ function check(program: IdlProgram, defs: readonly VenueInstruction[]) {
 }
 
 describe("pump.fun bonding curve layouts match idl/pump.json", () => check("pump", PUMP_CURVE_INSTRUCTIONS));
-describe("PumpSwap layouts match idl/pump_amm.json", () => check("pump_amm", PUMP_AMM_INSTRUCTIONS));
+describe("PumpSwap layouts match idl/pump_amm.json", () => {
+  check("pump_amm", PUMP_AMM_INSTRUCTIONS);
+
+  test("pump_amm.extend_account", () => {
+    const X = PUMP_AMM_EXTEND_ACCOUNT;
+    const idl = idlInstruction("pump_amm", X.name);
+    expect(X.discriminator).toEqual(idl.discriminator);
+    expect(idl.args).toEqual([]);
+    expect(X.dataLength).toBe(8);
+    expect(idl.accounts).toHaveLength(X.accountCount);
+    expect(idl.accounts[X.account]).toMatchObject({ name: "account", writable: true, signer: false });
+    expect(idl.accounts[X.user]).toMatchObject({ name: "user", writable: true, signer: true });
+    expect(idl.accounts[X.systemProgram]).toMatchObject({ name: "system_program", address: SYSTEM_PROGRAM });
+    expect(idl.accounts.filter((a) => a.signer)).toHaveLength(1);
+    expect(PUMP_AMM_INSTRUCTION_NAMES[toHex(Uint8Array.from(X.discriminator))]).toBe(X.name);
+  });
+});
 
 describe("fixtures", () => {
   test("IDL fixture is for the injected program IDs and name tables are complete", () => {

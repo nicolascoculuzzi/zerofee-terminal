@@ -232,6 +232,37 @@ export const PUMP_AMM_INSTRUCTIONS: readonly VenueInstruction[] = [
   },
 ];
 
+/** Layout of an instruction that takes no arguments and whose accounts are checked by position. */
+export interface AccountExtensionInstruction {
+  readonly name: string;
+  readonly discriminator: readonly number[];
+  readonly dataLength: number;
+  readonly accountCount: number;
+  /** The account being extended. */
+  readonly account: number;
+  /** Pays the rent for the added bytes (signer, writable). */
+  readonly user: number;
+  /** CPI target for the rent transfer, signed with `user`'s privilege. */
+  readonly systemProgram: number;
+}
+
+/**
+ * extend_account(): grows a pump_amm-owned account to the current layout; the rent for the added
+ * bytes moves from `user` through a System program CPI. pump-swap-sdk 1.20.0 (withFixPoolInstructions)
+ * and @zerofee/core prepend it to buy / sell when the pool is shorter than POOL_ACCOUNT_NEW_SIZE
+ * (300 bytes; older pools are 211 to 270 bytes), because the program writes the whole Pool back.
+ *   0 account (w), 1 user (s,w), 2 system_program, 3 event_authority, 4 program; no arguments.
+ */
+export const PUMP_AMM_EXTEND_ACCOUNT: AccountExtensionInstruction = {
+  name: "extend_account",
+  discriminator: [234, 102, 194, 203, 150, 72, 62, 229],
+  dataLength: 8,
+  accountCount: 5,
+  account: 0,
+  user: 1,
+  systemProgram: 2,
+};
+
 // Generated from the IDLs above: every instruction name keyed by hex discriminator, so refusals
 // can name what was attempted (e.g. "migrate", "collect_creator_fee").
 

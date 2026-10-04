@@ -243,10 +243,11 @@ describe("log attribution and tolerance", () => {
   const b64 = getBase64Decoder();
 
   test("a pump-shaped event emitted by another program is ignored", () => {
+    // (Raydium LaunchLab's TradeEvent has the same discriminator but is decoded with LaunchLab's own layout.)
     const logs = [
-      "Program LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj invoke [1]",
-      tradeLine, // same discriminator as pump's TradeEvent, but LaunchLab is on top of the stack
-      "Program LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj success",
+      "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 invoke [1]",
+      tradeLine, // pump's TradeEvent discriminator, but another program is on top of the stack
+      "Program JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4 success",
     ];
     const r = decodeLogEvents(logs);
     expect(r.events).toHaveLength(0);

@@ -75,7 +75,8 @@ describe("account resolver", () => {
     r.requestMint(snap.v2Mint);
     r.requestMint(snap.legacyMint);
     await r.tick();
-    await waitFor(() => r.pending > 0); // metaplex PDA derivation is async
+    // the mint handler queues the metaplex job after an async PDA derivation (no promise exposed)
+    await waitFor(() => r.pending > 0);
     await r.tick();
     expect(mints.find((m) => m.mint === snap.v2Mint)).toMatchObject({ decimals: 6, metadata: { symbol: "SPEC" } });
     expect(mints.find((m) => m.mint === snap.legacyMint)?.metadata).toBeNull();
@@ -91,8 +92,7 @@ describe("account resolver", () => {
       curve: (c) => curves.push(`${c.mint}:${c.curve.tokenTotalSupply}`),
       metaplex: () => {},
     });
-    r.requestCurve(snap.v2Mint);
-    await waitFor(() => r.pending > 0); // curve PDA derivation is async
+    await r.requestCurve(snap.v2Mint);
     await r.tick();
     expect(curves).toEqual([`${snap.v2Mint}:1000000000000000`]);
   });

@@ -86,7 +86,7 @@ export function loadConfig(): CliConfig {
     landingMode: oneOf<LandingMode>("LANDING_MODE", "standard", ["standard", "turbo", "protected"]),
     speedPreset: oneOf<SpeedPreset>("SPEED_PRESET", "fast", ["eco", "fast", "turbo"]),
     maxPriorityFeeLamports: sol("MAX_PRIORITY_FEE_SOL", "0.0005"),
-    maxTipLamports: sol("MAX_TIP_SOL", "0.0005"),
+    maxTipLamports: sol("MAX_TIP_SOL", "0.002"),
     heliusSwqosTipLamports: sol("HELIUS_SWQOS_TIP_SOL", "0.000005"),
     senderRegion: oneOf("SENDER_REGION", "fra", Object.keys(HELIUS_SENDER_ENDPOINTS) as HeliusSenderRegion[]),
     jitoRegion: oneOf("JITO_REGION", "frankfurt", Object.keys(JITO_BLOCK_ENGINES) as JitoRegion[]),
@@ -107,7 +107,16 @@ export function loadConfig(): CliConfig {
 export function redactUrl(url: string): string {
   try {
     const u = new URL(url);
-    for (const k of [...u.searchParams.keys()]) if (/key|token|auth|uuid/i.test(k)) u.searchParams.set(k, "***");
+    if (u.username || u.password) {
+      u.username = "***";
+      u.password = "";
+    }
+    for (const k of [...u.searchParams.keys()]) if (/key|token|auth|uuid|secret/i.test(k)) u.searchParams.set(k, "***");
+    // Keys embedded in the path (e.g. Chainstack's /<key>) are long random segments.
+    u.pathname = u.pathname
+      .split("/")
+      .map((seg) => (seg.length >= 24 ? "***" : seg))
+      .join("/");
     return u.toString();
   } catch {
     return "<invalid url>";

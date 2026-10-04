@@ -23,10 +23,12 @@ import { YellowstoneSource } from "./ingest/yellowstone";
 import { logger } from "./log";
 import { PulseBoard } from "./market/pulse";
 import { MarketState } from "./market/state";
+import { Metrics } from "./metrics";
 import { openDb } from "./storage/db";
 import { StorageReader } from "./storage/reader";
 import { restoreMarket } from "./storage/restore";
 import { StorageWriter } from "./storage/writer";
+import type { UserLayer } from "./user";
 import { RpcClient } from "./util/rpc";
 
 const log = logger("app");
@@ -44,6 +46,11 @@ export interface AppOverrides {
   pollers?: boolean;
   /** false: no enrichment at all (Dex Paid, holder reconciliation, funding, dev history). */
   enrich?: boolean;
+  /**
+   * Accounts layer (createUserLayer): SIWS sessions, settings / alert / admin API, user topics.
+   * Without it the gateway is anonymous-only. The app starts it and stops it with itself.
+   */
+  user?: UserLayer | null;
 }
 
 export interface App {
@@ -60,6 +67,8 @@ export interface App {
   sink: IngestSink;
   reconciler: Reconciler | null;
   enricher: Enricher | null;
+  user: UserLayer | null;
+  metrics: Metrics;
   health(): HealthResponse;
   stop(): Promise<void>;
 }
@@ -143,6 +152,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     onChange: (d) => gateway?.chainDelta(d),
   });
   solUsd?.onPrice((p) => chain.setSolUsd(p));
+  // Kill switch on the chain topic: snapshots carry it, every change goes out as a delta.
+  if (o.user) {
+    chain.setHalt(o.user.halt.state);
+    o.user.halt.onChange((s) => chain.setHalt(s));
+  }
   const programAccounts = new ProgramAccountsCache(rpc);
   const source = o.source === undefined ? createSource(cfg) : o.source;
 
@@ -182,7 +196,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     },
   };
 
-  const tx = new TxHandler({ rpc, dryRun: cfg.dryRun, allowAnonymous: cfg.allowAnonymousTx, landing: cfg.landing, fetchFn: o.fetchFn });
+  const tx = new TxHandler({
+    rpc,
+    dryRun: cfg.dryRun,
+    allowAnonymous: cfg.allowAnonymousTx,
+    landing: cfg.landing,
+    fetchFn: o.fetchFn,
+    halt: o.user?.halt ?? null,
+  });
   const sources = (): Source[] => [source, pumpPortal as unknown as Source].filter(Boolean) as Source[];
 
   const debugStats = (): DebugStats => {
@@ -263,6 +284,27 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     };
   };
 
+  const user = o.user ?? null;
+  // Price / market-cap alerts read live summaries and re-evaluate the mints each Pulse flush changed.
+  user?.attachMarket((mint) => m.summary(mint));
+
+  const metrics = new Metrics(cfg.monitoring, {
+    version: VERSION,
+    startedAt,
+    dryRun: cfg.dryRun,
+    market: m,
+    pulse,
+    chain,
+    writer,
+    tx,
+    rpc,
+    solUsd,
+    sources,
+    gateway: () => gateway,
+    // The admin kill switch (POST /api/admin/halt) shows up as zerofee_halted{scope="tx"} too.
+    halted: user ? () => user.halt.isHalted() : undefined,
+  });
+
   gateway = new Gateway({
     cfg,
     market: m,
@@ -270,16 +312,21 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     chain,
     reader,
     programAccounts,
-    auth: o.auth ?? new AnonymousAuth(),
+    auth: o.auth ?? user?.sessions ?? new AnonymousAuth(),
     tx,
     health,
     debugStats,
+    user,
+    onTokensChanged: user ? (mints) => user.alerts.onTokensChanged(mints) : undefined,
+    metrics,
   });
 
   // start
   writer.start();
   resolver.start();
   gateway.start();
+  metrics.start();
+  user?.start();
   solUsd?.start();
   if (o.pollers !== false) {
     chain.start();
@@ -298,7 +345,11 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
   const evictTimer = setInterval(() => {
     const n = m.evictIdle(
       cfg.tokenIdleEvictMs,
-      (mint) => pulse.isListed(mint) || pulse.columnOf(mint) !== null || (gateway?.isWatched(mint) ?? false),
+      (mint) =>
+        pulse.isListed(mint) ||
+        pulse.columnOf(mint) !== null ||
+        (gateway?.isWatched(mint) ?? false) ||
+        (user?.alerts.watches(mint) ?? false),
     );
     if (n) log.debug(`evicted ${n} idle tokens`);
   }, 60_000);
@@ -317,11 +368,14 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
     sink,
     reconciler,
     enricher,
+    user,
+    metrics,
     health,
     async stop() {
       clearInterval(evictTimer);
       if (reconcileTimer) clearInterval(reconcileTimer);
       enricher?.stop();
+      metrics.stop();
       await source?.stop();
       await pumpPortal?.stop();
       solUsd?.stop();
@@ -330,6 +384,7 @@ export function createApp(cfg: ServerConfig, o: AppOverrides = {}): App {
       resolver.stop();
       metadata.stop();
       await gateway?.stop();
+      await user?.stop();
       writer.stop();
       if (!o.db) db.close();
     },

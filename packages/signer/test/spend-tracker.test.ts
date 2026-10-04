@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// Argon2id unlocks are deliberately slow; keep these from flaking on loaded machines or CI runners.
+setDefaultTimeout(30_000);
+
 import type { Address } from "@solana/kit";
 import { randomBytes } from "../src/bytes";
 import { type DailySpendCaps, type SpendState, SpendTracker } from "../src/firewall/spend-tracker";

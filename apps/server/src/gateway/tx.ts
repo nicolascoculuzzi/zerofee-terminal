@@ -7,10 +7,12 @@
  *                           fast = Sender Max). Requires an authenticated (non-anonymous) session unless
  *                           ALLOW_ANONYMOUS_TX=true.
  * The transaction must already carry the preset's tips; the server never adds or changes instructions.
+ * While the admin kill switch is on (admin/halt.ts), every submission is refused: 503 "halted",
+ * dry-run included, before the body is even decoded.
  */
 import { getBase58Decoder, getBase64Encoder } from "@solana/kit";
 import { HeliusSenderLane, type HeliusSenderRegion, JitoLane, type JitoRegion, type Lane, SubmitRouter } from "@zerofee/core";
-import type { ApiErrorBody, LandingPreset, TxSubmitRequest, TxSubmitResponse } from "@zerofee/protocol";
+import type { ApiErrorBody, HaltState, LandingPreset, TxSubmitRequest, TxSubmitResponse } from "@zerofee/protocol";
 import type { RpcClient } from "../util/rpc";
 import type { Session } from "./auth";
 
@@ -24,6 +26,8 @@ export interface TxHandlerOptions {
   allowAnonymous: boolean;
   landing: { heliusRegion: HeliusSenderRegion; jitoRegion: JitoRegion; heliusApiKey?: string; jitoUuid?: string };
   fetchFn?: typeof fetch;
+  /** Admin kill switch; absent = never halted. */
+  halt?: { readonly state: HaltState } | null;
 }
 
 export interface TxResult {
@@ -75,6 +79,8 @@ export class TxHandler {
       this.stats.rejected++;
       return { status, body: { error, code } };
     };
+    const halt = this.opts.halt?.state;
+    if (halt?.halted) return bad(503, halt.reason ? `trading is halted: ${halt.reason}` : "trading is halted", "halted");
     const req = body as Partial<TxSubmitRequest> | null;
     if (!req || typeof req !== "object" || typeof req.tx !== "string") return bad(400, "body must be { tx: base64, preset }");
     const preset = (req.preset ?? "reduced") as LandingPreset;

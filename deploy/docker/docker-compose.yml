@@ -1,0 +1,194 @@
+# zerofee-terminal production stack on one host (docs/ops/DEPLOY.md):
+#
+#   server       Bun gateway + ingest + SQLite market data + accounts (host: 127.0.0.1:8787 only)
+#   postgres     user state: identities, sessions, settings, alerts, admin audit log, orders
+#   caddy        automatic TLS, the static web build, /api + /ws reverse proxy, security headers
+#   uptime-kuma  alerting: feed stall, public checks, DNS canary (UI: 127.0.0.1:3001 over SSH)
+#
+# Always run it through deploy/scripts/dc, which adds `--env-file .env.production`. Secrets live only
+# in .env.production (gitignored; template .env.production.example).
+#
+# Port exposure: only Caddy faces the internet (80/443, host networking, so UFW governs it and it
+# sees real client IPs over IPv4 and IPv6). Everything else is on 127.0.0.1 or internal networks.
+# Never publish a port on 0.0.0.0 here: Docker-published ports bypass UFW.
+
+name: zerofee
+
+x-base: &base
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: local
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  server:
+    <<: *base
+    image: zerofee-server:${SERVER_TAG:-current}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/server.Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+    platform: linux/amd64
+    env_file: .env.production
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8787"
+      TRUST_PROXY: "true"
+      DB_PATH: /data/market.db
+      KILL_SWITCH_DIR: /flags
+      METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN in .env.production}
+      # SIWS binds this origin; the session cookie is Secure; mutations must come from it (CSRF).
+      PUBLIC_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN in .env.production}
+      DATABASE_URL: postgres://zerofee:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}@postgres:5432/zerofee
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    volumes:
+      - server-data:/data
+      - server-backups:/backups
+      - ${ZEROFEE_HOME:-/opt/zerofee}/flags:/flags:ro
+    ports:
+      - "127.0.0.1:8787:8787"
+    networks:
+      - edge
+      - db
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const r = await fetch('http://127.0.0.1:8787/api/health'); process.exit(r.ok ? 0 : 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Start-up replays recent trades from SQLite before the HTTP server listens.
+      start_period: 180s
+      start_interval: 2s
+    stop_grace_period: 30s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          cpus: "6"
+          memory: 16g
+          pids: 1024
+
+  postgres:
+    <<: *base
+    # Pinned major. Minor releases are security and bug fixes: `deploy/scripts/dc pull postgres`.
+    # A major upgrade is a dump and restore (docs/ops/RUNBOOK.md), never a tag bump.
+    image: postgres:18-trixie
+    # The entrypoint initializes the data directory as root, then drops to the postgres user.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    environment:
+      POSTGRES_USER: zerofee
+      POSTGRES_DB: zerofee
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=4GB
+      - -c
+      - max_connections=100
+      - -c
+      - log_min_duration_statement=500ms
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    shm_size: 256m
+    # postgres 18+ keeps PGDATA in a major-versioned directory under /var/lib/postgresql.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerofee -d zerofee -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 4g
+          pids: 512
+
+  caddy:
+    <<: *base
+    image: caddy:2.11.6-alpine@sha256:c776e0c6413b544d0459665e54ec7b8b2a15000c0cbee8b254da0067b1d184ff
+    network_mode: host
+    # Root inside the container, but with no capability except binding 80/443.
+    cap_add:
+      - NET_BIND_SERVICE
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env.production}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.production}
+      SIGNER_DOMAIN: ${SIGNER_DOMAIN:-}
+      CSP_CONNECT_EXTRA: ${CSP_CONNECT_EXTRA:-https://sender.helius-rpc.com https://api.mainnet-beta.solana.com}
+      SERVER_UPSTREAM: 127.0.0.1:8787
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/caddy
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${ZEROFEE_HOME:-/opt/zerofee}/web:/srv/web:ro
+      - ${ZEROFEE_HOME:-/opt/zerofee}/flags:/flags:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1g
+          pids: 256
+
+  uptime-kuma:
+    <<: *base
+    image: louislam/uptime-kuma:2.5.5-slim-rootless@sha256:a292237a108fa8843d09bb4066e738f02e913ef893542740f80c26556601ab77
+    volumes:
+      - kuma-data:/app/data
+    ports:
+      - "127.0.0.1:3001:3001"
+    networks:
+      - edge
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 768m
+          pids: 256
+
+networks:
+  # Egress for the server (feeds, relays) and Uptime Kuma (notifications, public checks).
+  edge: {}
+  # Server <-> Postgres only; no route to the internet.
+  db:
+    internal: true
+
+volumes:
+  server-data: {}
+  server-backups: {}
+  postgres-data: {}
+  caddy-data: {}
+  caddy-config: {}
+  kuma-data: {}

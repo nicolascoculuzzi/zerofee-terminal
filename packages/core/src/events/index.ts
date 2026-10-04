@@ -1,9 +1,10 @@
 /**
- * pump.fun / PumpSwap event decoding: payload decoders, program-attributed log parsing and
- * transaction-level extraction (event-CPI first, logs as fallback).
+ * pump.fun / PumpSwap and Raydium LaunchLab / CPMM event decoding: payload decoders, program-attributed log
+ * parsing and transaction-level extraction (event-CPI first, logs as fallback).
  */
 export * from "./decode";
 export * from "./logs";
+export { decodeCpmmEventPayload, decodeLaunchLabEventPayload } from "./raydium";
 export * from "./tx";
 export * from "./types";
 

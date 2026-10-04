@@ -1,230 +1,373 @@
 /**
- * Audit metrics added on top of the trade-based book: the bundle rule's size band and shared funder,
- * dev-sold-all, pro traders that actually paid a fee wallet, chain snapshots (largest accounts, DAS) and
- * insiders. Offline, synthetic events.
+ * GET /metrics: exposition format, access control (loopback vs token, never X-Forwarded-For), the
+ * feed-stall and blockhash alarms, slot lag, kill-switch flags, events/s sampling and tx outcomes.
+ * Two whole servers run in-process (one without a token, one with), with mocked network.
  */
-import { describe, expect, test } from "bun:test";
-import { sharedFunderMembers, sizeBandMembers } from "../src/market/holders";
-import { type MarketConfig, MarketState } from "../src/market/state";
-import { deserializeRecord, serializeRecord } from "../src/storage/codec";
-import { addr, FakeCurve, FakeResolver, synthTx } from "./helpers";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { SourceHealth } from "@zerofee/protocol";
+import { type App, createApp } from "../src/app";
+import { loadConfig } from "../src/config";
+import type { IngestSink, IngestTx, Source } from "../src/ingest/types";
+import { setLogLevel } from "../src/log";
+import { BLOCKHASH_STALE_MS, formatLabels, isLoopback, KILL_SWITCH_FLAGS, METRICS_CONTENT_TYPE, Metrics } from "../src/metrics";
+import { openDb } from "../src/storage/db";
+import { RpcClient } from "../src/util/rpc";
+import { addr, FakeCurve, mockFetch, synthTx } from "./helpers";
 
-const T0 = 1_791_048_900;
-const FEE = addr("fee-wallet");
-const FEE_ATA = addr("fee-usdc-account");
-
-function market(o: Partial<MarketConfig> = {}, funders: Record<string, string> = {}) {
-  const cfg: MarketConfig = {
-    sniperSlots: 3,
-    bundleMinBuyers: 4,
-    bundleSizeBandBps: 1_000,
-    proTraderWallets: [FEE],
-    proTraderTokenAccounts: [FEE_ATA],
-    ...o,
-  };
-  return new MarketState(cfg, {
-    resolver: new FakeResolver(),
-    solUsd: () => 120,
-    now: () => 1_791_049_000_000,
-    funderOf: (w) => funders[w] ?? null,
-  });
-}
-
-function launch(m: MarketState, tag: string, slot = 1_000) {
-  const mint = addr(`mint-${tag}`);
-  const dev = addr(`dev-${tag}`);
-  const c = new FakeCurve(mint, dev);
-  m.applyTx(synthTx(slot, [c.create(T0)]));
-  return { mint, dev, c };
-}
-
-describe("bundle rule: N+ buyers in one slot need a tight size band or a shared funder", () => {
-  test("size band helper", () => {
-    const buys = new Map<string, bigint>([
-      ["a", 100n],
-      ["b", 104n],
-      ["c", 109n],
-      ["d", 110n],
-      ["e", 500n],
-    ]);
-    expect([...sizeBandMembers(buys, 4, 1_000)].sort()).toEqual(["a", "b", "c", "d"]); // 110 <= 100 x 1.10
-    expect(sizeBandMembers(buys, 4, 500).size).toBe(0); // 5 %: at most 3 in a band
-    expect([...sharedFunderMembers(["a", "b", "c", "d", "e"], 4, (w) => (w === "e" ? "Y" : "X"))].sort()).toEqual(["a", "b", "c", "d"]);
-  });
-
-  test("4 buyers in a slot with scattered sizes are not bundlers; equal sizes are", () => {
-    const m = market();
-    const { mint, c } = launch(m, "band");
-    const sizes = [100_000_000n, 450_000_000n, 1_300_000_000n, 3_000_000_000n];
-    sizes.forEach((s, i) => {
-      m.applyTx(synthTx(1_020, [c.buy(addr(`scatter-${i}`), s, T0 + 8)]));
-    });
-    expect(m.tokens.get(mint)?.holders?.bundlers.size).toBe(0);
-    for (const w of ["E", "F", "G", "H"]) m.applyTx(synthTx(1_030, [c.buy(addr(w), 250_000_000n, T0 + 12)]));
-    m.applyTx(synthTx(1_030, [c.buy(addr("outlier"), 2_000_000_000n, T0 + 12)]));
-    expect([...(m.tokens.get(mint)?.holders?.bundlers ?? [])].sort()).toEqual(["E", "F", "G", "H"].map(addr).sort());
-  });
-
-  test("a shared funder flags scattered sizes, and funder data arriving later re-runs the rule", () => {
-    const funders: Record<string, string> = {};
-    const m = market({}, funders);
-    const { mint, c } = launch(m, "funder");
-    const ws = ["p", "q", "r", "s"].map(addr);
-    ws.forEach((w, i) => {
-      m.applyTx(synthTx(1_040, [c.buy(w, BigInt(i + 1) * 700_000_000n, T0 + 16)]));
-    });
-    const book = m.tokens.get(mint)?.holders;
-    expect(book?.bundlers.size).toBe(0);
-    expect(book?.crowdedCandidates().sort()).toEqual([...ws].sort());
-    for (const w of ws) funders[w] = addr("common-funder");
-    expect(m.recheckBundles(mint)).toBe(4);
-    expect([...(book?.bundlers ?? [])].sort()).toEqual([...ws].sort());
-  });
-});
-
-describe("dev sold all", () => {
-  test("true once the dev held and dropped to zero; false while holding or if the dev never bought", () => {
-    const m = market();
-    const { mint, dev, c } = launch(m, "devsell");
-    expect(m.summary(mint)?.devSoldAll).toBe(false);
-    m.applyTx(synthTx(1_001, [c.buy(dev, 2_000_000_000n, T0 + 1)]));
-    expect(m.summary(mint)?.devSoldAll).toBe(false);
-    const bal = m.tokens.get(mint)?.holders?.balanceOf(dev) ?? 0n;
-    m.applyTx(synthTx(1_002, [c.sell(dev, bal, T0 + 2)]));
-    expect(m.summary(mint)?.devSoldAll).toBe(true);
-  });
-});
-
-describe("pro traders: the swap must pay a known fee wallet", () => {
-  test("credited fee wallet, fee token account, uncredited wallet, the fee wallet trading itself", () => {
-    const m = market();
-    const { mint, c } = launch(m, "pro");
-    const keys = [addr("payer"), FEE, addr("other")];
-    // lamports indexed like accountKeys: the fee wallet goes from 10 to 11 SOL-lamports
-    m.applyTx(
-      synthTx(1_010, [c.buy(addr("paid"), 1_000_000n, T0)], {
-        accountKeys: keys,
-        lamports: { pre: ["5", "10", "1"], post: ["4", "11", "1"] },
-      }),
-    );
-    m.applyTx(
-      synthTx(1_011, [c.buy(addr("unpaid"), 1_000_000n, T0)], {
-        accountKeys: keys,
-        lamports: { pre: ["5", "10", "1"], post: ["4", "10", "1"] },
-      }),
-    );
-    m.applyTx(
-      synthTx(1_012, [c.buy(addr("usdc-fee"), 1_000_000n, T0)], {
-        accountKeys: [addr("payer"), FEE_ATA],
-        lamports: { pre: ["5", "2"], post: ["4", "2"] },
-      }),
-    );
-    m.applyTx(synthTx(1_013, [c.buy(FEE, 1_000_000n, T0)], { accountKeys: [FEE], lamports: { pre: ["10"], post: ["9"] } }));
-    m.applyTx(synthTx(1_014, [c.buy(addr("no-balances"), 1_000_000n, T0)], { accountKeys: keys }));
-    const pros = m.tokens.get(mint)?.proTraders;
-    expect([...(pros ?? [])].sort()).toEqual([addr("paid"), addr("usdc-fee"), addr("no-balances")].sort());
-    expect(m.summary(mint)?.proTraders).toBe(3);
-    expect(m.recentTrades(mint, 10).find((t) => t.trader === addr("paid"))?.tags).toContain("pro");
-  });
-
-  test("the pro-trader set survives a restart (codec)", () => {
-    const m = market();
-    const { mint, c } = launch(m, "pro-codec");
-    m.applyTx(synthTx(1_010, [c.buy(addr("paid"), 1_000_000n, T0)], { accountKeys: [FEE], lamports: { pre: ["1"], post: ["2"] } }));
-    const rec = m.tokens.get(mint);
-    if (!rec) throw new Error("no record");
-    const back = deserializeRecord(serializeRecord(rec), 0).rec;
-    expect([...(back.proTraders ?? [])]).toEqual([addr("paid")]);
-  });
-});
-
-describe("chain snapshots reconcile the trade-based book", () => {
-  function scenario() {
-    const m = market();
-    const { mint, dev, c } = launch(m, "snap", 2_000);
-    m.applyTx(synthTx(2_001, [c.buy(dev, 1_000_000_000n, T0 + 1)]));
-    m.applyTx(synthTx(2_002, [c.buy(addr("A"), 3_000_000_000n, T0 + 2)])); // A later moves everything to B (unseen)
-    m.applyTx(synthTx(2_003, [c.buy(addr("small"), 10_000_000n, T0 + 3)]));
-    return { m, mint, dev, c, book: m.tokens.get(mint)?.holders };
+class TestSource implements Source {
+  readonly name = "test";
+  sink: IngestSink | null = null;
+  slot: number | null = null;
+  connected = true;
+  start(sink: IngestSink): void {
+    this.sink = sink;
   }
+  async stop(): Promise<void> {}
+  emit(tx: IngestTx): void {
+    this.sink?.tx(tx);
+  }
+  health(): SourceHealth {
+    return {
+      name: this.name,
+      connected: this.connected,
+      reconnects: 2,
+      messages: 5,
+      lastMessageAt: null,
+      slot: this.slot,
+      dropped: 1,
+      notes: [],
+    };
+  }
+}
 
-  test("largest accounts: transfer recipients appear, stale big balances drop to 0, top 10 and source update", () => {
-    const { m, mint, dev, book } = scenario();
-    const aBal = book?.balanceOf(addr("A")) ?? 0n;
-    const devBal = book?.balanceOf(dev) ?? 0n;
-    expect(m.summary(mint)?.holdersSource).toBe("trades");
-    const before = m.summary(mint);
-    const curve = addr(`curve:${mint}`);
-    m.applyHolderSnapshot(
-      mint,
-      [
-        { owner: curve, amount: 900_000_000_000_000n, slot: 2_010 }, // excluded: the bonding curve
-        { owner: addr("B"), amount: aBal, slot: 2_010 },
-        { owner: dev, amount: devBal, slot: 2_010 },
-      ],
-      // the 20th-largest account held 1M tokens: A's 3-SOL bag (~100M tokens) cannot be unlisted
-      { source: "rpc", at: 1_791_049_000_123, full: false, floor: 1_000_000_000_000n, slot: 2_010 },
-    );
-    const s = m.summary(mint);
-    expect(book?.balanceOf(addr("A"))).toBe(0n);
-    expect(book?.balanceOf(addr("B"))).toBe(aBal);
-    expect(book?.balanceOf(addr("small"))).toBeGreaterThan(0n); // ~350k tokens, below the floor: unknown, kept
-    expect(s).toMatchObject({ holdersSource: "rpc", holdersCheckedAt: 1_791_049_000_123, holders: before?.holders });
-    expect(s?.top10Pct).toBeCloseTo(before?.top10Pct ?? 0, 6); // A's tokens counted once, now under B
+const RPC_URL = "http://rpc.test";
+const rpcMock = mockFetch((url, body) => {
+  if (url !== RPC_URL) return [404, {}];
+  if (body?.method === "simulateTransaction") {
+    return [200, { jsonrpc: "2.0", id: 1, result: { context: { slot: 77 }, value: { err: null, logs: [], unitsConsumed: 1 } } }];
+  }
+  if (body?.method === "getMultipleAccounts") {
+    const n = ((body.params?.[0] as string[]) ?? []).length;
+    return [200, { jsonrpc: "2.0", id: 1, result: { context: { slot: 1 }, value: new Array(n).fill(null) } }];
+  }
+  return [200, { jsonrpc: "2.0", id: 1, error: { code: -32601, message: "not mocked" } }];
+});
+
+const TOKEN = "test-metrics-token-0123456789abcdef";
+const flagDir = mkdtempSync(join(tmpdir(), "zerofee-flags-"));
+
+function makeApp(env: Record<string, string>, source: TestSource): App {
+  const cfg = loadConfig({
+    SERVER_PORT: "0",
+    DB_PATH: ":memory:",
+    RPC_URL,
+    LOG_LEVEL: "error",
+    RATE_LIMIT_REST_RPS: "1000",
+    RATE_LIMIT_REST_BURST: "1000",
+    ...env,
+  });
+  return createApp(cfg, {
+    source,
+    db: openDb(":memory:"),
+    rpc: new RpcClient({ url: RPC_URL, fetchFn: rpcMock.fn }),
+    fetchFn: rpcMock.fn,
+    solUsd: null,
+    pollers: false,
+  });
+}
+
+let open: App;
+let openSource: TestSource;
+let locked: App;
+let lockedSource: TestSource;
+
+beforeAll(() => {
+  setLogLevel("error");
+  openSource = new TestSource();
+  open = makeApp({ KILL_SWITCH_DIR: flagDir }, openSource);
+  lockedSource = new TestSource();
+  locked = makeApp({ METRICS_TOKEN: TOKEN }, lockedSource);
+});
+
+afterAll(async () => {
+  await open.stop();
+  await locked.stop();
+  rmSync(flagDir, { recursive: true, force: true });
+});
+
+const base = (app: App) => `http://127.0.0.1:${app.gateway.port}`;
+const req = (headers: Record<string, string> = {}) => new Request("http://server/metrics", { headers });
+
+/** Parses exposition text into `name{labels}` -> value, asserting the 0.0.4 grammar on the way. */
+function parseExposition(text: string): Map<string, number> {
+  const NAME = "[a-zA-Z_:][a-zA-Z0-9_:]*";
+  const LABEL = '[a-zA-Z_][a-zA-Z0-9_]*="(?:[^"\\\\\\n]|\\\\.)*"';
+  const sampleRe = new RegExp(`^(${NAME})(\\{${LABEL}(?:,${LABEL})*\\})? (-?[0-9.]+(?:e[+-]?[0-9]+)?|NaN|[+-]Inf)$`);
+  const typeRe = new RegExp(`^# TYPE (${NAME}) (counter|gauge)$`);
+  const helpRe = new RegExp(`^# HELP (${NAME}) .+$`);
+  const types = new Map<string, string>();
+  const helped = new Set<string>();
+  const out = new Map<string, number>();
+  expect(text.endsWith("\n")).toBe(true);
+  for (const line of text.trimEnd().split("\n")) {
+    const h = helpRe.exec(line);
+    if (h) {
+      helped.add(h[1] as string);
+      continue;
+    }
+    const t = typeRe.exec(line);
+    if (t) {
+      expect(types.has(t[1] as string)).toBe(false);
+      expect(helped.has(t[1] as string)).toBe(true);
+      types.set(t[1] as string, t[2] as string);
+      continue;
+    }
+    const s = sampleRe.exec(line);
+    if (!s) throw new Error(`invalid exposition line: ${line}`);
+    const name = s[1] as string;
+    const type = types.get(name);
+    if (!type) throw new Error(`sample before its TYPE line: ${line}`);
+    if (type === "counter") expect(name.endsWith("_total")).toBe(true);
+    const key = `${name}${s[2] ?? ""}`;
+    expect(out.has(key)).toBe(false);
+    out.set(key, Number(s[3]));
+  }
+  return out;
+}
+
+describe("exposition", () => {
+  test("valid 0.0.4 text with HELP and TYPE for every family, and the families ops relies on", () => {
+    const m = parseExposition(open.metrics.render());
+    for (const key of [
+      "zerofee_dry_run",
+      "zerofee_ingest_events_total",
+      'zerofee_ingest_events_per_second{window="10s"}',
+      "zerofee_ingest_decode_failures_total",
+      "zerofee_feed_stalled",
+      "zerofee_feed_silence_seconds",
+      "zerofee_blockhash_stale",
+      'zerofee_source_up{source="test"}',
+      'zerofee_source_dropped_total{source="test"}',
+      "zerofee_ws_clients",
+      "zerofee_ws_messages_received_total",
+      "zerofee_ws_messages_published_total",
+      'zerofee_gateway_queue_depth{queue="trades"}',
+      "zerofee_storage_queue_rows",
+      'zerofee_tx_outcomes_total{outcome="rejected"}',
+      'zerofee_halted{scope="tx"}',
+      'zerofee_halted{scope="site"}',
+      "process_resident_memory_bytes",
+    ]) {
+      expect(m.has(key)).toBe(true);
+    }
+    expect(m.get("zerofee_dry_run")).toBe(1);
+    expect(m.get('zerofee_source_dropped_total{source="test"}')).toBe(1);
+    expect(m.get("process_resident_memory_bytes")).toBeGreaterThan(0);
   });
 
-  test("trades after the snapshot slot are re-applied; complete snapshots zero everyone missing", () => {
-    const { m, mint, dev, c, book } = scenario();
-    m.applyTx(synthTx(2_020, [c.buy(addr("late"), 500_000_000n, T0 + 20)])); // after the snapshot below
-    const late = book?.balanceOf(addr("late")) ?? 0n;
-    m.applyHolderSnapshot(
-      mint,
-      [
-        { owner: dev, amount: 7n, slot: 2_015 },
-        { owner: addr("B"), amount: 11n, slot: 2_015 },
-      ],
-      { source: "das", at: 5, full: true, slot: 2_015 },
-    );
-    expect([book?.balanceOf(dev), book?.balanceOf(addr("B")), book?.balanceOf(addr("late"))]).toEqual([7n, 11n, late]);
-    expect([book?.balanceOf(addr("A")), book?.balanceOf(addr("small"))]).toEqual([0n, 0n]);
-    expect(m.summary(mint)).toMatchObject({ holders: 3, holdersSource: "das", holdersCheckedAt: 5 });
-  });
-
-  test("tokens whose history we did not observe have no book to reconcile", () => {
-    const m = market();
-    expect(m.applyHolderSnapshot(addr("unknown"), [], { source: "rpc", at: 1, full: true, slot: 1 })).toBe(false);
+  test("label values are escaped; build info carries version and runtime", () => {
+    expect(formatLabels({})).toBe("");
+    expect(formatLabels({ a: 'say "hi"\\now\nnext', b: "x" })).toBe('{a="say \\"hi\\"\\\\now\\nnext",b="x"}');
+    const line = open.metrics
+      .render()
+      .split("\n")
+      .find((l) => l.startsWith("zerofee_build_info{"));
+    expect(line).toBe(`zerofee_build_info{version="0.2.0",bun="${Bun.version}"} 1`);
   });
 });
 
-describe("insiders", () => {
-  test("null unless enabled and analysed; then transfer recipients plus creator-funded wallets", () => {
-    const off = market();
-    const a = launch(off, "ins-off");
-    off.setFundedInsiders(a.mint, [], 1);
-    expect(off.summary(a.mint)?.insidersPct).toBeNull(); // no HELIUS_API_KEY: never computed
+describe("access", () => {
+  test("isLoopback covers IPv4, IPv6 and mapped forms only", () => {
+    for (const ip of ["127.0.0.1", "127.8.9.10", "::1", "::ffff:127.0.0.1"]) expect(isLoopback(ip)).toBe(true);
+    for (const ip of ["10.0.0.1", "172.18.0.1", "::ffff:10.0.0.1", "fe80::1", "", null]) expect(isLoopback(ip)).toBe(false);
+  });
 
-    const m = market({ insiders: true });
-    const { mint, dev, c } = launch(m, "ins");
-    m.applyTx(synthTx(1_001, [c.buy(dev, 1_000_000_000n, T0 + 1)]));
-    m.applyTx(synthTx(1_002, [c.buy(addr("funded"), 2_000_000_000n, T0 + 2)]));
-    m.applyTx(synthTx(1_003, [c.buy(addr("normal"), 2_000_000_000n, T0 + 3)]));
-    expect(m.summary(mint)?.insidersPct).toBeNull(); // not analysed yet
-    // a snapshot reveals a holder that never bought (received tokens by transfer)
-    const book = m.tokens.get(mint)?.holders;
-    m.applyHolderSnapshot(
-      mint,
-      [
-        { owner: addr("gifted"), amount: 10_000_000_000_000n, slot: 1_010 },
-        { owner: dev, amount: book?.balanceOf(dev) ?? 0n, slot: 1_010 },
-        { owner: addr("funded"), amount: book?.balanceOf(addr("funded")) ?? 0n, slot: 1_010 },
-        { owner: addr("normal"), amount: book?.balanceOf(addr("normal")) ?? 0n, slot: 1_010 },
-      ],
-      { source: "rpc", at: 1, full: true, slot: 1_010 },
+  test("no token: loopback peers only, and never requests that came through a proxy", () => {
+    expect(open.metrics.handle(req(), "127.0.0.1")?.status).toBe(200);
+    expect(open.metrics.handle(req(), "::1")?.status).toBe(200);
+    expect(open.metrics.handle(req(), "172.18.0.1")).toBeNull();
+    expect(open.metrics.handle(req(), null)).toBeNull();
+    expect(open.metrics.handle(req({ "x-forwarded-for": "127.0.0.1" }), "127.0.0.1")).toBeNull();
+    expect(open.metrics.handle(req({ forwarded: "for=127.0.0.1" }), "127.0.0.1")).toBeNull();
+  });
+
+  test("token: every peer needs the bearer token, loopback included", () => {
+    expect(locked.metrics.handle(req(), "127.0.0.1")).toBeNull();
+    expect(locked.metrics.handle(req({ authorization: "Bearer wrong-token-0123456789" }), "127.0.0.1")).toBeNull();
+    expect(locked.metrics.handle(req({ authorization: `Basic ${TOKEN}` }), "10.0.0.2")).toBeNull();
+    expect(locked.metrics.handle(req({ authorization: `Bearer ${TOKEN}` }), "10.0.0.2")?.status).toBe(200);
+    expect(locked.metrics.handle(req({ authorization: `bearer ${TOKEN}`, "x-forwarded-for": "1.2.3.4" }), "10.0.0.2")?.status).toBe(200);
+  });
+
+  test("short tokens are rejected at config time", () => {
+    expect(() => loadConfig({ METRICS_TOKEN: "short" })).toThrow(/at least 16/);
+  });
+
+  test("over HTTP: served to an allowed caller, otherwise the gateway's ordinary 404", async () => {
+    const ok = await fetch(`${base(open)}/metrics`);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe(METRICS_CONTENT_TYPE);
+    expect(ok.headers.get("cache-control")).toBe("no-store");
+    expect(await ok.text()).toContain("zerofee_feed_stalled ");
+
+    const unknown = await fetch(`${base(locked)}/no-such-path`);
+    const refused = await fetch(`${base(locked)}/metrics`);
+    expect(refused.status).toBe(404);
+    expect(await refused.text()).toBe(await unknown.text());
+
+    const authed = await fetch(`${base(locked)}/metrics`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(authed.status).toBe(200);
+    parseExposition(await authed.text());
+  });
+});
+
+describe("alarms", () => {
+  const value = (app: App, key: string, now: number) => parseExposition(app.metrics.render(now)).get(key);
+
+  test("feed stall: grace period after start, 0 right after an event, 1 once silent for 30 s", () => {
+    const app = locked;
+    const t0 = app.health().startedAt;
+    expect(app.market.stats.lastEventAt).toBeNull();
+    expect(value(app, "zerofee_feed_stalled", t0 + 5_000)).toBe(0);
+    expect(value(app, "zerofee_feed_stalled", t0 + 30_000)).toBe(1);
+
+    const mint = addr("metrics-mint");
+    const curve = new FakeCurve(mint, addr("metrics-dev"));
+    const ts = Math.floor(Date.now() / 1000);
+    const receivedAt = Date.now();
+    lockedSource.emit(synthTx(800_000, [curve.create(ts), curve.buy(addr("metrics-buyer"), 1_000_000_000n, ts)], { receivedAt }));
+    expect(app.market.stats.lastEventAt).toBe(receivedAt);
+    expect(value(app, "zerofee_feed_stalled", receivedAt + 1_000)).toBe(0);
+    expect(value(app, "zerofee_feed_silence_seconds", receivedAt + 1_000)).toBe(1);
+    expect(value(app, "zerofee_feed_stalled", receivedAt + 29_999)).toBe(0);
+    expect(value(app, "zerofee_feed_stalled", receivedAt + 30_000)).toBe(1);
+    expect(value(app, "zerofee_ingest_last_event_timestamp_seconds", receivedAt)).toBe(receivedAt / 1000);
+  });
+
+  test("blockhash: stale when missing after start-up or older than the threshold", () => {
+    const app = open;
+    const t0 = app.health().startedAt;
+    expect(app.chain.state.blockhashUpdatedAt).toBeNull();
+    expect(value(app, "zerofee_blockhash_stale", t0 + 1_000)).toBe(0);
+    expect(value(app, "zerofee_blockhash_stale", t0 + BLOCKHASH_STALE_MS)).toBe(1);
+    const at = Date.now();
+    app.chain.state.blockhashUpdatedAt = at;
+    expect(value(app, "zerofee_blockhash_stale", at + 2_000)).toBe(0);
+    expect(value(app, "zerofee_blockhash_age_seconds", at + 2_000)).toBe(2);
+    expect(value(app, "zerofee_blockhash_stale", at + BLOCKHASH_STALE_MS)).toBe(1);
+  });
+
+  test("slot lag = chain tip - primary source slot, omitted until both are known", () => {
+    const app = open;
+    expect(parseExposition(app.metrics.render()).has("zerofee_ingest_slot_lag")).toBe(false);
+    openSource.slot = 1_000;
+    app.chain.onSlot(1_004, "processed");
+    expect(value(app, "zerofee_ingest_slot_lag", Date.now())).toBe(4);
+    expect(value(app, "zerofee_chain_tip_slot", Date.now())).toBe(1_004);
+    openSource.slot = 1_010; // source ahead of the slot stream: lag clamps at 0
+    expect(value(app, "zerofee_ingest_slot_lag", Date.now())).toBe(0);
+  });
+
+  test("kill-switch flags in KILL_SWITCH_DIR show up as zerofee_halted", () => {
+    const now = Date.now();
+    expect(value(open, "zerofee_kill_switch_dir_present", now)).toBe(1);
+    expect(value(open, 'zerofee_halted{scope="tx"}', now)).toBe(0);
+    writeFileSync(join(flagDir, KILL_SWITCH_FLAGS.tx), "");
+    expect(value(open, 'zerofee_halted{scope="tx"}', now)).toBe(1);
+    expect(value(open, 'zerofee_halted{scope="site"}', now)).toBe(0);
+    writeFileSync(join(flagDir, KILL_SWITCH_FLAGS.site), "");
+    expect(value(open, 'zerofee_halted{scope="site"}', now)).toBe(1);
+    rmSync(join(flagDir, KILL_SWITCH_FLAGS.tx));
+    rmSync(join(flagDir, KILL_SWITCH_FLAGS.site));
+    expect(value(open, 'zerofee_halted{scope="tx"}', now)).toBe(0);
+    // Without KILL_SWITCH_DIR or an admin halt provider the halt state is unknown: not reported.
+    expect(parseExposition(locked.metrics.render()).has('zerofee_halted{scope="tx"}')).toBe(false);
+  });
+
+  test('the admin kill switch (POST /api/admin/halt) is OR-ed into zerofee_halted{scope="tx"}', () => {
+    let adminHalted = false;
+    const stats = { requests: 0, simulated: 0, sent: 0, rejected: 0 };
+    const m = new Metrics(
+      { metricsToken: null, feedStallMs: 30_000, killSwitchDir: null },
+      {
+        version: "test",
+        startedAt: Date.now(),
+        dryRun: true,
+        market: locked.market,
+        pulse: locked.pulse,
+        chain: locked.chain,
+        writer: locked.writer,
+        tx: { stats },
+        rpc: { stats: { calls: 0, errors: 0, rateLimited: 0, dataAllowance: 0, coolingDownUntil: 0, lastError: null } },
+        solUsd: null,
+        sources: () => [],
+        gateway: () => null,
+        halted: () => adminHalted,
+      },
     );
-    m.setFundedInsiders(mint, [addr("funded"), dev], 2); // the dev itself is never counted as an insider
-    const expected =
-      Number(((10_000_000_000_000n + (book?.balanceOf(addr("funded")) ?? 0n)) * 1_000_000n) / 1_000_000_000_000_000n) / 10_000;
-    expect(m.summary(mint)?.insidersPct).toBeCloseTo(expected, 6);
-    expect(book?.transferRecipients()).toEqual([addr("gifted")]);
+    const now = Date.now();
+    expect(parseExposition(m.render(now)).get('zerofee_halted{scope="tx"}')).toBe(0);
+    adminHalted = true;
+    const halted = parseExposition(m.render(now));
+    expect(halted.get('zerofee_halted{scope="tx"}')).toBe(1);
+    expect(halted.has('zerofee_halted{scope="site"}')).toBe(false); // no flags dir: site state unknown
+  });
+});
+
+describe("counters", () => {
+  test("events/s comes from 1 s samples of the event counter", () => {
+    const app = locked;
+    app.metrics.stop();
+    // Far from wall-clock time, so buckets the (now stopped) 1 s timer filled stay out of the windows.
+    const t = 10_000_000_000_000;
+    app.metrics.sample(t - 120_000); // syncs the last-seen counter outside both windows
+    app.metrics.sample(t);
+    app.market.stats.events += 50;
+    app.metrics.sample(t + 1_000);
+    app.market.stats.events += 30;
+    app.metrics.sample(t + 2_000);
+    const m = parseExposition(app.metrics.render(t + 3_000));
+    expect(m.get('zerofee_ingest_events_per_second{window="10s"}')).toBe(8);
+    expect(m.get('zerofee_ingest_events_per_second{window="60s"}')).toBeCloseTo(80 / 60, 6);
+  });
+
+  test("POST /api/tx outcomes: dry-run simulations and rejections are counted", async () => {
+    const before = parseExposition(open.metrics.render());
+    const bad = await fetch(`${base(open)}/api/tx`, { method: "POST", body: JSON.stringify({ nope: 1 }) });
+    expect(bad.status).toBe(400);
+    // An unsigned one-signature transaction: dry run simulates it without signature checks.
+    const tx = new Uint8Array(1 + 64 + 40);
+    tx[0] = 1;
+    const ok = await fetch(`${base(open)}/api/tx`, {
+      method: "POST",
+      body: JSON.stringify({ tx: Buffer.from(tx).toString("base64"), preset: "reduced" }),
+    });
+    expect(ok.status).toBe(200);
+    const after = parseExposition(open.metrics.render());
+    const delta = (k: string) => (after.get(k) ?? 0) - (before.get(k) ?? 0);
+    expect(delta("zerofee_tx_requests_total")).toBe(2);
+    expect(delta('zerofee_tx_outcomes_total{outcome="rejected"}')).toBe(1);
+    expect(delta('zerofee_tx_outcomes_total{outcome="simulated"}')).toBe(1);
+    expect(delta('zerofee_tx_outcomes_total{outcome="sent"}')).toBe(0);
+  });
+
+  test("WebSocket clients and received messages", async () => {
+    const ws = new WebSocket(`${base(open).replace("http", "ws")}/ws`);
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = () => reject(new Error("ws error"));
+    });
+    ws.send(JSON.stringify({ type: "subscribe", topic: "chain" }));
+    await new Promise<void>((resolve) => {
+      ws.onmessage = () => resolve();
+    });
+    const m = parseExposition(open.metrics.render());
+    expect(m.get("zerofee_ws_clients")).toBeGreaterThanOrEqual(1);
+    expect(m.get("zerofee_ws_messages_received_total")).toBeGreaterThanOrEqual(1);
+    expect(m.get("zerofee_ws_subscriptions")).toBeGreaterThanOrEqual(1);
+    ws.close();
   });
 });

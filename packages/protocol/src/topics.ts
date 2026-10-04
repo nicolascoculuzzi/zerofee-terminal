@@ -7,9 +7,14 @@
  *   trades:<mint>                               trade tape (flushed every 50-100 ms)
  *   candles:<mint>:<tf>                         OHLCV, tf in TIMEFRAMES
  *   tradectx:<mint>                             inputs for building a trade locally with @zerofee/core
- *   chain                                       blockhash, slot, priority fees, Jito tip floor, SOL/USD
- *   wallet:<address>                            balances and fills of one wallet (shape only for now)
- *   orders                                      the session user's orders (shape only for now)
+ *   chain                                       blockhash, slot, priority fees, Jito tip floor, SOL/USD, halt
+ *   wallet:<address>                            balances and fills of one wallet (balances not published yet)
+ *   orders                                      the session user's armed orders
+ *
+ * Market topics are public. `wallet:<address>` and `orders` are user topics: the WebSocket upgrade
+ * must carry the session cookie (and an allowed Origin), `wallet:` only accepts the signed-in main
+ * wallet or one of the user's registered trading wallets (`forbidden` otherwise), and `orders` is
+ * scoped to the session's user. Without a session they answer `unauthorized`.
  *
  * The few runtime helpers below are pure and dependency-free so the server and the web app parse topics
  * identically.

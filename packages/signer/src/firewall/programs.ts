@@ -1,8 +1,11 @@
 /**
- * Native and SPL program addresses whose instructions the firewall decodes with built-in rules.
- * These are protocol constants that have never changed; venue programs (pump, PumpSwap), tip
- * accounts and caps are NOT here: they are injected through FirewallContext / venue rules.
- * Whether any of these may be invoked at all is still decided by ctx.allowedPrograms.
+ * The signer's own reviewed copy of the program and mint addresses it relies on. The signer must not
+ * trust @zerofee/core or the backend at runtime (SPEC "Verify before you code"), so nothing here is
+ * read live; test/constants-crosscheck.test.ts fails when a value drifts from packages/core.
+ *
+ * Built-in rules decode System, Compute Budget, SPL Token, Token-2022 and ATA instructions; venue
+ * programs (pump.fun, PumpSwap) are handled by venue rules. Whether any program may be invoked at
+ * all is still decided by ctx.allowedPrograms. Tip accounts live in ../policy.ts.
  */
 import { type Address, address } from "@solana/kit";
 
@@ -18,6 +21,12 @@ export const TOKEN_2022_PROGRAM: Address = address("TokenzQdBNbLqP5VEhdkAS6EPFLC
 export const ASSOCIATED_TOKEN_PROGRAM: Address = address("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 /** Wrapped SOL mint (SPL Token). */
 export const WSOL_MINT: Address = address("So11111111111111111111111111111111111111112");
+/** USDC, the only non-SOL quote mint pump.fun supports. https://github.com/pump-fun/pump-public-docs/blob/main/README.md */
+export const USDC_MINT: Address = address("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+/** pump.fun bonding-curve program. https://github.com/pump-fun/pump-public-docs/blob/main/docs/PUMP_PROGRAM_README.md */
+export const PUMP_PROGRAM: Address = address("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+/** PumpSwap (pump AMM) program. https://github.com/pump-fun/pump-public-docs/blob/main/idl/pump_amm.json */
+export const PUMP_AMM_PROGRAM: Address = address("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA");
 /** Sysvars referenced by nonce instructions. */
 export const SYSVAR_RECENT_BLOCKHASHES: Address = address("SysvarRecentB1ockHashes11111111111111111111");
 export const SYSVAR_RENT: Address = address("SysvarRent111111111111111111111111111111111");

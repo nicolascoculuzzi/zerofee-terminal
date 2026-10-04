@@ -1,7 +1,13 @@
 name: pump-watch
 
-# Daily check that pump.fun's official IDLs and SDKs still match what packages/core is built
-# against. Opens an issue on drift (pump.fun typically gives about a week of devnet notice).
+# Daily check that the official venue interfaces still match what packages/core is built against
+# (packages/core/scripts/check-pump-idl.ts):
+#   - pump.fun / PumpSwap: IDLs (pinned in packages/core/idl/SOURCE.json) and SDKs;
+#   - Raydium LaunchLab / CPMM: IDLs (pinned in packages/core/idl/RAYDIUM_SOURCE.json), the
+#     raydium-cp-swap program and raydium-cpi LaunchLab crate sources the layouts also come from,
+#     and @raydium-io/raydium-sdk-v2.
+# SDK pins are packages/core's devDependencies (the golden-test oracles). Opens an issue on drift
+# (pump.fun typically gives about a week of devnet notice).
 
 on:
   schedule:
@@ -35,9 +41,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          open=$(gh issue list --state open --search "pump.fun interface changed in:title" --json number --jq 'length')
+          # "interface changed" also matches issues opened under the earlier pump.fun-only title.
+          open=$(gh issue list --state open --search "interface changed in:title" --json number --jq 'length')
           if [ "$open" = "0" ]; then
-            gh issue create --title "pump.fun interface changed ($(date -u +%F))" --body-file report.md
+            gh issue create --title "pump.fun / Raydium interface changed ($(date -u +%F))" --body-file report.md
           else
             echo "An open drift issue already exists; not opening another."
           fi

@@ -195,3 +195,43 @@ describe("reconnects (local WebSocket server)", () => {
     }
   });
 });
+
+describe("RpcLogsSource reconnect backoff", () => {
+  test("connects that never open keep backing off instead of resetting to the base delay", () => {
+    const sockets: { onclose?: (ev: { code: number; reason: string }) => void }[] = [];
+    class NeverOpens {
+      onopen: unknown = null;
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      onclose?: (ev: { code: number; reason: string }) => void;
+      constructor(_url: string) {
+        sockets.push(this);
+      }
+      send(): void {}
+      close(): void {}
+    }
+    const realSetTimeout = globalThis.setTimeout;
+    // capture reconnect timers instead of letting them fire; this test drives reconnects by hand
+    globalThis.setTimeout = ((_fn: () => void, _ms?: number) => 0) as unknown as typeof setTimeout;
+    try {
+      const src = new RpcLogsSource({
+        wsUrl: "ws://unused",
+        programs: [PUMP_PROGRAM_ID],
+        commitment: "processed",
+        queueMax: 100,
+        WebSocketImpl: NeverOpens as unknown as typeof WebSocket,
+      });
+      const internals = src as unknown as { connect(): void; backoff: { attempts: number } };
+      internals.connect();
+      for (let i = 0; i < 4; i++) {
+        sockets.at(-1)?.onclose?.({ code: 1006, reason: "" });
+        internals.connect();
+      }
+      // before the fix every failed connect reset the backoff, so attempts never got past 1
+      expect(internals.backoff.attempts).toBe(4);
+      expect(src.stats.reconnects).toBe(4);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  });
+});
