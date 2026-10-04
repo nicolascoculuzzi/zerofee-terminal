@@ -4,6 +4,7 @@
  * Never log secret values; use redactUrl() for URLs that may embed keys.
  */
 import { DEFAULT_RPC_URL, HELIUS_SENDER_ENDPOINTS, type HeliusSenderRegion, JITO_BLOCK_ENGINES, type JitoRegion } from "@zerofee/core";
+import { proTraderSet } from "./market/feeWallets";
 
 export type IngestSourceKind = "rpc" | "yellowstone";
 export type RpcCommitment = "processed" | "confirmed";
@@ -50,7 +51,10 @@ export interface ServerConfig {
   metrics: {
     sniperSlots: number;
     bundleMinBuyers: number;
+    /** Tight size band of the N-buyers-in-one-slot bundle rule (bps). */
+    bundleSizeBandBps: number;
     proTraderWallets: string[];
+    proTraderTokenAccounts: string[];
   };
   flush: {
     pulseMs: number;
@@ -118,12 +122,11 @@ function list(env: Env, name: string, def: string[]): string[] {
     .filter(Boolean);
 }
 
-/** Maestro's documented fee wallet (token_analytics notes); extend via PRO_TRADER_WALLETS. */
-const DEFAULT_PRO_TRADER_WALLETS = ["MaestroUL88UBnZr3wfoN7hqmNWFi3ZYCGqZoJJHE36"];
-
 export function loadConfig(env: Env = process.env): ServerConfig {
   const rpcUrl = str(env, "RPC_URL", DEFAULT_RPC_URL);
   const programs = list(env, "RPC_LOGS_PROGRAMS", ["pump", "pumpswap"]);
+  // Curated, source-cited fee-wallet registry (market/feeWallets.ts) plus operator additions.
+  const pros = proTraderSet(oneOf(env, "PRO_TRADER_PROVENANCE", "all", ["all", "vendor-docs"]), list(env, "PRO_TRADER_WALLETS", []));
   for (const p of programs) if (p !== "pump" && p !== "pumpswap") throw new Error("RPC_LOGS_PROGRAMS entries must be pump or pumpswap");
   const cfg: ServerConfig = {
     host: str(env, "SERVER_HOST", "127.0.0.1"),
@@ -162,7 +165,9 @@ export function loadConfig(env: Env = process.env): ServerConfig {
     metrics: {
       sniperSlots: int(env, "SNIPER_SLOTS", 3, 0, 100),
       bundleMinBuyers: int(env, "BUNDLE_MIN_BUYERS", 4, 2, 100),
-      proTraderWallets: list(env, "PRO_TRADER_WALLETS", DEFAULT_PRO_TRADER_WALLETS),
+      bundleSizeBandBps: int(env, "BUNDLE_SIZE_BAND_BPS", 1_000, 0, 100_000),
+      proTraderWallets: pros.wallets,
+      proTraderTokenAccounts: pros.tokenAccounts,
     },
     flush: {
       pulseMs: int(env, "PULSE_FLUSH_MS", 200, 50, 5_000),
