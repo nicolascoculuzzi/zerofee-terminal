@@ -2,6 +2,29 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: armed orders against real pump.fun and PumpSwap code (mainnet fork)
+
+Setup: `bun run fork:start` + `bun run e2e` (`packages/core/e2e/armed.e2e.ts`). Local Agave 4.3.0 running mainnet's binaries on cloned state; four forks, two coin sets, mainnet slots 453,103,463–453,108,071. One vault-held trading wallet signed everything through `SignerService` with the shipped policy (68 transactions per run, none refused). Ten nonce slots and one operator table. Orders were fired by `evaluateTrigger` on fork state and landed through `SubmitRouter` + `RpcLane`. All 9 cases passed, alongside the 10 trade cases.
+
+| Armed transaction (lowest tip level) | CU used / limit | Size with table (without) | Fee + tip (lamports) |
+|---|---|---|---|
+| Curve full-exit sell (TP, OCO, ladder fill) | 72,720–77,811 / 115,000 | 928 B (1,204 B) | 16,500 + 10,000 |
+| Curve buy (3-variant limit buy, cancelled) | not landed | 964 B (1,240 B) | n/a |
+| PumpSwap full-exit sell (SL) | 87,268–97,700 / 135,000 | 910 B (1,155 B) | 18,500 + 10,000 |
+| Migration snipe (PumpSwap buy, fresh pool) | 133,754–145,515 / 175,000 | 971 B (1,247 B) | 22,500 + 10,000 |
+| Landed failure: slippage (6003) / account closed (3012) | 57,660–59,221 / 13,116 | 928 B | 16,500, tip reverted |
+| Cancel | 300 / 2,000 | 282 B | 5,000 |
+| Nonce slots (4 per tx) | 1,500 / 16,000 | 1,028 B | 6,600 + 1,447,680 rent per slot (fork rate) |
+
+What these numbers mean:
+
+- One landed attempt per nonce holds with the real programs. A ladder's first attempt landed after the price ran past its min-out: `sell_v2` failed with 6003, the nonce advanced, and it cost 16,500 lamports (base + priority) with the tip reverted. The next nonce filled. A third attempt sent after the fill failed with 3012 (account closed), again base + priority only. Variants on a used nonce are refused at preflight ("Blockhash not found") and, sent blind, dropped without a fee.
+- Sizes match the offline matrix to the byte, and both buy shapes overflow 1,232 B without the table. Worst CU headroom is the snipe's 17% (holder-rewards coin), under the 1.3× `DEFAULT_CU_LIMITS` targets.
+- Leaders only see new table entries once their extension is finalized. Sent about 12 slots after the extension, the first armed transaction landed 30 slots late (rebroadcasts); after waiting for finalization (about 17 s here), it landed in the next slot. Every other armed transaction landed in the next slot (0.4–0.55 s of local slot timing, not a network figure).
+- `migrate` is permissionless (343,804–356,619 CU). It creates a 287-byte canonical pool that trades without `extend_account`, and parks 17.58 SOL of the curve's quote in the pool's boost vault, booked as virtual quote reserves. `estimateMigrationPoolReserves` used to double-count that boost (20% too high an opening price); fixed, the snipe fired at exactly its arming quote.
+- The first buy on a fresh pool pays rent for the coin-creator vault's wSOL ATA (2,039,280 lamports at the fork's rate). Snipe reservations should include it.
+- Details ("Armed-order findings"): [docs/dev/FORK_TESTING.md](docs/dev/FORK_TESTING.md).
+
 ## 2026-10-03: armed-order transaction sizes and nonce/ALT mechanics
 
 **Sizes** (offline, from the mainnet account fixtures; `bun run packages/core/scripts/armed-sizes.ts`). Every armed variant is a v0 message: `AdvanceNonceAccount`, CU limit, CU price, the trade, then the tip(s). The operator lookup table holds only shared accounts (63 with wSOL: program ids except the token programs, Global/config/fee-config/event-authority/volume-accumulator PDAs, every fee/buyback recipient and its wSOL ATA, the RecentBlockhashes sysvar). The signer firewall requires everything else to be a static key: mints, token programs, System, user token accounts, the pool, transfer destinations, tips, the jitodontfront marker and the nonce account.

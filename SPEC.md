@@ -221,13 +221,14 @@ The browser pre-signs transactions against a **durable nonce** (first instructio
 - Size, minimum output, fee, tip, lane and account list are frozen at signing. pump.fun upgrades, migrations, creator changes and ALT closures strand orders, so the UI needs a re-arm flow and the IDL-diff alarm must notify affected users.
 - Nonce slots cost about 0.00106 SOL rent each on mainnet ((80 + 128) bytes × 5,080 lamports/byte), refundable; default pool is 10 per user.
 - Submit armed orders via Jito bundle-only with `jitodontfront`, keep variants tight, and fire the cancel if an attempt misses within a few slots (a leaked nonce tx is a permanent option).
-- Transactions can exceed `PACKET_DATA_SIZE`. Use v0 transactions with operator-owned ALTs (never closed while referenced), or v1 transactions where relays accept them.
+- Transactions can exceed `PACKET_DATA_SIZE`. Use v0 transactions with operator-owned ALTs (never closed while referenced), or v1 transactions where relays accept them. Arm against new table entries only once their extension is finalized: on the mainnet fork, a transaction using fresher entries landed 30 slots late.
 - Before submitting, the server checks the wallet still holds the SOL or tokens; the UI shows reserved balances.
 - **Tested 2026-10-03 on a local Agave 4.3.0 validator:** a nonce transaction that lands but fails during execution **still advances the nonce** and pays the base fee. Replaying the same signed transaction is rejected. So each nonce gets **one landed attempt**: a failed attempt (e.g., slippage) kills every variant on that nonce.
   - Submit only when the live quote clears the chosen variant's minimum output with margin. On failure, mark the order "consumed, re-arm" and push-notify the user.
   - **Full-exit sells** (stop-loss, final TP, dev-sell exit) may be armed as an attempt ladder across several nonces. Once one fills, the rest fail harmlessly: there are no tokens left, so they cost only the base and priority fee, and tips aren't paid because failed transactions revert.
   - **Never ladder buys or partial sells across nonces** (double-fill risk). If those need retries, later attempts need an on-chain guard such as a balance assertion (e.g., Lighthouse). That would have to be added to the firewall allowlist; evaluate later.
   - Repro: [docs/experiments/nonce-failure](docs/experiments/nonce-failure/README.md).
+  - Re-verified with mainnet's pump and PumpSwap binaries on a mainnet fork (`bun run e2e`, [docs/dev/FORK_TESTING.md](docs/dev/FORK_TESTING.md)). A full-exit stop-loss attempt that landed after its min-out was out of reach failed, consumed its nonce and cost base + priority fee, with the tip reverted. The ladder's next nonce filled, and a leftover attempt failed harmlessly. TP, OCO, cancel, PumpSwap stop-loss and the migration snipe all landed as armed.
 
 ## Feature checklist
 
