@@ -45,3 +45,6 @@ fork-ledger/
 
 # Agent worktrees and local tool state
 .claude/
+
+# Image proxy disk cache (IMG_CACHE_DIR, default data/img-cache)
+img-cache/
