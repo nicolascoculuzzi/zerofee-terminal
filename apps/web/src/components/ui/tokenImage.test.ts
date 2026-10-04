@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { TokenAvatar } from "./TokenAvatar";
-import { imageVersion, proxySize, tokenImageSrc } from "./tokenImage";
+import { IMAGE_RETRY_LIMIT, imageRetryDelay, imageVersion, probeImage, proxySize, tokenImageSrc } from "./tokenImage";
 
 const MINT = "6FrwqBPGwwbyxwzwkWnks2qmVRXbu53LGnhnvM7apump";
 
@@ -84,5 +84,35 @@ describe("TokenAvatar fallback (server-rendered markup)", () => {
     expect(other).not.toContain("/venues/");
     expect(other).toContain(">X</span>");
     expect(render({ size: "xs", launchpad: "pump" })).not.toContain("/venues/"); // small avatars have no badge
+  });
+});
+
+describe("failed avatar images: ask the proxy, retry only while pending", () => {
+  const answer = (status: number, headers: Record<string, string> = {}) =>
+    (async () => new Response(null, { status, headers })) as unknown as typeof fetch;
+
+  test("pending with Retry-After, failed, none, our own 429 / 503, network errors, and back from the dead", async () => {
+    expect(await probeImage("/api/img?x", answer(404, { "x-zf-image": "pending", "retry-after": "7" }))).toEqual({
+      state: "pending",
+      retryAfterMs: 7_000,
+    });
+    expect(await probeImage("/api/img?x", answer(404, { "x-zf-image": "failed" }))).toEqual({ state: "failed", retryAfterMs: 0 });
+    expect((await probeImage("/api/img?x", answer(404, { "x-zf-image": "none" }))).state).toBe("failed");
+    expect((await probeImage("/api/img?x", answer(404))).state).toBe("failed"); // an older server: no state, don't hammer
+    expect((await probeImage("/api/img?x", answer(429, { "retry-after": "1" }))).state).toBe("pending");
+    expect((await probeImage("/api/img?x", answer(503))).state).toBe("pending");
+    expect((await probeImage("/api/img?x", answer(200))).state).toBe("ok");
+    const offline = (async () => {
+      throw new TypeError("network");
+    }) as unknown as typeof fetch;
+    expect((await probeImage("/api/img?x", offline)).state).toBe("pending");
+  });
+
+  test("back-off: 3 s doubling to 2 min, never sooner than Retry-After, stops after the limit", () => {
+    expect(imageRetryDelay(0, 0)).toBe(3_000);
+    expect(imageRetryDelay(1, 0)).toBe(6_000);
+    expect(imageRetryDelay(1, 20_000)).toBe(20_000);
+    expect(imageRetryDelay(10, 0)).toBe(120_000);
+    expect(imageRetryDelay(IMAGE_RETRY_LIMIT, 0)).toBeNull();
   });
 });
