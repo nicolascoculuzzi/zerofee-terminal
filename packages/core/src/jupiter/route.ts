@@ -22,6 +22,7 @@ import {
   JUPITER_EVENT_AUTHORITY,
   JUPITER_IX,
   JUPITER_PROGRAM_ID,
+  JUPITER_REVIEWED_HOPS,
   MAX_COMPUTE_UNIT_LIMIT,
   SYSTEM_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
@@ -264,4 +265,55 @@ export function jupiterCuLimitFromSimulation(unitsConsumed: number | bigint, max
   const units = Number(unitsConsumed);
   if (!Number.isFinite(units) || units <= 0) throw new RangeError(`simulated units must be > 0, got ${unitsConsumed}`);
   return Math.min(Math.ceil(units * JUPITER_CU_SIMULATION_MARGIN), max);
+}
+
+/**
+ * Why the signer firewall would refuse this route's hops, or null (see JUPITER_REVIEWED_HOPS):
+ *   - shared_accounts_route_v2: no hop may name the user's wallet or its source / destination ATA;
+ *   - route_v2: exactly one hop of the whole input, through a reviewed venue, with the hop's input,
+ *     output and authority slots on the user's source ATA, destination ATA and wallet.
+ * buildTrade re-quotes a refused route over the reviewed venues.
+ */
+export function jupiterRouteProblem(route: Pick<JupiterRoute, "instructions" | "instruction">, user: Address): string | null {
+  const swap = route.instructions.find((ix) => ix.programAddress === JUPITER_PROGRAM_ID);
+  if (!swap?.data || !swap.accounts) return "no Jupiter route instruction";
+  const data = new Uint8Array(swap.data);
+  const accounts = swap.accounts.map((a) => a.address);
+  const L = JUPITER_ROUTE_LAYOUTS[route.instruction];
+  const source = accounts[L.source];
+  const destination = accounts[L.destination];
+  const userSide = new Set([user, source, destination]);
+  if (route.instruction === "shared_accounts_route_v2") {
+    const i = accounts.findIndex((a, j) => j >= L.fixedAccounts && userSide.has(a));
+    return i < 0 ? null : `a shared-accounts hop names the user's wallet or token account (position ${i})`;
+  }
+  // route_v2 data: ... route_plan at 30: u32 steps, then (one step) variant u8, fields, bps u16, input u8, output u8.
+  const r = new Reader(data, 30);
+  const steps = r.u32();
+  const variant = r.u8();
+  if (steps !== 1) return `route_v2 with ${steps} hops (only single-hop route_v2 can be verified)`;
+  const hop = JUPITER_REVIEWED_HOPS[variant];
+  if (!hop) return `route_v2 through Swap variant ${variant}, a venue whose hop layout is not reviewed`;
+  const fields = hop.aToB ? 1 : 0;
+  const aToB = hop.aToB ? data[35] === 1 : true;
+  r.skip(fields);
+  const bps = r.u16();
+  const input = r.u8();
+  const output = r.u8();
+  if (data.length !== 35 + fields + 4 || bps !== 10_000 || input !== 0 || output !== 1)
+    return "the route_v2 hop does not spend the whole input";
+  const hopAccounts = accounts.slice(L.fixedAccounts);
+  if (hop.remaining ? hopAccounts.length < hop.accounts : hopAccounts.length !== hop.accounts) {
+    return `${hop.name} hop has ${hopAccounts.length} accounts`;
+  }
+  if (hopAccounts[0] !== hop.program) return `${hop.name} hop does not invoke ${hop.program}`;
+  const [inSlot, outSlot] = aToB ? [hop.input, hop.output] : [hop.output, hop.input];
+  const pinned = new Map([
+    [inSlot, source],
+    [outSlot, destination],
+    [hop.authority, user],
+  ]);
+  for (const [slot, want] of pinned) if (hopAccounts[slot] !== want) return `${hop.name} hop slot ${slot} is not the user's account`;
+  const stray = hopAccounts.findIndex((a, slot) => !pinned.has(slot) && userSide.has(a));
+  return stray < 0 ? null : `${hop.name} hop names the user's wallet or token account in slot ${stray}`;
 }

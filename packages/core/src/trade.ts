@@ -17,11 +17,24 @@ import {
   HELIUS_SENDER_TIP_ACCOUNTS,
   JITO_TIP_ACCOUNTS_FALLBACK,
   JUPITER_MAX_ACCOUNTS,
+  JUPITER_REVIEWED_HOPS,
   MAX_COMPUTE_UNIT_LIMIT,
   RAYDIUM_FEE_RATE_DENOMINATOR,
 } from "./constants";
-import { fetchJupiterBuild, type JupiterBuildRequest, type JupiterClientOptions } from "./jupiter/client";
-import { type JupiterRoute, JupiterRouteError, type JupiterRouteInstruction, jupiterRouteFromBuild } from "./jupiter/route";
+import {
+  fetchJupiterBuild,
+  JupiterApiError,
+  type JupiterBuildRequest,
+  type JupiterBuildResponse,
+  type JupiterClientOptions,
+} from "./jupiter/client";
+import {
+  type JupiterRoute,
+  JupiterRouteError,
+  type JupiterRouteInstruction,
+  jupiterRouteFromBuild,
+  jupiterRouteProblem,
+} from "./jupiter/route";
 import { curveFeeRates, quoteBuyExactQuoteIn, quoteSell } from "./pump/curve";
 import { buildPumpBuyInstructions, buildPumpSellInstructions } from "./pump/instructions";
 import { buildAmmBuyInstructions, buildAmmSellInstructions } from "./pumpswap/instructions";
@@ -129,6 +142,11 @@ export async function buildTrade(state: TokenState, req: TradeRequest, opts: Bui
 const NO_QUOTE_FEES = { protocol: 0n, creator: 0n, lp: 0n, buyback: 0n, platform: 0n, fund: 0n, total: 0n };
 const NO_FEE_PPM = { protocol: 0n, platform: 0n, creator: 0n, lp: 0n, fund: 0n };
 
+/** The /build `dexes` labels of the venues whose route_v2 hops the signer can verify. */
+export const JUPITER_REVIEWED_DEX_LABELS: readonly string[] = [...new Set(Object.values(JUPITER_REVIEWED_HOPS).map((h) => h.label))];
+/** At most this many /build calls per trade (keyless access is 0.5 requests/s). */
+export const JUPITER_MAX_QUOTES = 6;
+
 /** /build route-account budgets to try: the caller's (or Jupiter's default 64), then smaller ones. */
 export function jupiterMaxAccountsSteps(start?: number): (number | undefined)[] {
   const first = start ?? JUPITER_MAX_ACCOUNTS;
@@ -190,49 +208,78 @@ async function buildJupiterTrade(state: JupiterState, req: TradeRequest, opts: J
         ]
       : ixs;
 
-  // A route must fit one packet with our compute budget and tips, and with the firewall's static keys
-  // kept static. If it does not: drop the no-op creation of a token account that already exists, then
-  // ask /build for a route with fewer accounts (Jupiter's documented remedy; each step is a new quote).
+  // A route must be one the signer firewall can verify (jupiterRouteProblem: no hop may act on the
+  // user's accounts unchecked) and fit one packet with our compute budget and tips, the firewall's static
+  // keys kept static. Otherwise: re-quote over the venues whose hops are reviewed; drop the no-op
+  // creation of a token account that already exists; ask for fewer accounts (Jupiter's documented
+  // remedy). Each re-quote is a new /build call, at most JUPITER_MAX_QUOTES.
   let route: JupiterRoute | undefined;
   let instructions: Instruction[] = [];
   let budget: number | undefined;
   let droppedAtaCreate = false;
-  for (const accounts of jupiterMaxAccountsSteps(maxAccounts)) {
-    budget = accounts;
-    const build = await fetchJupiterBuild(
-      {
+  let restricted = false;
+  let quotes = 0;
+  let lastProblem = "";
+  search: for (const accounts of jupiterMaxAccountsSteps(maxAccounts)) {
+    const options: readonly boolean[] = restricted ? [true] : [false, true];
+    for (const restrict of options) {
+      if (quotes++ >= JUPITER_MAX_QUOTES) break search;
+      budget = accounts;
+      restricted = restrict;
+      let build: JupiterBuildResponse;
+      try {
+        build = await fetchJupiterBuild(
+          {
+            inputMint,
+            outputMint,
+            amount: req.amount,
+            slippageBps: req.slippageBps,
+            taker: state.user,
+            maxAccounts: accounts,
+            ...(restrict ? { dexes: JUPITER_REVIEWED_DEX_LABELS } : { excludeDexes }),
+            forJitoBundle,
+            mode,
+          },
+          client,
+        );
+      } catch (e) {
+        // No route over the reviewed venues alone: report why the open routes were refused.
+        if (restrict && e instanceof JupiterApiError && e.status === 400) {
+          throw new JupiterRouteError(
+            `Jupiter /build: no route the signer can verify (${lastProblem}; none over ${JUPITER_REVIEWED_DEX_LABELS.join(", ")})`,
+          );
+        }
+        throw e;
+      }
+      route = await jupiterRouteFromBuild(build, {
+        user: state.user,
         inputMint,
         outputMint,
         amount: req.amount,
         slippageBps: req.slippageBps,
-        taker: state.user,
-        maxAccounts: accounts,
-        excludeDexes,
-        forJitoBundle,
-        mode,
-      },
-      client,
-    );
-    route = await jupiterRouteFromBuild(build, {
-      user: state.user,
-      inputMint,
-      outputMint,
-      amount: req.amount,
-      slippageBps: req.slippageBps,
-    });
-    instructions = withClose(route.instructions);
-    if (jupiterRouteFits(state.user, instructions, route.lookupTables)) break;
-    if (isBuy && state.userBaseAtaExists) {
-      const trimmed = withClose(route.instructions.filter((ix) => !createsAta(ix, state.userBaseAta)));
-      if (jupiterRouteFits(state.user, trimmed, route.lookupTables)) {
-        instructions = trimmed;
-        droppedAtaCreate = true;
-        break;
+      });
+      const problem = jupiterRouteProblem(route, state.user);
+      if (problem) {
+        lastProblem = problem;
+        route = undefined;
+        continue;
       }
+      instructions = withClose(route.instructions);
+      if (jupiterRouteFits(state.user, instructions, route.lookupTables)) break search;
+      if (isBuy && state.userBaseAtaExists) {
+        const trimmed = withClose(route.instructions.filter((ix) => !createsAta(ix, state.userBaseAta)));
+        if (jupiterRouteFits(state.user, trimmed, route.lookupTables)) {
+          instructions = trimmed;
+          droppedAtaCreate = true;
+          break search;
+        }
+      }
+      lastProblem = "too large for one transaction";
+      route = undefined;
+      break; // too large: try a smaller account budget
     }
-    route = undefined;
   }
-  if (!route) throw new JupiterRouteError("Jupiter /build: no route fits one transaction, even with fewer accounts");
+  if (!route) throw new JupiterRouteError(`Jupiter /build: no usable route (${lastProblem}), even with fewer accounts`);
   return {
     quote: {
       venue: "jupiter",

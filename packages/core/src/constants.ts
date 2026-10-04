@@ -581,6 +581,87 @@ export const JUPITER_IX = {
   sharedAccountsRouteV2: new Uint8Array([209, 152, 83, 147, 124, 254, 216, 233]),
 } as const;
 
+/**
+ * route_v2 hops act with the user's signature on accounts the hop names, and Jupiter does not check
+ * them against the route's user accounts (a mainnet simulation on 2026-10-03 credited a redirected hop
+ * output to another holder). The signer firewall therefore accepts route_v2 only as a single hop
+ * through one of these venues, with the hop's input / output / authority slots pinned
+ * (packages/signer/src/firewall/rules/jupiter-idl.ts JUPITER_REVIEWED_HOPS; cross-checked in tests).
+ * Keyed by Swap variant index (idl/jupiter.json `Swap`). Slots are offsets from the hop's first
+ * account (the venue program); `label` is the /build `dexes` label used to re-quote over these venues.
+ */
+export const JUPITER_REVIEWED_HOPS: Readonly<
+  Record<
+    number,
+    {
+      name: string;
+      label: string;
+      program: Address;
+      accounts: number;
+      remaining: boolean;
+      input: number;
+      output: number;
+      authority: number;
+      aToB?: true;
+    }
+  >
+> = {
+  /** Meteora DBC swap. @meteora-ag/dynamic-bonding-curve-sdk 1.5.13 IDL `swap`. */
+  78: {
+    name: "MeteoraDynamicBondingCurveSwap",
+    label: "Dynamic Bonding Curve",
+    program: address("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"),
+    accounts: 16,
+    remaining: false,
+    input: 4,
+    output: 5,
+    authority: 10,
+  },
+  88: {
+    name: "MeteoraDynamicBondingCurveSwapWithRemainingAccounts",
+    label: "Dynamic Bonding Curve",
+    program: address("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"),
+    accounts: 16,
+    remaining: true,
+    input: 4,
+    output: 5,
+    authority: 10,
+  },
+  /** Meteora DAMM v2 swap. @meteora-ag/cp-amm-sdk 1.5.1 IDL `swap`. */
+  77: {
+    name: "MeteoraDammV2",
+    label: "Meteora DAMM v2",
+    program: address("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"),
+    accounts: 15,
+    remaining: false,
+    input: 3,
+    output: 4,
+    authority: 9,
+  },
+  108: {
+    name: "MeteoraDammV2WithRemainingAccounts",
+    label: "Meteora DAMM v2",
+    program: address("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"),
+    accounts: 15,
+    remaining: true,
+    input: 3,
+    output: 4,
+    authority: 9,
+  },
+  /** Orca Whirlpool swap (a_to_b picks the input side). @orca-so/whirlpools-sdk 0.22.0 IDL `swap`. */
+  17: {
+    name: "Whirlpool",
+    label: "Whirlpool",
+    program: address("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"),
+    accounts: 12,
+    remaining: false,
+    input: 4,
+    output: 6,
+    authority: 2,
+    aToB: true,
+  },
+};
+
 /** Swap API V2 base URL (keyless 0.5 RPS; an `x-api-key` header raises the limit). https://developers.jup.ag/docs/portal/rate-limits */
 export const JUPITER_SWAP_API_BASE = "https://api.jup.ag/swap/v2";
 export const JUPITER_BUILD_PATH = "/build";

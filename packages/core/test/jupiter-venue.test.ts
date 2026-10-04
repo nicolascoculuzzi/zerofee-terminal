@@ -22,6 +22,7 @@ import {
   findAssociatedTokenAddress,
   firewallStaticAccounts,
   JUPITER_PROGRAM_ID,
+  JUPITER_REVIEWED_DEX_LABELS,
   JUPITER_ROUTE_LAYOUTS,
   JUPITER_STATIC_POSITIONS,
   JupiterRouteError,
@@ -29,6 +30,7 @@ import {
   jupiterMaxAccountsSteps,
   jupiterRouteFits,
   jupiterRouteFromBuild,
+  jupiterRouteProblem,
   loadTokenState,
   NoLocalVenueError,
   PACKET_DATA_SIZE,
@@ -231,16 +233,14 @@ describe("buildTrade on the Jupiter fallback", () => {
   });
 
   test("an existing token account's no-op creation is left out when that alone makes the route fit", async () => {
-    // Pad the DBC buy's route data to the first size that no longer fits with Jupiter's ATA creation.
+    // Grow the DBC buy (an extra "other" instruction with k data bytes) to the first size that no
+    // longer fits with Jupiter's ATA creation.
     const route = await jupiterRouteFromBuild(parsed("longtailCurveBuy"), expectationOf("longtailCurveBuy"));
-    const swapAt = route.instructions.findIndex((ix) => ix.programAddress === JUPITER_PROGRAM_ID);
-    const padded = (k: number) =>
-      route.instructions.map((ix, i) => (i === swapAt ? { ...ix, data: Uint8Array.from([...ix.data!, ...new Array(k).fill(0)]) } : ix));
+    const filler = (k: number) => ({ programAddress: SYSTEM_PROGRAM_ID, data: new Uint8Array(k) });
     let k = 0;
-    while (jupiterRouteFits(JUPITER_TAKER, padded(k), {})) k++;
+    while (jupiterRouteFits(JUPITER_TAKER, [...route.instructions, filler(k)], {})) k++;
     const pad = (body: Record<string, unknown>) => {
-      const ix = body.swapInstruction as { data: string };
-      ix.data = Buffer.from([...Buffer.from(ix.data, "base64"), ...new Array(k).fill(0)]).toString("base64");
+      body.otherInstructions = [{ programId: SYSTEM_PROGRAM_ID, accounts: [], data: Buffer.from(new Uint8Array(k)).toString("base64") }];
     };
     const ata = await findAssociatedTokenAddress(JUPITER_TAKER, DBC_COIN, TOKEN_PROGRAM_ID);
     const held = { [ata]: { owner: TOKEN_PROGRAM_ID, data: tokenAccountData(DBC_COIN, JUPITER_TAKER, 1n) } };
@@ -257,8 +257,91 @@ describe("buildTrade on the Jupiter fallback", () => {
     const fresh = jupiterFetch(pad);
     await expect(
       buildTrade(await state(DBC_COIN), { side: "buy", amount: 10_000_000n, slippageBps: 1500 }, { jupiter: { fetchFn: fresh.fetch } }),
-    ).rejects.toThrow("no route fits one transaction");
+    ).rejects.toThrow("no usable route (too large for one transaction)");
     expect(maxAccountsOf(fresh)).toEqual([null, "48", "32", "24"]);
+  });
+});
+
+describe("routes the signer can verify (hops may not act on the user's accounts unchecked)", () => {
+  const state = (mint: Address) => loadTokenState(jupiterRpc(), { mint, user: JUPITER_TAKER });
+  const routeOf = async (label: JupiterCaseLabel, mutate?: (body: Record<string, unknown>) => void) => {
+    const body = jupiterCase(label).response;
+    mutate?.(body);
+    return jupiterRouteFromBuild(parseJupiterBuildResponse(body), expectationOf(label));
+  };
+  const swapAccounts = (body: Record<string, unknown>) => (body.swapInstruction as { accounts: { pubkey: string }[] }).accounts;
+  const swapData = (body: Record<string, unknown>, patch: (d: Uint8Array) => Uint8Array) => {
+    const ix = body.swapInstruction as { data: string };
+    ix.data = Buffer.from(patch(new Uint8Array(Buffer.from(ix.data, "base64")))).toString("base64");
+  };
+
+  test.each(LEGIT_JUPITER_CASES)("%s: every captured route is verifiable as /build returned it", async (label) => {
+    expect(jupiterRouteProblem(await routeOf(label), JUPITER_TAKER)).toBeNull();
+  });
+
+  test("route_v2 hops: output or input slot moved, authority swapped, an unreviewed venue, two hops", async () => {
+    // DBC hop: [program, pool_authority, config, pool, input, output, ..., payer (10), ...] from position 10.
+    const at = (slot: number) => 10 + slot;
+    const cases: [string, (b: Record<string, unknown>) => void, RegExp][] = [
+      ["output", (b) => (swapAccounts(b)[at(5)]!.pubkey = JUPITER_ATTACKER), /slot 5 is not the user's account/],
+      ["input", (b) => (swapAccounts(b)[at(4)]!.pubkey = JUPITER_ATTACKER), /slot 4 is not the user's account/],
+      ["authority", (b) => (swapAccounts(b)[at(10)]!.pubkey = JUPITER_ATTACKER), /slot 10 is not the user's account/],
+      ["stray", (b) => (swapAccounts(b)[at(16)]!.pubkey = JUPITER_TAKER), /names the user's wallet or token account in slot 16/],
+      [
+        "venue",
+        (b) => swapData(b, (d) => Uint8Array.from(d, (x, i) => (i === 34 ? 7 : x))),
+        /Swap variant 7, a venue whose hop layout is not reviewed/,
+      ],
+      [
+        "hops",
+        (b) => swapData(b, (d) => Uint8Array.from([...d, 88, 0x10, 0x27, 1, 2], (x, i) => (i === 30 ? 2 : x))),
+        /route_v2 with 2 hops/,
+      ],
+    ];
+    for (const [, mutate, pattern] of cases) {
+      expect(jupiterRouteProblem(await routeOf("longtailCurveBuy", mutate), JUPITER_TAKER)).toMatch(pattern);
+    }
+  });
+
+  test("shared-accounts hops may not name the user's wallet or token accounts", async () => {
+    const route = await routeOf("usdcBuy", (b) => (swapAccounts(b)[20]!.pubkey = JUPITER_TAKER));
+    expect(jupiterRouteProblem(route, JUPITER_TAKER)).toMatch(
+      /shared-accounts hop names the user's wallet or token account \(position 20\)/,
+    );
+  });
+
+  test("buildTrade re-quotes an unverifiable route over the reviewed venues", async () => {
+    // Without a venue restriction the API (or something between) returns a hop crediting the attacker.
+    const stub = jupiterFetch((body, _label, query) => {
+      if (!query.has("dexes")) swapAccounts(body)[15]!.pubkey = JUPITER_ATTACKER;
+    });
+    const t = await buildTrade(
+      await state(DBC_COIN),
+      { side: "buy", amount: 10_000_000n, slippageBps: 1500 },
+      { jupiter: { fetchFn: stub.fetch, excludeDexes: ["X"] } },
+    );
+    const queries = stub.requests.map((x) => new URL(x.url).searchParams);
+    expect(queries.map((q) => [q.get("dexes"), q.get("excludeDexes")])).toEqual([
+      [null, "X"],
+      [JUPITER_REVIEWED_DEX_LABELS.join(","), null],
+    ]);
+    expect(JUPITER_REVIEWED_DEX_LABELS).toEqual(["Whirlpool", "Meteora DAMM v2", "Dynamic Bonding Curve"]);
+    expect(jupiterRouteProblem({ instructions: t.instructions, instruction: t.quote.jupiter!.instruction }, JUPITER_TAKER)).toBeNull();
+  });
+
+  test("buildTrade refuses with the reason when no route over the reviewed venues exists", async () => {
+    const open = jupiterFetch((body) => {
+      swapAccounts(body)[15]!.pubkey = JUPITER_ATTACKER;
+    });
+    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) =>
+      new URL(String(input)).searchParams.has("dexes")
+        ? new Response(JSON.stringify({ error: "No routes found" }), { status: 400 })
+        : open.fetch(input, init)) as typeof fetch;
+    await expect(
+      buildTrade(await state(DBC_COIN), { side: "buy", amount: 10_000_000n, slippageBps: 1500 }, { jupiter: { fetchFn } }),
+    ).rejects.toThrow(
+      /no route the signer can verify \(MeteoraDynamicBondingCurveSwapWithRemainingAccounts hop slot 5 is not the user's account; none over Whirlpool, Meteora DAMM v2, Dynamic Bonding Curve\)/,
+    );
   });
 });
 
