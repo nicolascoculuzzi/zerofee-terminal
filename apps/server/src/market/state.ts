@@ -1628,16 +1628,21 @@ export class MarketState {
     }
   }
 
-  /** RPC logs source: is this Raydium transaction worth a getTransaction (wallet, mints, graduation)? */
+  /**
+   * RPC logs source: is this Raydium transaction worth a getTransaction (wallet, mints, graduation)? Every
+   * LaunchLab event and graduation; CPMM swaps only for coins that graduated on the server's watch (or whose
+   * derived pool trades for the first time). Swaps on older graduates found later stay logs-only: they would
+   * outrun the public RPC's getTransaction budget (measured 2026-10-04).
+   */
   wantsRaydiumTx(events: readonly DecodedEvent[], migration: boolean): boolean {
     if (migration) return true;
     for (const ev of events) {
       if (ev.kind === "launchlabTrade" || ev.kind === "launchlabPoolCreate") return true;
-      if (
-        ev.kind === "cpmmSwap" &&
-        (this.deps.raydium?.isGraduationPool(ev.pool) || this.graduatedInto(ev.pool, ev.inputMint, ev.outputMint))
-      )
-        return true;
+      if (ev.kind !== "cpmmSwap") continue;
+      if (this.graduatedInto(ev.pool, ev.inputMint, ev.outputMint)) return true;
+      const mint = this.deps.raydium?.baseMintOf(ev.pool);
+      const rec = mint ? this.tokens.get(mint) : undefined;
+      if (rec?.migrated && rec.pool === ev.pool && rec.migratedAt !== null) return true;
     }
     return false;
   }

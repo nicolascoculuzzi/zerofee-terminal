@@ -305,6 +305,25 @@ describe("RpcLogsSource: Raydium transactions are re-read", () => {
     expect(src.fetchStats).toMatchObject({ expired: 1, fallbacks: 1 });
   });
 
+  test("LaunchLab transactions go before CPMM swaps when the budget is short", async () => {
+    const order: string[] = [];
+    const { src } = source(
+      async (sig) => {
+        order.push(sig);
+        return null;
+      },
+      { perSec: 1 },
+    );
+    const c = rtx("cpmmBonkBuy");
+    const l = rtx("bonkBuy");
+    src.onMessage(notification(c.signature, c.logs, c.slot));
+    src.onMessage(notification(l.signature, l.logs, l.slot));
+    src.drain();
+    src.fetchTick(Date.now() + 1);
+    await settle();
+    expect(order).toEqual([l.signature]);
+  });
+
   test("the calls-per-second cap holds", async () => {
     let calls = 0;
     const { src } = source(

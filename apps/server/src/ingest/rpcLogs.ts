@@ -10,7 +10,7 @@
  *
  * Raydium events also lack the trading wallet, and LaunchLab graduations (`migrate_to_cpswap`) emit no
  * event at all. With `raydiumTx` set, Raydium notifications (LaunchLab events, graduations, and the CPMM
- * swaps `wants` accepts) are re-read with `getTransaction` at `confirmed` under a calls-per-second cap
+ * swaps `wants` accepts; LaunchLab first) are re-read with `getTransaction` at `confirmed` under a calls-per-second cap
  * (the public RPC allows 40 calls / 10 s per method), and the full transaction (accounts, wallet, token
  * balances) replaces the logs-only record. A transaction not found after a few tries, or one that does not
  * fit the queue, falls back to its logs-only record (graduations then become a `hint`).
@@ -78,6 +78,8 @@ interface FetchJob {
   /** The logs-only record, emitted when the fetch gives up. */
   fallback: IngestTx | null;
   migration: boolean;
+  /** LaunchLab events and graduations go before CPMM swaps when the budget is short. */
+  priority: 0 | 1;
   attempts: number;
   notBefore: number;
 }
@@ -375,7 +377,8 @@ export class RpcLogsSource implements Source {
       if (f.wants && !f.wants(r.events, migration)) this.fetchStats.skipped++;
       else if (this.fetchQueue.length >= (f.maxQueue ?? 500)) this.fetchStats.overflow++;
       else {
-        this.fetchQueue.push({ p, fallback, migration, attempts: 0, notBefore: p.receivedAt + (f.firstDelayMs ?? 1_200) });
+        const priority = migration || r.events.some((e) => e.kind === "launchlabTrade" || e.kind === "launchlabPoolCreate") ? 0 : 1;
+        this.fetchQueue.push({ p, fallback, migration, priority, attempts: 0, notBefore: p.receivedAt + (f.firstDelayMs ?? 1_200) });
         this.fetchStats.queued++;
         if (this.fetchQueue.length > this.fetchStats.maxQueue) this.fetchStats.maxQueue = this.fetchQueue.length;
         return;
@@ -416,7 +419,8 @@ export class RpcLogsSource implements Source {
     }
     if (f.paused?.()) return;
     while (this.fetchTokens >= 1 && this.fetchInFlight < (f.maxConcurrent ?? 4)) {
-      const i = this.fetchQueue.findIndex((j) => j.notBefore <= now);
+      let i = this.fetchQueue.findIndex((j) => j.priority === 0 && j.notBefore <= now);
+      if (i < 0) i = this.fetchQueue.findIndex((j) => j.notBefore <= now);
       if (i < 0) return;
       const job = this.fetchQueue.splice(i, 1)[0] as FetchJob;
       this.fetchTokens -= 1;

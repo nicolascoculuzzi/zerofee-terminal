@@ -192,7 +192,8 @@ export class MarketStateView implements OrderMarket {
 
   /** LaunchLab curve or CPMM graduation pool; not quotable until every fee input is known. */
   private raydiumQuote(rec: TokenRecord): MarketQuote {
-    const r = this.d.market.raydiumInputs(rec);
+    // Missing accounts are read (deduplicated by the registry): an order on a restored coin becomes quotable.
+    const r = this.d.market.raydiumInputs(rec, true);
     if (!rec.migrated) {
       const curve = launchLabCurve(rec);
       if (!curve || !r.global || !r.platform || r.quoteTransferFee === undefined || !r.baseMintKnown)
