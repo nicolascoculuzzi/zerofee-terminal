@@ -2,6 +2,33 @@
 
 Newest first. Record the setup (RPC, region, mode) with every measurement.
 
+## 2026-10-03: Raydium LaunchLab + CPMM dry runs (public RPC, laptop)
+
+Setup: `https://api.mainnet-beta.solana.com`, `LANDING_MODE=standard`, `DRY_RUN=true`, unsigned simulation (`SIMULATE_AS`, read-only wallets that hold SOL / the token). Slots ~453,034,000–453,036,300. Every simulated LaunchLab `TradeEvent` / CPMM `SwapEvent` matched the local quote exactly (`amount_in` and `amount_out`).
+
+| Run | CU used / limit | Size | Fill vs quote |
+|---|---|---|---|
+| LaunchLab buy 0.01 SOL, StonkFun 9RAPesjv… (Token-2022, 3% transfer fee), base ATA exists | 69,947 | 964 B | exact |
+| same, fresh wallet (creates the Token-2022 ATA) | 83,401 / 120,000 | 964 B | exact |
+| LaunchLab sell 100% of the StonkFun coin (+ Token-2022 CloseAccount) | 66,606 | 939 B | exact |
+| LaunchLab buy 0.01 SOL, BONK.fun 5ojxCYwe… (SPL), base ATA exists / fresh | 66,970 / 74,549 | 932 B | exact |
+| LaunchLab sell 100% of the BONK.fun coin (+ CloseAccount) | 62,121 | 907 B | exact |
+| CPMM buy 0.02 SOL, StonkFun graduate 9RcvjFss… (Token-2022, 3% fee), ATA exists | 49,969 | 855 B | exact |
+| same, 0.01 SOL, fresh wallet | 61,906 / 85,000 | 855 B | exact |
+| CPMM sell 50% of the StonkFun graduate | 43,636 | 823 B | exact |
+| CPMM buy 0.01 SOL, BONK.fun graduate 2gFxXdy5… (SPL), ATA exists / fresh | 45,472 / 54,551 | 823 B | exact |
+| CPMM sell 100% of the BONK.fun graduate (+ CloseAccount) | 40,832 | 798 B | exact |
+
+Latency (one run each): LaunchLab `stateLoaded` 371–458 ms (2 round trips: venue batch + configs), CPMM via a graduated LaunchLab coin 660 ms (3 round trips: venue batch, LaunchLab configs, pool + vaults). `quoted` +2–15 ms, `built` +35–70 ms (priority-fee samples).
+
+Boundary simulations (limit exactly at our quote passes, one unit tighter fails with the program's ExceededSlippage), pinning down semantics the SDK does not settle:
+
+- LaunchLab `buy_exact_in.minimum_amount_out` is compared with what the buyer **receives after the Token-2022 transfer fee** (66,951,189,460 passes, +1 fails 6004).
+- LaunchLab `buy_exact_out.amount_out` is the amount received; our `maximum_amount_in` (7,467,853 for 50,000,000,000 tokens) is exact. The SDK's quote prices the transfer fee twice.
+- CPMM `swap_base_output` on a transfer-fee coin: our `max_amount_in` (9,657,162 for 100,000,000,000 tokens) is exact (−1 fails 6005).
+
+Default CU limits are now LaunchLab 120k buy / 100k sell, CPMM 85k / 70k (~1.4-1.6x the worst case above, which also absorbs a fork-vs-simulation gap like the +25% seen on PumpSwap; LaunchLab has extra headroom because the program creates a missing fee vault inside the swap). Transactions stay well under 1,232 bytes, with room for a durable-nonce advance.
+
 ## 2026-10-03: armed-order transaction sizes and nonce/ALT mechanics
 
 **Sizes** (offline, from the mainnet account fixtures; `bun run packages/core/scripts/armed-sizes.ts`). Every armed variant is a v0 message: `AdvanceNonceAccount`, CU limit, CU price, the trade, then the tip(s). The operator lookup table holds only shared accounts (63 with wSOL: program ids except the token programs, Global/config/fee-config/event-authority/volume-accumulator PDAs, every fee/buyback recipient and its wSOL ATA, the RecentBlockhashes sysvar). The signer firewall requires everything else to be a static key: mints, token programs, System, user token accounts, the pool, transfer destinations, tips, the jitodontfront marker and the nonce account.
