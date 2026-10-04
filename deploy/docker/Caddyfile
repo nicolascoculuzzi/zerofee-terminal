@@ -8,7 +8,8 @@
 #   CSP_CONNECT_EXTRA  origins the browser may call besides us (independent RPC, Helius Sender lane)
 #   SIGNER_DOMAIN      the isolated signer origin (commented site block at the bottom)
 #
-# Reload after editing (keeps open WebSockets for up to 5 minutes):
+# Reload after editing (keeps open WebSockets for up to 5 minutes; an invalid file is rejected and the
+# running config stays):
 #   deploy/scripts/dc exec caddy caddy reload --config /etc/caddy/Caddyfile --address unix//run/caddy/admin.sock
 
 {
@@ -153,8 +154,10 @@
 		}
 	}
 
-	# Errors (404 from a missing asset, 502 while the server restarts) are never cached.
+	# Errors (404 from a missing asset, 502 while the server restarts) are never cached, and carry the
+	# same security headers (error handling runs outside the routes above).
 	handle_errors {
+		import app_headers
 		header Cache-Control "no-store"
 		respond "{err.status_code} {err.status_text}" {err.status_code}
 	}
