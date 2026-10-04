@@ -18,7 +18,7 @@
  *   IMG_WAIT_MS             how long a request waits for an image being fetched before answering "pending" (default 6 s;
  *                           below Bun.serve's 10 s idle timeout)
  *   IMG_HOST_LIMITS         per-host pacing, "host=concurrency/rps/burst,..." ("*" = other hosts), on top of
- *                           the defaults in pacer.ts (pump.mypinata.cloud 5/5/10, gateway.pinata.cloud 2/1/2,
+ *                           the defaults in pacer.ts (pump.mypinata.cloud 5/5/10, gateway.pinata.cloud, ipfs.filebase.io and 4everland.io 2/1/2,
  *                           images.pump.fun and imagedelivery.net 12/25/40, others 3/3/6)
  *   IMG_WORKERS             worker processes for decoding / encoding / metadata parsing (default 2; 0 = inline)
  *   IMG_WORKER_NICE         nice(1) increment for the workers (default 10)

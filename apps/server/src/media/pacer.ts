@@ -31,6 +31,9 @@ export const DEFAULT_HOST_LIMITS: Record<string, HostLimit> = {
   "pump.mypinata.cloud": { concurrency: 5, rps: 5, burst: 10 },
   // the public Pinata gateway answers 429 to nearly everything now
   "gateway.pinata.cloud": { concurrency: 2, rps: 1, burst: 2 },
+  // public fallback gateways: 429 above ~1 req/s from one IP (live)
+  "ipfs.filebase.io": { concurrency: 2, rps: 1, burst: 2 },
+  "4everland.io": { concurrency: 2, rps: 1, burst: 2 },
   // Cloudflare (pump's image CDN redirects to Cloudflare Images): no 429 seen at 20+ req/s
   "images.pump.fun": { concurrency: 12, rps: 25, burst: 40 },
   "imagedelivery.net": { concurrency: 12, rps: 25, burst: 40 },
