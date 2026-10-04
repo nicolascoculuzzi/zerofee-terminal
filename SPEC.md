@@ -331,7 +331,7 @@ Build in order. Each phase ends with something runnable and testable.
 - **Done 2026-10-03 (dry-run):** LaunchLab and CPMM decoders, math, builders, event decoders and venue resolution in `packages/core/src/raydium`, replayed against mainnet trades and golden-tested against `@raydium-io/raydium-sdk-v2` (measurements in NOTES.md). Notes for the next steps:
   - StonkFun coins are Token-2022 with a 3% transfer fee, and many StonkFun pairs are quoted in Token-2022 xStocks rather than SOL. Quotes apply the transfer fee, and slippage limits apply to what the user receives.
   - Graduation is signed by Raydium's migration wallet. The CPMM pool is the canonical PDA on the launchpad's `PlatformConfig.cpswap_config`, so migration orders can be armed in advance.
-  - The signer firewall rules for both programs are under Security rules → Signer firewall. Until they are built, `packages/signer` refuses both programs (fail closed), so these venues only run in dry-run.
+  - The signer firewall rules for both programs (Security rules → Signer firewall) are built and in `createSignerPolicy`; pairs quoted in anything other than wSOL/USDC stay refused until the user sets a cap for that quote mint. Armed Raydium orders still need core's static-position tables extended (Raydium authority PDAs must stay out of the operator lookup table).
 
 ### Phase 8: the wedge
 - Copy trading, trailing stops, DCA, dev-sell exits, X tracker with keyword alerts, browser-open snipers with hard caps, public API.
